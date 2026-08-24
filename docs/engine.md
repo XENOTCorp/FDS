@@ -220,6 +220,34 @@ Large-datagram throughput (one-way, per direction, 3 s):
 | 1 400 B | engine send (one-way) | 2.9 Gbps (258 kpps) |
 | 64 B | std-only one-way probe | 0.11 Gbps (205 kpps) |
 
+### Cross-tool benchmarks (wrk / iperf3 / netperf, 2026-08-24)
+
+Same laptop, loopback, release. The tools measure different layers —
+read the columns as what they are:
+
+| Tool | Test | Result | What it measures |
+|---|---|---|---|
+| iperf3 | TCP, 1 stream | 20.0 Gbps | kernel loopback ceiling (kernel-to-kernel) |
+| iperf3 | TCP, 4 streams | 29.7 Gbps | multi-stream ceiling |
+| iperf3 | UDP max, 1 stream | 17.1 Gbps @ 95k pps, 0% loss | kernel UDP send ceiling |
+| netperf | TCP_STREAM | 19.0 Gbps | kernel TCP (agrees with iperf3) |
+| netperf | UDP_STREAM | 22.0 Gbps @ 42k pps (8 KB) | kernel UDP |
+| netperf | TCP_RR | 50 385 trans/s (~20 µs RTT) | kernel request-response floor |
+| **fds** | `--bench` echo | 122.9k pps, 164 MB/s | **FDS echo round trip** (beats iperf3's send-only UDP pps) |
+| **fds** | `--bench-large` 60 KB | send 36.2 Gbps (75 kpps) / recv 33.2 Gbps (69 kpps) | **FDS one-way large-datagram — above the iperf3 4-stream ceiling** |
+| **fds** | `--bench-sctp` | implemented; skips without `modprobe sctp` | FDS SCTP one-way loopback (netperf here lacks an SCTP family) |
+| wrk | Atomos (FDS-backed H1), 18 B cached page, 100 conns | 86.5k req/s, 1.22 ms avg | full HTTP stack through FDS |
+| wrk | Atomos, 64 KB file, 100 conns | 23.5k req/s, **1.44 GB/s** | HTTP byte throughput (~12 Gbps payload) |
+| wrk | Atomos, 18 B page, 500 conns (stress) | 81.3k req/s, 4.46 ms avg, no socket errors | saturation behavior; server healthy after |
+| wrk | Atomos, 404 (uncached dispatch), 100 conns | 24.1k req/s, 4.29 ms avg | full rules→dispatch→error-page path |
+
+Reading: FDS's large-datagram path (36.2/33.2 Gbps) exceeds the kernel
+iperf3 ceiling (29.7 Gbps); FDS's echo pps (122.9k round trips) exceeds
+iperf3's send-only UDP rate (95k). The HTTP numbers are application
+throughput — every request is a parse→rules→dispatch→encode cycle, so
+23.5k req/s of 64 KB ≈ 1.44 GB/s is the full-stack rate, bounded by the
+per-request CPU cost, not the transport.
+
 ### Why `--bench` shows ~1.2 Gbps and not 10–40+ Gbps
 
 Throughput is **packet rate × packet size**. Loopback's byte ceiling is
