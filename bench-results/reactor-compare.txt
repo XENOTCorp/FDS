@@ -1,0 +1,28 @@
+# reactor A/B: epoll-busy-poll vs io_uring (fds engine TCP echo) — 2026-08-24
+# host: xenot | cpu: Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz | kernel: 7.2.0_1
+# tool: --bench-tcp-against (4 conns x 60 KiB write flood, 3s) + --latency-against
+# verdict: the io_uring experimental datapath is SLOWER on this
+#   Broadwell laptop. epoll-busy-poll stays the default.
+
+## TCP echo throughput, client->server
+epoll-busy-poll   16.02 Gbps (2003 MiB/s)
+io-uring          10.25 Gbps (1282 MiB/s)   <- -36%
+
+## UDP echo RTT (--latency-against, 2s)
+epoll-busy-poll   p50 22.6us, 29524 samples, p99 2229.6us
+io-uring          p50 20.0us,  7141 samples, p99 6432.1us
+                  (io_uring UDP echo starved: client recv timeouts,
+                   ~1/4 of epoll's sample count, worse tail)
+
+## notes
+- io_uring run used 256 entries, sq_thread 0 (no SQPOLL), no registered
+  buffers / fixed files: the ring adds submission overhead on a 2C/4T
+  chip where the epoll loop is already sendmmsg/recvmmsg-batched.
+- SO_ZEROCOPY setsockopt succeeds WITHOUT root (the "requires CAP_NET_RAW"
+  comment in udp.rs is wrong); wiring MSG_ZEROCOPY into the engine send
+  path is doable unprivileged. The engine echo currently never calls
+  send_to_zerocopy — it is dead code in the datapath.
+- GSO/GRO (UDP_SEGMENT/UDP_GRO) are socket-level options already wired;
+  on loopback a 60 KiB datagram fits the 65535 limit in one skb, so GSO
+  segmentation would only add packets — the win is on real NICs (MTU
+  1500), not measurable on lo.

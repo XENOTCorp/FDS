@@ -859,3 +859,48 @@ pub fn run_latency_tcp(seconds: u64) -> std::io::Result<()> {
     report_latency("tcp latency", &mut samples, count, seconds as f64);
     Ok(())
 }
+
+/// TCP echo throughput against a *running* fds engine
+/// (`--bench-tcp-against <addr> [secs]`): four 60 KiB-payload write
+/// floods, one per engine worker via SO_REUSEPORT, blocked until the
+/// deadline. Reports client->server Gbps; the echo doubles wire traffic.
+/// This is the client that makes the reactor A/B (epoll vs io_uring)
+/// measurable — `--bench` exercises the socket datapath in-process,
+/// not the server loop.
+pub fn run_tcp_against(addr: std::net::SocketAddr, seconds: u64) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let seconds = seconds.max(1);
+    let payload = vec![0xabu8; 60 * 1024];
+    let stop = Arc::new(AtomicBool::new(false));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
+    let mut handles = Vec::new();
+    for _ in 0..4 {
+        let payload = payload.clone();
+        let stop = stop.clone();
+        handles.push(std::thread::spawn(move || -> std::io::Result<u64> {
+            let mut s = std::net::TcpStream::connect(addr)?;
+            s.set_nodelay(true)?;
+            let mut bytes: u64 = 0;
+            while !stop.load(Ordering::Relaxed) {
+                bytes += s.write(&payload)? as u64;
+            }
+            Ok(bytes)
+        }));
+    }
+    while std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    stop.store(true, Ordering::Relaxed);
+    let mut total: u64 = 0;
+    for h in handles {
+        total += h.join().map_err(|_| std::io::Error::other("client thread panicked"))??;
+    }
+    let elapsed = seconds as f64;
+    println!(
+        "bench-tcp-against: {addr} — 4 conns, {:.2} Gbps client->server ({:.0} MiB/s), echo doubles wire traffic",
+        total as f64 * 8.0 / elapsed / 1e9,
+        total as f64 / 1e6 / elapsed,
+    );
+    Ok(())
+}
