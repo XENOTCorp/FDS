@@ -1,16 +1,16 @@
-# CPU counters of the atomos server under wrk load — 2026-08-24 15:30:04Z
+# CPU counters of the atomos server under wrk load — 2026-08-24 19:10:21Z
 # host: xenot | cpu: Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz | kernel: 7.2.0_1
 # tool: perf stat -p | params: 4x100 conns, HTTP keep-alive | duration: 4s
-# started on Mon Aug 24 11:30:04 2026
-    13,399,743,593      cycles                                                                  (55.72%)
-     7,044,088,688      instructions                     #    0.53  insn per cycle              (66.88%)
-     1,423,733,207      branches                                                                (66.47%)
-        17,656,197      branch-misses                    #    1.24% of all branches             (66.32%)
-     1,948,682,145      dTLB-loads                                                              (66.43%)
-         3,449,950      dTLB-load-misses                 #    0.18% of all dTLB cache accesses  (66.89%)
-        32,374,628      cache-misses                                                            (44.67%)
-       240,864,193      L1-dcache-load-misses                                                   (44.67%)
-       272,165,980      L1-icache-load-misses                                                   (44.55%)
-             1,542      page-faults                                                           
-            17,132      context-switches                                                      
+# started on Mon Aug 24 15:10:22 2026
+    14,557,312,753      cycles                                                                  (55.59%)
+     7,811,043,166      instructions                     #    0.54  insn per cycle              (67.08%)
+     1,576,704,349      branches                                                                (66.69%)
+        18,932,562      branch-misses                    #    1.20% of all branches             (66.61%)
+     2,168,141,648      dTLB-loads                                                              (67.12%)
+         4,219,671      dTLB-load-misses                 #    0.19% of all dTLB cache accesses  (67.10%)
+        32,785,365      cache-misses                                                            (44.01%)
+       266,638,443      L1-dcache-load-misses                                                   (44.34%)
+       281,855,991      L1-icache-load-misses                                                   (44.14%)
+             1,240      page-faults                                                           
+            16,902      context-switches                                                      
                  0      cpu-migrations                                                        

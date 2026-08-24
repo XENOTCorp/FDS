@@ -1,11 +1,11 @@
-# CPU counters during fds --bench — 2026-08-24 14:52:27Z
+# CPU counters during fds --bench — 2026-08-24 19:08:39Z
 # host: xenot | cpu: Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz | kernel: 7.2.0_1
-# tool: perf stat | params: user-space events (paranoid=1) | duration: 4s
-     2,663,473,400      cycles                                                                
-     3,596,716,679      instructions                     #    1.35  insn per cycle            
-           380,113      cache-misses                                                          
-        38,448,409      L1-dcache-load-misses                                                 
-           324,655      dTLB-load-misses                                                      
-               122      page-faults                                                           
-                17      context-switches                                                      
-                11      cpu-migrations                                                        
+# tool: perf stat | params: user-space events (paranoid=-1) | duration: 5s
+     2,647,441,848      cycles                                                                
+     3,595,094,930      instructions                     #    1.36  insn per cycle            
+           509,286      cache-misses                                                          
+        37,701,674      L1-dcache-load-misses                                                 
+           305,908      dTLB-load-misses                                                      
+               124      page-faults                                                           
+                30      context-switches                                                      
+                15      cpu-migrations                                                        

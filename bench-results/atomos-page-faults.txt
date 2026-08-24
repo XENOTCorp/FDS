@@ -1,4 +1,4 @@
-# page faults (system-wide, atomos under wrk) — 2026-08-24 15:30:19Z
+# page faults (system-wide, atomos under wrk) — 2026-08-24 19:10:36Z
 # host: xenot | cpu: Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz | kernel: 7.2.0_1
 # tool: sar -B | params: faults/s | duration: 4s
-Average:         0.00      0.00    888.00      0.00  38741.50      0.00      0.00      0.00      0.00      0.00
+Average:         0.00     78.00    773.00      0.00  42336.00      0.00      0.00      0.00      0.00      0.00

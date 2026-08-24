@@ -1,6 +1,6 @@
-# pinned vs unpinned engine bench — 2026-08-24 14:52:33Z
+# pinned vs unpinned engine bench — 2026-08-24 19:08:45Z
 # host: xenot | cpu: Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz | kernel: 7.2.0_1
-# tool: taskset -c 0-1 | params: effect of forcing cores | duration: 4s
-unpinned: 126976 pps
-pinned:   122880 pps
+# tool: taskset -c 0-1 | params: effect of forcing cores | duration: 5s
+unpinned: 127488 pps
+pinned:   126464 pps
 note: fds workers already self-pin via sched_setaffinity (core.pin_cores=true)

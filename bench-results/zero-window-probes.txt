@@ -1,7 +1,5 @@
-# TCP zero-window probes — 2026-08-24 14:52:45Z
+# TCP zero-window probes — 2026-08-24 19:08:58Z
 # host: xenot | cpu: Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz | kernel: 7.2.0_1
-# tool: nstat deltas | params: TcpExtTCPZeroWindowProbe* | duration: 4s
-TcpExtTCPFromZeroWindowAdv      1                  0.0
-TcpExtTCPToZeroWindowAdv        1                  0.0
-TcpExtTCPWantZeroWindowAdv      13                 0.0
+# tool: nstat deltas | params: TcpExtTCPZeroWindowProbe* | duration: 5s
+TcpExtTCPWantZeroWindowAdv      4                  0.0
 note: zero-window probes appear under receive pressure (rcv_wnd lag); loopback rarely triggers them.

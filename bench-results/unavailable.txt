@@ -1,6 +1,6 @@
-# metrics that could not be measured here — 2026-08-24 14:53:01Z
+# metrics that could not be measured here — 2026-08-24 19:09:22Z
 # host: xenot | cpu: Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz | kernel: 7.2.0_1
-# tool: — | params: with reasons | duration: 4s
+# tool: — | params: with reasons | duration: 5s
 hpack/qpack efficiency, RST_stream rate, HTTP/2 HOLB: the h2/h3 server
   side (atomos-proto) is not instrumented — the h2/h3 crates are used
   as-is; measuring these needs h2/h3 stats plumbing.
