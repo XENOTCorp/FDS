@@ -19,10 +19,12 @@ paper (thesis) and a software standard:
 
 ```sh
 # Build and test everything
-cargo test --workspace          # 88 tests, ~2 s
+cargo test --workspace          # 89 tests, ~2 s
 cargo clippy --workspace --all-targets -- -D warnings
 
 # Run the engine (UDP + TCP echo on 127.0.0.1:7777 / 7778)
+# One worker per logical CPU (2x physical on hyperthreaded machines);
+# SO_REUSEPORT distributes flows across workers.
 cargo run -p fds-core
 
 # Measure: throughput, transport latency, engine latency
@@ -32,6 +34,9 @@ cargo run -p fds-core --release -- --bench-large 60000 5
 cargo run -p fds-core --release -- --latency 5
 # (engine running in another terminal)
 cargo run -p fds-core --release -- --latency-against 127.0.0.1:7777 5
+
+# io_uring reactor strategy, explicit worker count (default: per logical CPU)
+FDS_REACTOR_STRATEGY=io-uring FDS_CORE_THREADS=4 cargo run -p fds-core --release
 
 # Fuzz the parsers/checksums (deterministic, stable-rust)
 cargo run -p fds-core --release -- --fuzz 1000000

@@ -27,8 +27,9 @@ const_assert_eq!(core::mem::size_of::<MpmcRing<u64, 8>>(), 144);
 const_assert!(core::mem::size_of::<Buffer<1500>>() >= 1500);
 const_assert_eq!(core::mem::size_of::<Buffer<1500>>() % 8, 0);
 
-// Pool<T, N>: N slots + the free-list MPMC ring of indices.
-const_assert_eq!(core::mem::size_of::<Pool<u64, 4>>(), 112);
+// Pool<T, N>: the arena box pointer + the free-list MPMC ring of
+// indices (the arena itself lives on the heap — see `Pool` docs).
+const_assert_eq!(core::mem::size_of::<Pool<u64, 4>>(), 88);
 
 #[test]
 fn cache_padded_elements_never_share_a_line() {

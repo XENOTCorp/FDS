@@ -162,20 +162,10 @@ impl UdpSocket {
         // ownership and closes it on drop, including on error returns.
         let owned = unsafe { OwnedFd::from_raw_fd(fd) };
 
-        let sa = sockaddr_in_from(addr)?;
-        // SAFETY: `sa` is fully initialized and `bind` copies it into the
-        // kernel without retaining the pointer.
-        let ret = unsafe {
-            libc::bind(
-                owned.as_raw_fd(),
-                (&sa as *const libc::sockaddr_in).cast::<libc::sockaddr>(),
-                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
-            )
-        };
-        if ret < 0 {
-            return Err(io::Error::last_os_error());
-        }
-
+        // Socket options BEFORE bind: the kernel admits a socket into a
+        // SO_REUSEPORT group only when the option is set prior to bind
+        // (man 7 socket), so every worker can bind the same address and
+        // the kernel can distribute flows across them.
         set_int(owned.as_raw_fd(), libc::SOL_SOCKET, libc::SO_REUSEADDR, 1)?;
         if cfg.reuseport {
             set_int(owned.as_raw_fd(), libc::SOL_SOCKET, libc::SO_REUSEPORT, 1)?;
@@ -216,6 +206,22 @@ impl UdpSocket {
             // [`UdpSocket::send_to_zerocopy`]); sendmmsg has no flags
             // argument, so zerocopy sends use the sendmsg path.
             set_int(owned.as_raw_fd(), libc::SOL_SOCKET, 60, 1)?;
+        }
+
+        // Bind after the options so SO_REUSEPORT is already set (the
+        // kernel requires it before bind for reuseport group admission).
+        let sa = sockaddr_in_from(addr)?;
+        // SAFETY: `sa` is fully initialized and `bind` copies it into the
+        // kernel without retaining the pointer.
+        let ret = unsafe {
+            libc::bind(
+                owned.as_raw_fd(),
+                (&sa as *const libc::sockaddr_in).cast::<libc::sockaddr>(),
+                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+            )
+        };
+        if ret < 0 {
+            return Err(io::Error::last_os_error());
         }
 
         Ok(UdpSocket {

@@ -104,6 +104,14 @@ impl Molecule for Probe {
 
 #[test]
 fn reactor_pipeline_allocates_nothing() {
+    // Construction (setup, before the watermark): a pool arena is
+    // heap-backed (see `Pool` docs), so build it here — the hot path
+    // below only does allocate/return cycles.
+    let pool: Pool<u64, 8> = Pool::new();
+    for i in 0..8 {
+        pool.initialize(i, i as u64);
+    }
+
     // Snapshot the allocation count, then run the whole hot path. Any heap
     // allocation inside it fails the test.
     let before = allocations();
@@ -155,10 +163,6 @@ fn reactor_pipeline_allocates_nothing() {
     assert_eq!(acc, (0..16u32).map(u64::from).sum());
 
     // Lock-free pool: allocate/return cycles, zero allocation.
-    let pool: Pool<u64, 8> = Pool::new();
-    for i in 0..8 {
-        pool.initialize(i, i as u64);
-    }
     for _ in 0..100 {
         let guard = pool.try_alloc().expect("slot free after drop");
         assert_eq!(*guard, guard.index() as u64);

@@ -145,14 +145,19 @@ the hardware (steer with `ethtool -L eth0 combined N` instead).
 
 ### SO_REUSEPORT + SO_INCOMING_CPU
 
-`SO_REUSEPORT` lets the engine open one socket per core on the same
-port; the kernel load-balances by 4-tuple hash. `SO_INCOMING_CPU`
-pins each socket to the CPU that last handled its packets, so a flow
-sticks to one core — no cross-core cache-line ping-pong. Enabled via
-`UdpConfig::reuseport` / `UdpConfig::incoming_cpu` (same keys in
-`TcpConfig` and `SctpConfig`). Keep `incoming_cpu` on with
-`reuseport`; it is only effective when every socket for the port is on
-the same host/namespace.
+`SO_REUSEPORT` lets the engine open one socket per worker on the same
+port; the kernel load-balances by 4-tuple hash (per-flow). This is the
+per-core distribution mechanism: each worker owns its socket, its
+poller and its counters.
+
+`SO_INCOMING_CPU` (`UdpConfig::incoming_cpu`, default **off**) makes
+reuseport selection prefer the socket matching the CPU that runs the
+receive path — on a NIC with RSS queues + IRQ affinity that pins a flow
+to the socket on the IRQ's core (no cross-core ping-pong). On loopback
+there is one "queue" and one RX softirq CPU at a time, so enabling it
+pins *all* traffic to a single worker — keep it off unless the NIC's
+RSS/IRQ affinity is configured to match. `reuseport` stays on in both
+cases.
 
 ### Hugepages (2 MiB THP)
 
@@ -185,7 +190,8 @@ isolcpus=2-7 nohz_full=2-7 rcu_nocbs=2-7
 `isolcpus` removes the cores from the scheduler; `nohz_full` stops the
 per-core tick; `rcu_nocbs` offloads RCU callbacks. Set
 `CoreConfig::threads` to the number of reserved cores (0 = one per
-physical core) and make the IRQ affinity (section 2, RPS/XPS) match.
+logical CPU, 2x the physical count on hyperthreaded machines) and make
+the IRQ affinity (section 2, RPS/XPS) match.
 
 ## 4. Offloads
 

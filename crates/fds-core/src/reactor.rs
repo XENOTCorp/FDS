@@ -9,7 +9,8 @@
 
 use rustix::event::epoll;
 use rustix::event::Timespec;
-use rustix::fd::{AsFd, AsRawFd, OwnedFd};
+use rustix::fd::OwnedFd;
+use std::os::fd::AsRawFd;
 
 /// The events a registration is interested in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,9 +33,10 @@ impl Interest {
     }
 }
 
-/// One delivered epoll event: the token (a packed
-/// [`crate::conn::ConnectionId`]) and the ready flags.
-#[derive(Clone, Copy, Debug)]
+/// One delivered event: the token (a packed
+/// [`crate::conn::ConnectionId`] or a reserved `TOKEN_*`) and the ready
+/// flags.
+#[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct EpollEvent {
     pub token: u64,
     pub readable: bool,
@@ -80,20 +82,28 @@ impl Reactor {
     }
 
     /// Register `fd` for `interest` with token `token` (EPOLL_CTL_ADD).
-    pub(crate) fn register<F: AsFd>(&self, fd: &F, token: u64, interest: Interest) -> std::io::Result<()> {
+    pub(crate) fn register(&self, fd: i32, token: u64, interest: Interest) -> std::io::Result<()> {
         let data = epoll::EventData::new_u64(token);
-        epoll::add(&self.ep, fd, data, interest.flags()).map_err(std::io::Error::from)
+        // SAFETY: `fd` is a live descriptor owned by the caller for the
+        // duration of the call; epoll_ctl installs the interest into the
+        // kernel without retaining the BorrowedFd.
+        let borrowed = unsafe { rustix::fd::BorrowedFd::borrow_raw(fd) };
+        epoll::add(&self.ep, borrowed, data, interest.flags()).map_err(std::io::Error::from)
     }
 
     /// Change the interest for an already-registered fd (EPOLL_CTL_MOD).
-    pub(crate) fn modify<F: AsFd>(&self, fd: &F, token: u64, interest: Interest) -> std::io::Result<()> {
+    pub(crate) fn modify(&self, fd: i32, token: u64, interest: Interest) -> std::io::Result<()> {
         let data = epoll::EventData::new_u64(token);
-        epoll::modify(&self.ep, fd, data, interest.flags()).map_err(std::io::Error::from)
+        // SAFETY: as in [`Reactor::register`].
+        let borrowed = unsafe { rustix::fd::BorrowedFd::borrow_raw(fd) };
+        epoll::modify(&self.ep, borrowed, data, interest.flags()).map_err(std::io::Error::from)
     }
 
     /// Remove a registration (EPOLL_CTL_DEL).
-    pub(crate) fn unregister<F: AsFd>(&self, fd: &F) -> std::io::Result<()> {
-        epoll::delete(&self.ep, fd).map_err(std::io::Error::from)
+    pub(crate) fn unregister(&self, fd: i32) -> std::io::Result<()> {
+        // SAFETY: as in [`Reactor::register`].
+        let borrowed = unsafe { rustix::fd::BorrowedFd::borrow_raw(fd) };
+        epoll::delete(&self.ep, borrowed).map_err(std::io::Error::from)
     }
 
     /// Poll once with the given timeout: `None` blocks, `Some(0)` is a
@@ -158,6 +168,112 @@ impl std::fmt::Debug for Reactor {
     }
 }
 
+/// The readiness source for one worker loop. `Epoll` is the default
+/// (edge-triggered busy-poll); `IoUring` (feature `io-uring`) replaces
+/// epoll with single-shot IORING_OP_POLL_ADD completions under the same
+/// edge/drain discipline — each event is drained to EAGAIN and the poll
+/// is re-armed via [`Poller::rearm`] (an epoll no-op, which re-arms
+/// implicitly on drain).
+pub(crate) enum Poller {
+    Epoll(Reactor),
+    #[cfg(feature = "io-uring")]
+    IoUring(Box<crate::io_uring_reactor::IoUringPoller>),
+}
+
+impl Poller {
+    /// Build the configured poller; `IoUring` falls back to epoll with a
+    /// log line when io_uring is unavailable or the feature is disabled.
+    pub(crate) fn new(cfg: &crate::config::ReactorConfig) -> std::io::Result<Self> {
+        match cfg.strategy {
+            crate::config::ReactorStrategy::EpollBusyPoll => {
+                Ok(Poller::Epoll(Reactor::new(cfg.max_events)?))
+            }
+            crate::config::ReactorStrategy::IoUring => {
+                #[cfg(feature = "io-uring")]
+                {
+                    match crate::io_uring_reactor::IoUringPoller::new(
+                        cfg.io_uring_entries,
+                        cfg.io_uring_sq_thread,
+                        cfg.max_events,
+                    ) {
+                        Ok(p) => {
+                            eprintln!(
+                                "fds: worker reactor: io_uring ({} entries, sq_thread {})",
+                                cfg.io_uring_entries, cfg.io_uring_sq_thread
+                            );
+                            Ok(Poller::IoUring(Box::new(p)))
+                        }
+                        Err(e) => {
+                            eprintln!("fds: io_uring unavailable ({e}); worker reactor: epoll");
+                            Ok(Poller::Epoll(Reactor::new(cfg.max_events)?))
+                        }
+                    }
+                }
+                #[cfg(not(feature = "io-uring"))]
+                {
+                    eprintln!("fds: io-uring feature disabled; worker reactor: epoll");
+                    Ok(Poller::Epoll(Reactor::new(cfg.max_events)?))
+                }
+            }
+        }
+    }
+
+    /// Register `fd` for `interest` with token `token`.
+    pub(crate) fn register(&mut self, fd: i32, token: u64, interest: Interest) -> std::io::Result<()> {
+        match self {
+            Poller::Epoll(r) => r.register(fd, token, interest),
+            #[cfg(feature = "io-uring")]
+            Poller::IoUring(p) => p.register(fd, token, interest),
+        }
+    }
+
+    /// Remove a registration.
+    pub(crate) fn unregister(&mut self, fd: i32, token: u64) -> std::io::Result<()> {
+        match self {
+            Poller::Epoll(r) => r.unregister(fd),
+            #[cfg(feature = "io-uring")]
+            Poller::IoUring(p) => p.unregister(fd, token),
+        }
+    }
+
+    /// Wait up to `timeout_ms` (0 = busy poll) for readiness events;
+    /// returns the number delivered.
+    pub(crate) fn wait(&mut self, timeout_ms: i32) -> std::io::Result<usize> {
+        match self {
+            Poller::Epoll(r) => {
+                let ms = timeout_ms.max(0);
+                let ts = Timespec {
+                    tv_sec: (ms / 1000) as i64,
+                    tv_nsec: ((ms % 1000) as i64) * 1_000_000,
+                };
+                r.poll_timeout(Some(&ts))
+            }
+            #[cfg(feature = "io-uring")]
+            Poller::IoUring(p) => p.wait(timeout_ms),
+        }
+    }
+
+    /// Copy the first `n` delivered events into `out` (converted,
+    /// borrow-free).
+    pub(crate) fn copy_events(&self, n: usize, out: &mut [EpollEvent]) -> usize {
+        match self {
+            Poller::Epoll(r) => r.copy_events(n, out),
+            #[cfg(feature = "io-uring")]
+            Poller::IoUring(p) => p.copy_events(n, out),
+        }
+    }
+
+    /// Re-arm a consumed single-shot poll. No-op on epoll (edge-triggered
+    /// re-arms implicitly when the handler drains to EAGAIN).
+    pub(crate) fn rearm(&mut self, token: u64) -> std::io::Result<()> {
+        match self {
+            Poller::Epoll(_) => Ok(()),
+            #[cfg(feature = "io-uring")]
+            Poller::IoUring(p) => p.rearm(token),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,7 +298,7 @@ mod tests {
     fn edge_triggered_delivers_once_then_drain() {
         let mut r = Reactor::new(8).unwrap();
         let (a, b) = make_pair();
-        r.register(&a, 7, Interest::Readable).unwrap();
+        r.register(a.as_raw_fd(), 7, Interest::Readable).unwrap();
         write(&b, b"x").unwrap();
 
         // Edge fires once.
@@ -212,7 +328,7 @@ mod tests {
     fn busy_poll_drains_to_empty() {
         let mut r = Reactor::new(8).unwrap();
         let (a, b) = make_pair();
-        r.register(&a, 1, Interest::Readable).unwrap();
+        r.register(a.as_raw_fd(), 1, Interest::Readable).unwrap();
         write(&b, b"abc").unwrap();
         let total = r.poll_busy().unwrap();
         assert!(total >= 1);
@@ -227,8 +343,8 @@ mod tests {
     fn unregister_stops_events() {
         let mut r = Reactor::new(8).unwrap();
         let (a, b) = make_pair();
-        r.register(&a, 5, Interest::Readable).unwrap();
-        r.unregister(&a).unwrap();
+        r.register(a.as_raw_fd(), 5, Interest::Readable).unwrap();
+        r.unregister(a.as_raw_fd()).unwrap();
         write(&b, b"z").unwrap();
         let n = r.poll_timeout(Some(&Timespec { tv_sec: 0, tv_nsec: 0 })).unwrap();
         assert_eq!(n, 0);

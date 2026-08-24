@@ -104,7 +104,12 @@ impl<const N: usize> Default for Buffer<N> {
 /// when `T: Send`); it is not safe to hand out the same slot twice, which
 /// the free-list protocol prevents.
 pub struct Pool<T, const N: usize> {
-    slots: UnsafeCell<[MaybeUninit<T>; N]>,
+    /// The arena, heap-allocated. An inline `[MaybeUninit<T>; N]` would
+    /// make `Pool` a `N * size_of::<T>()`-byte by-value type — a 1024-slot
+    /// connection table (~200 KiB) would blow a 1 MiB thread stack in
+    /// debug builds. The box keeps the struct small; the allocation is
+    /// startup-only (the free-list protocol still owns every slot).
+    slots: UnsafeCell<Box<[MaybeUninit<T>; N]>>,
     free: MpmcRing<usize, N>,
 }
 
@@ -119,8 +124,10 @@ impl<T, const N: usize> Pool<T, N> {
         // All indices 0..N are free.
         let free = MpmcRing::new();
         let pool = Pool {
-            // SAFETY: uninit slots; initialized before any guard exists.
-            slots: UnsafeCell::new(unsafe { MaybeUninit::uninit().assume_init() }),
+            // SAFETY: `Box::new_uninit` allocates without a stack
+            // temporary and without initializing; every slot is written
+            // via `initialize` before any guard exists.
+            slots: UnsafeCell::new(unsafe { Box::new_uninit().assume_init() }),
             free,
         };
         for i in 0..N {

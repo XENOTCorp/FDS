@@ -24,11 +24,13 @@
 //! Experimental reactor paths: io_uring SQPOLL ([`io_uring_reactor`],
 //! feature `io-uring`) and AF_XDP ([`af_xdp`], feature `af-xdp`).
 
-// Interim: the engine loop currently wires the epoll reactor + UDP/TCP
-// echo; SCTP/io_uring/AF_XDP are startup-probed, and several crate items
-// (connection hot-state fields, UAPI constants pinned by tests) are only
-// reachable from tests or future wiring. Remove this allow when the
-// per-core multi-protocol loop lands.
+// The per-core multi-protocol loop has landed (epoll + io_uring poller
+// strategies, per-logical-CPU workers). What remains unwired — and is
+// intentionally compiled ahead of the wiring, per the standard — is the
+// SCTP engine path, the zero-copy transport ops (MSG_ZEROCOPY,
+// registered buffers, splice_from_fd), io_uring transport submissions
+// (submit_read/submit_write), and the cold-state fields those transports
+// consume. Remove this allow as each path lands.
 #![allow(dead_code)]
 
 mod af_xdp;
@@ -47,18 +49,6 @@ mod tcp;
 mod udp;
 
 use config::Config;
-
-/// The engine's per-core runtime context: the preallocated bundles
-/// (rings, buffers, counters) threaded through every reactor step.
-#[derive(Default)]
-pub(crate) struct Ctx {
-    /// Total packets processed (padded counter, no false sharing).
-    pub packets: mol::PaddedCounter,
-    /// Total bytes across all packets.
-    pub bytes: mol::PaddedCounter,
-    /// Dropped packets (full rings, checksum failures, truncated datagrams).
-    pub drops: mol::PaddedCounter,
-}
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();

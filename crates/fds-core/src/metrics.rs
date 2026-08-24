@@ -110,12 +110,25 @@ impl Metrics {
         }
     }
 
-    /// Record the engine's current totals into core 0's counters (the
-    /// single-core engine loop; per-core wiring replaces this).
-    pub(crate) fn set_totals(&self, packets: u64, bytes: u64, drops: u64) {
-        self.packets[0].set(0, packets);
-        self.bytes[0].set(0, bytes);
-        self.drops[0].set(0, drops);
+    /// Add to worker `core`'s packet counter (relaxed, lock-free; each
+    /// worker only touches its own slot, so the padded counters never
+    /// contend).
+    pub(crate) fn add_packets(&self, core: usize, v: u64) {
+        self.packets[core].add(0, v);
+    }
+
+    pub(crate) fn add_bytes(&self, core: usize, v: u64) {
+        self.bytes[core].add(0, v);
+    }
+
+    pub(crate) fn add_drops(&self, core: usize, v: u64) {
+        self.drops[core].add(0, v);
+    }
+
+    /// Total packets/bytes/drops summed across all cores.
+    pub(crate) fn totals(&self) -> (u64, u64, u64) {
+        let sum = |sets: &[CounterSet]| -> u64 { sets.iter().map(|s| s.load(0)).sum() };
+        (sum(&self.packets), sum(&self.bytes), sum(&self.drops))
     }
 
     /// Format the full metrics text into `out` (no allocation).

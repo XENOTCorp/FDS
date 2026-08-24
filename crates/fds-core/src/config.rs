@@ -21,6 +21,8 @@ pub(crate) struct Config {
     pub metrics: MetricsConfig,
     pub zero_copy: ZeroCopyConfig,
     pub engine: EngineConfig,
+    /// AF_XDP device binding (experimental, device-gated).
+    pub af_xdp: AfXdpConfig,
 }
 
 /// Application-level binds for the built-in engine loop (UDP/TCP echo).
@@ -47,9 +49,10 @@ impl Default for EngineConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct CoreConfig {
-    /// Pin each worker thread to a physical core.
+    /// Pin each worker thread to its own logical CPU.
     pub pin_cores: bool,
-    /// Worker thread count; 0 = one per physical core.
+    /// Worker thread count; 0 = one per logical CPU (on hyperthreaded
+    /// machines that is 2x the physical core count — the default).
     pub threads: usize,
     /// Stack size for worker threads, in bytes.
     pub stack_bytes: usize,
@@ -80,12 +83,17 @@ pub(crate) enum ReactorStrategy {
 #[serde(default)]
 pub(crate) struct ReactorConfig {
     pub strategy: ReactorStrategy,
-    /// Preallocated epoll event array capacity per reactor.
+    /// Preallocated event array capacity per reactor.
     pub max_events: usize,
     /// Busy-poll the ready queue to empty before yielding.
     pub busy_poll: bool,
-    /// epoll_wait timeout in milliseconds when not busy-polling.
+    /// Poll timeout in milliseconds when not busy-polling.
     pub timeout_ms: i32,
+    /// io_uring ring entries (strategy `io-uring`).
+    pub io_uring_entries: u32,
+    /// io_uring SQPOLL thread CPU; 0 = no SQPOLL thread (needs
+    /// CAP_SYS_ADMIN; falls back to a plain ring when rejected).
+    pub io_uring_sq_thread: u32,
 }
 
 impl Default for ReactorConfig {
@@ -95,6 +103,8 @@ impl Default for ReactorConfig {
             max_events: 256,
             busy_poll: true,
             timeout_ms: 0,
+            io_uring_entries: 256,
+            io_uring_sq_thread: 0,
         }
     }
 }
@@ -125,7 +135,12 @@ impl Default for UdpConfig {
             gro: false,
             zerocopy: false,
             reuseport: true,
-            incoming_cpu: true,
+            // Off by default: SO_INCOMING_CPU makes reuseport selection
+            // prefer the socket matching the RX CPU, which on loopback
+            // (one RX softirq CPU) pins every flow to a single worker —
+            // defeating per-core distribution. NIC deployments with
+            // RSS/IRQ affinity set it explicitly (see ops-tuning).
+            incoming_cpu: false,
         }
     }
 }
@@ -220,6 +235,19 @@ impl Default for ZeroCopyConfig {
     }
 }
 
+/// AF_XDP device binding (experimental, feature `af-xdp`): when `device`
+/// is non-empty and the socket opens, a dedicated thread forwards frames
+/// on that queue rx->tx (kernel bypass). Absent a device (or without
+/// CAP_NET_RAW) the engine logs and continues on the kernel datapath.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct AfXdpConfig {
+    /// Device name (e.g. "eth0"); empty = disabled.
+    pub device: String,
+    /// Queue id on the device.
+    pub queue: u32,
+}
+
 impl Config {
     /// Parse a `config.json` document; missing fields fall back to
     /// defaults.
@@ -252,6 +280,25 @@ impl Config {
         if let Some(v) = env_i32("FDS_REACTOR_TIMEOUT_MS") {
             self.reactor.timeout_ms = v;
         }
+        if let Ok(v) = std::env::var("FDS_REACTOR_STRATEGY") {
+            match v.trim().to_ascii_lowercase().as_str() {
+                "epoll" | "epoll-busy-poll" => self.reactor.strategy = ReactorStrategy::EpollBusyPoll,
+                "io-uring" | "iouring" => self.reactor.strategy = ReactorStrategy::IoUring,
+                other => eprintln!("fds: unknown FDS_REACTOR_STRATEGY {other:?} (epoll | io-uring)"),
+            }
+        }
+        if let Some(v) = env_u32("FDS_REACTOR_IO_URING_ENTRIES") {
+            self.reactor.io_uring_entries = v;
+        }
+        if let Some(v) = env_u32("FDS_REACTOR_IO_URING_SQ_THREAD") {
+            self.reactor.io_uring_sq_thread = v;
+        }
+        if let Ok(v) = std::env::var("FDS_AF_XDP_DEVICE") {
+            self.af_xdp.device = v;
+        }
+        if let Some(v) = env_u32("FDS_AF_XDP_QUEUE") {
+            self.af_xdp.queue = v;
+        }
         if let Some(v) = env_flag("FDS_UDP_GRO") {
             self.udp.gro = v;
         }
@@ -269,6 +316,9 @@ impl Config {
         }
         if let Ok(v) = std::env::var("FDS_ENGINE_TCP_BIND") {
             self.engine.tcp_bind = v;
+        }
+        if let Ok(v) = std::env::var("FDS_METRICS_SOCKET_PATH") {
+            self.metrics.socket_path = v;
         }
     }
 }
@@ -305,6 +355,10 @@ fn env_usize(key: &str) -> Option<usize> {
 }
 
 fn env_i32(key: &str) -> Option<i32> {
+    std::env::var(key).ok()?.trim().parse().ok()
+}
+
+fn env_u32(key: &str) -> Option<u32> {
     std::env::var(key).ok()?.trim().parse().ok()
 }
 

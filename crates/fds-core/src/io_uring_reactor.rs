@@ -105,6 +105,42 @@ impl IoUringReactor {
         Ok(())
     }
 
+    /// Submit a single-shot poll for `fd`'s readiness (`flags` are
+    /// `<poll.h>` bits, e.g. `POLLIN`) with `user_data` as the token.
+    /// Completes once; the caller re-arms by submitting again.
+    pub(crate) fn submit_poll(
+        &mut self,
+        fd: i32,
+        flags: u32,
+        user_data: u64,
+    ) -> std::io::Result<()> {
+        let entry = io_uring::opcode::PollAdd::new(io_uring::types::Fd(fd), flags)
+            .build()
+            .user_data(user_data);
+        // SAFETY: `push` copies the entry into the ring's SQ memory, so
+        // the entry need not outlive this call.
+        unsafe { self.ring.submission().push(&entry) }
+            .map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::WouldBlock,
+                    "io_uring submission queue full",
+                )
+            })?;
+        self.pending.push(user_data);
+        Ok(())
+    }
+
+    /// Submit everything currently in the submission queue (no wait).
+    pub(crate) fn submit_all(&mut self) -> std::io::Result<()> {
+        self.ring.submit().map(|_| ())
+    }
+
+    /// Submit and block until at least one completion arrives (used by
+    /// the non-busy-poll wait path).
+    pub(crate) fn submit_and_wait(&mut self, n: u32) -> std::io::Result<()> {
+        self.ring.submit_and_wait(n as usize).map(|_| ())
+    }
+
     /// Drain completed entries, calling `f(token, result)`. Returns the
     /// number of completions.
     pub(crate) fn drain<F: FnMut(u64, std::io::Result<u32>)>(&mut self, mut f: F) -> usize {
@@ -120,6 +156,114 @@ impl IoUringReactor {
             n += 1;
         }
         n
+    }
+}
+
+/// The engine's io_uring readiness source: one [`IoUringReactor`] plus a
+/// token -> (fd, interest) table for re-arming the single-shot polls.
+/// Delivered events mirror the epoll [`crate::reactor::EpollEvent`]
+/// shape so the worker loop is poller-agnostic.
+pub(crate) struct IoUringPoller {
+    inner: IoUringReactor,
+    /// token -> (fd, interest); re-arm looks the entry up by token.
+    regs: std::collections::HashMap<u64, (i32, crate::reactor::Interest)>,
+    /// Events from the most recent drain (preallocated, reused).
+    events: Vec<crate::reactor::EpollEvent>,
+}
+
+/// Map [`crate::reactor::Interest`] onto `<poll.h>` bits; ERR/HUP are
+/// always requested so a closed/errored fd still surfaces (epoll reports
+/// them implicitly).
+fn poll_flags(interest: crate::reactor::Interest) -> u32 {
+    let mut f = libc::POLLERR as u32 | libc::POLLHUP as u32;
+    match interest {
+        crate::reactor::Interest::Readable => f |= libc::POLLIN as u32,
+        crate::reactor::Interest::Writable => f |= libc::POLLOUT as u32,
+        crate::reactor::Interest::ReadableWritable => {
+            f |= libc::POLLIN as u32 | libc::POLLOUT as u32;
+        }
+    }
+    f
+}
+
+impl IoUringPoller {
+    /// Set up the ring (SQPOLL when `sq_thread > 0`, with the EPERM
+    /// fallback in [`IoUringReactor::new`]) and the event buffer.
+    pub(crate) fn new(entries: u32, sq_thread: u32, max_events: usize) -> std::io::Result<Self> {
+        Ok(IoUringPoller {
+            inner: IoUringReactor::new(entries, sq_thread)?,
+            regs: std::collections::HashMap::new(),
+            events: Vec::with_capacity(max_events.max(1)),
+        })
+    }
+
+    /// Register a single-shot poll for `fd`.
+    pub(crate) fn register(
+        &mut self,
+        fd: i32,
+        token: u64,
+        interest: crate::reactor::Interest,
+    ) -> std::io::Result<()> {
+        self.regs.insert(token, (fd, interest));
+        self.inner.submit_poll(fd, poll_flags(interest), token)
+    }
+
+    /// Remove a registration. The single-shot poll either already
+    /// completed or is cancelled by the kernel when the fd is closed; a
+    /// stray completion carries a token with no registration and is
+    /// ignored by the worker dispatch.
+    pub(crate) fn unregister(&mut self, _fd: i32, token: u64) -> std::io::Result<()> {
+        self.regs.remove(&token);
+        Ok(())
+    }
+
+    /// Wait for completions: busy-poll (timeout 0) submits and syncs the
+    /// CQ without blocking; a positive timeout blocks on one completion.
+    /// Returns the number of events delivered.
+    pub(crate) fn wait(&mut self, timeout_ms: i32) -> std::io::Result<usize> {
+        self.events.clear();
+        if timeout_ms == 0 {
+            self.inner.submit_all()?;
+        } else {
+            self.inner.submit_and_wait(1)?;
+        }
+        self.inner.drain(|token, res| {
+            let interest = self.regs.get(&token).map(|&(_, i)| i);
+            let (readable, writable) = match interest {
+                Some(crate::reactor::Interest::Readable) => (true, false),
+                Some(crate::reactor::Interest::Writable) => (false, true),
+                Some(crate::reactor::Interest::ReadableWritable) => (true, true),
+                None => (false, false),
+            };
+            self.events.push(crate::reactor::EpollEvent {
+                token,
+                readable,
+                writable,
+                hang_up: false,
+                error: res.is_err(),
+            });
+        });
+        Ok(self.events.len())
+    }
+
+    /// Copy the first `n` delivered events into `out` (borrow-free).
+    pub(crate) fn copy_events(
+        &self,
+        n: usize,
+        out: &mut [crate::reactor::EpollEvent],
+    ) -> usize {
+        let m = n.min(self.events.len()).min(out.len());
+        out[..m].copy_from_slice(&self.events[..m]);
+        m
+    }
+
+    /// Re-submit the single-shot poll for `token` (the handler already
+    /// drained the fd to EAGAIN, so the re-arm is edge-equivalent).
+    pub(crate) fn rearm(&mut self, token: u64) -> std::io::Result<()> {
+        match self.regs.get(&token) {
+            Some(&(fd, interest)) => self.inner.submit_poll(fd, poll_flags(interest), token),
+            None => Ok(()),
+        }
     }
 }
 

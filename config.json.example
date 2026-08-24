@@ -8,7 +8,9 @@
     "strategy": "epoll-busy-poll",
     "max_events": 256,
     "busy_poll": true,
-    "timeout_ms": 0
+    "timeout_ms": 0,
+    "io_uring_entries": 256,
+    "io_uring_sq_thread": 0
   },
   "udp": {
     "rcvbuf": 4194304,
@@ -17,7 +19,7 @@
     "gro": false,
     "zerocopy": false,
     "reuseport": true,
-    "incoming_cpu": true
+    "incoming_cpu": false
   },
   "tcp": {
     "nodelay": true,
@@ -43,6 +45,10 @@
     "splice": true,
     "registered_buffers": false,
     "udp_zerocopy": false
+  },
+  "af_xdp": {
+    "device": "",
+    "queue": 0
   },
   "engine": {
     "udp_bind": "127.0.0.1:7777",
