@@ -39,28 +39,28 @@ without them io_uring is a regression on 2C/4T (measured).
 ### 1b. AF_XDP — raw frames to userspace, no sk_buff
 
 `fds-core/src/af_xdp.rs` implements the frame pipeline (Eth/IPv4/UDP
-parse, checksum, MAC-swap/TTL echo). Requirements to make it the
-datapath:
+parse, checksum, MAC-swap/TTL echo) on a real AF_XDP socket (umem +
+rx/tx rings + bind; tests skip without a device). Status on this
+machine (2026-08-24, `scripts/veth-xdp.sh`):
 
-1. **A NIC with XDP support.** iwlwifi (this laptop) does NOT support
-   XDP. Candidates on real hardware: ixgbe/i40e/ice (Intel),
-   mlx5 (NVIDIA), e1000e (no). Test locally with a **veth pair**
-   (veth supports generic XDP):
-   ```sh
-   sudo ip link add veth0 type veth peer name veth1
-   sudo ip link set veth0 up; sudo ip link set veth1 up
-   # attach a generic-XDP program, or use the XDP_FLAGS_SKB_MODE path
-   ```
-2. **UMEM + rings.** `XDP_UMEM_REG` (chunked user memory), fill/completion
-   rings + rx/tx rings (the af_xdp.rs module builds the frame pipeline
-   on top of this). The engine's per-core design maps 1:1 to AF_XDP
-   queues: one UMEM + ring set per worker, queue pinned to the core.
-3. **XDP program attach.** Load a minimal XDP_PASS/redirect program
-   (`bpftool prog load ... xdpgeneric` on veth) so frames reach the
-   socket; or use a libbpf-rs/aya-based loader in Rust.
-4. **Busy-poll the rings** (rx->process->tx->refill) instead of the
-   epoll loop — this is the true "IPC 2.4" path: no syscalls, no skb
-   alloc (which is where this kernel's init_on_alloc tax lives).
+- veth pair creation + XDP attach path verified: the kernel accepts
+  generic-XDP programs via `ip link set dev veth1 xdp obj ... sec xdp`.
+- The BPF compile step is blocked by TOOLING, not the kernel: this box
+  has no clang driver (LLVM tools only), no gcc-bpf, and the rustc
+  `bpfel-unknown-none` target is not installed. `xbps-install -S clang`
+  unblocks the harness in one command.
+- Real production target remains an XDP-capable NIC (ixgbe/i40e/ice,
+  mlx5); veth gives a local end-to-end test once clang exists.
+
+Requirements to make it the datapath (full plan in the section below
+this one in earlier revisions — condensed):
+
+1. **A NIC with XDP support** (or the veth pair for local testing).
+2. **UMEM + rings.** `XDP_UMEM_REG`, fill/completion + rx/tx rings, one
+   set per worker, queue pinned to the core (af_xdp.rs builds this).
+3. **XDP program attach** (`ip link ... xdp obj`, or aya/libbpf-rs).
+4. **Busy-poll the rings** (rx->process->tx->refill) — no syscalls, no
+   skb alloc (which is where this kernel's init_on_alloc tax lives).
 
 Checksum/GSO: AF_XDP bypasses GRO/GSO — the driver offloads or you do
 it in user space (af_xdp.rs already computes checksums).

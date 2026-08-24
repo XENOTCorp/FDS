@@ -27,3 +27,13 @@ seq: 5004 req/s — p50 184.8us  p90 246.6us  p99 362.5us  p999 483.7us
   module (Prometheus text) under atomos_h2_* / atomos_h3_*.
 - h2c is prior-knowledge (no TLS). H2-over-TLS uses the same handler.
 - Repro: FDS scripts/bench-h23.sh.
+
+## re-run with scheduler + streaming + multi-thread runtime (2026-08-24)
+# atomos-proto now: multi_thread runtime, integer scheduler gate on
+# every request (firewall + admission, mode=fair), streaming dispatch
+# (body chunks fed as they arrive; OutBody::Stream responses).
+H2 seq:      7115 req/s (p50 133.4us)   [was 7953 / 120.8us — ~10% gate cost]
+H2 mux x64: 18301 req/s                  [was 19505]
+H3 seq:      5139 req/s (p50 179.7us)   [was 5004 / 184.8us]
+holb-proxy:  p50 140.0us (still muxed, no HOLB)
+hpack-proxy: 149 B/req -> 12 B/req (unchanged)
