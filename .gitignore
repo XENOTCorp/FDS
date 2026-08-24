@@ -5,3 +5,6 @@ target/
 # Editor/OS noise
 *.swp
 .DS_Store
+
+# Subagent-driven development scratch (git-ignored)
+.superpowers/
