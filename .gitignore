@@ -1,0 +1,7 @@
+# Build artifacts
+target/
+*.pdf
+
+# Editor/OS noise
+*.swp
+.DS_Store
