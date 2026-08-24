@@ -8,3 +8,13 @@ target/
 
 # Subagent-driven development scratch (git-ignored)
 .superpowers/
+
+# LaTeX artifacts
+*.aux
+*.log
+*.out
+*.toc
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
