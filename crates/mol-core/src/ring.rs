@@ -309,9 +309,21 @@ mod tests {
         }
     }
 
-    /// Threaded stress tests spin busy-wait loops; under parallel debug
-    /// execution on few cores they are slow. Run explicitly:
-    /// `cargo test --release -p mol-core -- --ignored --test-threads=1`.
+    /// Threaded stress tests busy-wait by nature, so the default suite
+    /// skips them. Run explicitly (~2 s in debug):
+    /// `cargo test -p mol-core -- --ignored --test-threads=1`.
+    ///
+    /// The spin loops use a pause-instruction backoff with a periodic
+    /// scheduler yield: cheaper than a `sched_yield` syscall per iteration
+    /// (which dominates in unoptimized debug builds) while still letting
+    /// spinning threads share few cores.
+    fn spin_backoff(rounds: u32) {
+        for _ in 0..rounds {
+            core::hint::spin_loop();
+        }
+        std::thread::yield_now();
+    }
+
     #[test]
     #[ignore]
     fn spsc_threaded_stress() {
@@ -328,9 +340,7 @@ mod tests {
                         Ok(()) => break,
                         Err(b) => v = b,
                     }
-                    // Yield: under parallel test execution the spinning
-                    // threads can starve each other on few cores.
-                    std::thread::yield_now();
+                    spin_backoff(64);
                 }
             }
         });
@@ -342,7 +352,7 @@ mod tests {
                     sum += v as u64;
                     seen += 1;
                 } else {
-                    std::thread::yield_now();
+                    spin_backoff(64);
                 }
             }
             sum
@@ -372,12 +382,18 @@ mod tests {
     #[test]
     #[ignore]
     fn mpmc_threaded_stress() {
+        use std::sync::atomic::AtomicUsize;
         use std::sync::Arc;
         use std::thread;
         const P: usize = 2; // producers
         const C: usize = 2; // consumers
         const PER: usize = 5_000; // items per producer
+        const TOTAL: usize = P * PER;
         let ring = Arc::new(MpmcRing::<u32, 1024>::new());
+        // Shared count of items still to be consumed: consumers exit when
+        // it reaches zero (a per-consumer `got == TOTAL` target can never
+        // be met once the items are split between consumers — livelock).
+        let remaining = Arc::new(AtomicUsize::new(TOTAL));
         let mut producers = Vec::new();
         for p in 0..P {
             let r = ring.clone();
@@ -390,7 +406,7 @@ mod tests {
                             Ok(()) => break,
                             Err(b) => v = b,
                         }
-                        std::thread::yield_now();
+                        spin_backoff(64);
                     }
                 }
             }));
@@ -398,15 +414,18 @@ mod tests {
         let mut consumers = Vec::new();
         for _ in 0..C {
             let r = ring.clone();
+            let rem = remaining.clone();
             consumers.push(thread::spawn(move || {
                 let mut sum: u64 = 0;
-                let mut got = 0usize;
-                while got < P * PER {
+                loop {
+                    if rem.load(Ordering::Relaxed) == 0 {
+                        break;
+                    }
                     if let Some(v) = r.try_pop() {
+                        rem.fetch_sub(1, Ordering::Relaxed);
                         sum += v as u64;
-                        got += 1;
                     } else {
-                        std::thread::yield_now();
+                        spin_backoff(64);
                     }
                 }
                 sum
@@ -416,7 +435,7 @@ mod tests {
             p.join().unwrap();
         }
         let total: u64 = consumers.into_iter().map(|c| c.join().unwrap()).sum();
-        let expect = (0..(P * PER) as u64).sum::<u64>();
+        let expect = (0..TOTAL as u64).sum::<u64>();
         assert_eq!(total, expect);
     }
 }

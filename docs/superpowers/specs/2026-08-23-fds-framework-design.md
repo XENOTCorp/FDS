@@ -82,8 +82,9 @@ Note: the planned `ctx.rs` module was dropped — the context is a generic param
 
 ### 4.5 Baseline build config
 
-- Workspace `Cargo.toml`: release `opt-level=3`, `lto=fat`, `codegen-units=1`, `panic=abort`, `overflow-checks=false`, `debug-assertions=false`; dev `overflow-checks=true`, `debug-assertions=true`.
+- Workspace `Cargo.toml`: release `opt-level=3`, `lto=fat`, `codegen-units=1`, `panic=abort`, `overflow-checks=false`, `debug-assertions=false`; dev `opt-level=1`, `overflow-checks=true`, `debug-assertions=true`; dependencies in dev at `opt-level=3` (`[profile.dev.package."*"]`).
 - `.cargo/config.toml`: `relocation-model=pic` (portable baseline).
+- On the dev host (2026-08-24): the environment `RUSTFLAGS` was removed and codegen flags were consolidated into `~/.cargo/config.toml` (`target-cpu=native`, mold linker, `relocation-model=pic`, incremental on, release `lto=thin`). Cargo 1.97 gives the home config priority over the project config, so the host's `[profile.dev] opt-level=0` overrides the manifest's `opt-level=1` there; the manifest remains the portable baseline.
 - `target-cpu=native` and hardware-specific `target_feature` sets come from sub-project 3's adaptive build script.
 - MSRV pinned to 1.97.1 (`rust-version` in the workspace; author decision §7.3).
 
@@ -96,7 +97,7 @@ Four authoring templates as `.rs` files (pure atom, effectful atom, hybrid molec
 - Law tests (property-style, deterministic sweeps — no external RNG): `then` associativity (NT1), interchange with stateful molecules (NT11, states agree up to the canonical reassociation), tensor symmetry up to swap (NT3), batch element independence (NT46), determinism (NT8), pipeline equations (NT9), SPSC/MPMC FIFO across wraparound (NT12). `crates/mol-core/tests/laws.rs`.
 - `static_assertions` on sizes/alignments of every shared type (`tests/static_asserts.rs`).
 - Zero-allocation hot-path probe: counting `GlobalAlloc`; the full reactor pipeline (ingress → molecule → egress, checksums, pool alloc/return, MPMC, array/tensor, closure carrier) must not allocate (`tests/zero_alloc.rs`).
-- Busy-wait threaded stress tests are `#[ignore]`d: the default suite must stay fast (hard budget: whole suite ≤ 5 min; currently ~0.15 s); run them explicitly with `cargo test -p mol-core -- --ignored --test-threads=1`.
+- Busy-wait threaded stress tests are `#[ignore]`d: the default suite must stay fast (hard budget: whole suite ≤ 5 min; currently ~0.21 s); run them explicitly with `cargo test -p mol-core -- --ignored --test-threads=1` (~2 s). Spin loops use a pause-instruction backoff with a periodic scheduler yield.
 - Sanitizer/fuzz jobs deferred: no parser atoms exist until sub-project 4, and no CI config lives in this repo yet.
 
 ## 5. Constraints
