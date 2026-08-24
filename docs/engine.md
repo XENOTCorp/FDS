@@ -2,9 +2,14 @@
 
 The engine is the flagship instantiation of the Mol framework (thesis
 ch. 10: the reactor loop is a traced molecule; ch. 13: the standard
-policies). It is a **binary package with no public API** — every module
-is `pub(crate)`, the `fds` binary is the product, and tests live
-in-module.
+policies). The crate is **lib + bin**: the library (`fds_core`) exposes
+the transport primitives — [`reactor`], [`tcp`], [`udp`], [`conn`],
+[`config`], [`metrics`], [`util`] — and the `fds` binary is the thin CLI
+over the built-in echo engine (`engine::run`). The no-public-API ruling
+held for the engine milestone; building consumers on the primitives
+(Atomos's H1 server is the first) superseded it for the library surface.
+Experimental paths (io_uring, AF_XDP) and the parser/checksum atoms stay
+crate-private. Tests live in-module.
 
 ## Architecture: one worker per logical CPU
 
@@ -73,21 +78,38 @@ Loop invariants (each worker, epoll path):
 
 | Module | Responsibility |
 |---|---|
-| `main.rs` | Arg dispatch (`--bench`, `--bench-large`, `--latency`, `--latency-against`, `--fuzz`, else engine), config.json loading, async-signal-safe SIGINT |
-| `engine.rs` | The loop: worker fan-out per logical CPU, strategy dispatch (epoll loop vs io_uring datapath), UDP/TCP echo handlers, per-core counters, metrics serving, core pinning, AF_XDP forwarding thread |
-| `reactor.rs` | `Reactor` (rustix epoll, edge-triggered, preallocated event array): `register/unregister/poll_timeout/copy_events` — the epoll strategy's readiness source |
+| `lib.rs` | The library surface: `pub mod` `reactor`, `tcp`, `udp`, `conn`, `config`, `metrics`, `util`, `engine`, `benchmarks`, `fuzz`; experimental paths (`io_uring_reactor`, `af_xdp`) and the parser/checksum atoms stay private |
+| `main.rs` (bin) | Thin CLI over the library: arg dispatch (`--bench`, `--bench-large`, `--latency`, `--latency-against`, `--fuzz`, else engine), config.json loading |
+| `engine.rs` | The built-in echo loop: worker fan-out per logical CPU, strategy dispatch (epoll loop vs io_uring datapath), UDP/TCP echo handlers, per-core counters, metrics serving, core pinning, AF_XDP forwarding thread; `run(&Config)` is public (the reference loop) |
+| `reactor.rs` | `Reactor` (rustix epoll, edge-triggered, preallocated event array): `register/modify/unregister/poll_timeout/copy_events` — the epoll strategy's readiness source; `PollTimeout` re-exported so consumers build timeouts without rustix |
 | `udp.rs` | Nonblocking IPv4 socket; `recv_batch`/`send_batch` (recvmmsg/sendmmsg, preallocated arrays; receive buffers const-generic, engine uses `MAX_DATAGRAM` = 64 KiB so any datagram arrives whole), GSO (UDP_SEGMENT), GRO, MSG_TRUNC, SO_INCOMING_CPU, MSG_ZEROCOPY (`send_to_zerocopy`); options are set **before bind** so SO_REUSEPORT group admission works |
-| `tcp.rs` | `TcpListener` (accept4 nonblocking, options before bind, FASTOPEN/NODELAY/QUICKACK/DEFER_ACCEPT/CORK), `TcpStream` (read/readv/write_all/writev/splice_from_fd via a pipe — `splice(file→socket)` is EINVAL on Linux) |
+| `tcp.rs` | `TcpListener` (IPv4+IPv6, accept4 nonblocking, options before bind, FASTOPEN/NODELAY/QUICKACK/DEFER_ACCEPT/CORK, `local_addr()` for port-0, backlog parameter), `TcpStream` (read/readv/write_all/writev/splice_from_fd via a pipe — `splice(file→socket)` is EINVAL on Linux) |
 | `sctp.rs` | libsctp FFI (declared in-crate against `netinet/sctp.h`; `sctp_recvmsg` returns `c_int`), send/recv with stream ids, peeloff, multi-homing via `sctp_bindx`; tests skip when the kernel module is absent; engine path not yet bound |
-| `conn.rs` | `HotState`/`ColdState` on own cache lines (false-sharing discipline), `ConnTable` (preallocated slots + lock-free free list, heap-backed arena via `mol::Pool`), packed `ConnectionId` (core << 32 | slot) used as poller tokens |
+| `conn.rs` | `HotState`/`ColdState` on own cache lines (false-sharing discipline), `ConnTable` (preallocated slots + lock-free free list, heap-backed arena via `mol::Pool`), packed `ConnectionId` (core << 32 | slot) used as poller tokens; slot guards held for the connection's lifetime (never double-release) |
 | `checksum.rs` | IP/TCP/UDP one's-complement via the framework SIMD; SCTP CRC32c (table-driven) |
 | `parse.rs` | Bounds-safe IPv4/UDP/TCP header parsers as pure atoms; LCG property sweep |
 | `metrics.rs` | Per-core padded counters (`CounterSet`), `add_packets/bytes/drops(core, …)` from the workers, aggregate `.total` + per-core lines, Unix-socket pull server |
-| `bench.rs` | `--bench` (throughput, echo), `--bench-large` (one-way byte-ceiling, per direction), `--latency` (transport RTT), `--latency-against` (engine RTT) |
+| `benchmarks.rs` | CLI tooling: `--bench` (throughput, echo), `--bench-large` (one-way byte-ceiling, per direction), `--latency` (transport RTT), `--latency-against` (engine RTT) |
 | `fuzz.rs` | Deterministic xorshift64 harness over parsers/checksums (libFuzzer would need a public API — see below) |
 | `config.rs` | config.json + `FDS_*` env overrides; all sections defaulted |
+| `util.rs` | `pin_to_core` (sched_setaffinity), `now_ticks` (coarse monotonic seconds via vDSO — no clock syscall per packet) |
 | `io_uring_reactor.rs` | `IoUringReactor` (feature `io-uring`, io-uring crate 0.7) + `IoUringDatapath`: the `io-uring` strategy's completion-driven UDP/TCP echo — IORING_OP_RECVMSG/SENDMSG per UDP slot, IORING_OP_ACCEPT/READ/WRITE per TCP connection, a periodic IORING_OP_TIMEOUT for idle wakeups; fds are blocking so ops wait in-kernel; SQPOLL with EPERM fallback |
 | `af_xdp.rs` | Experimental AF_XDP path (feature `af-xdp`, UAPI declared in-crate): umem + rings + bind, plus `process_frame` — the Ethernet/IPv4/UDP validate-and-echo pipeline (parse + checksum atoms, MAC swap, TTL decrement, IP checksum recompute) unit-tested with synthetic frames; the engine runs a forwarding thread when `af_xdp.device` is configured and opens |
+
+## Building on the primitives (consumers)
+
+The library surface is the seam for application servers: `reactor` +
+`tcp` + `conn` replace a hand-rolled epoll loop and socket setup, and
+`config`/`metrics`/`util` provide the plumbing conventions. The first
+consumer is **Atomos** (sibling repo): its H1 engine runs one FDS
+`Reactor` per pinned worker, binds FDS `TcpListener`s (SO_REUSEPORT,
+options before bind), stores per-connection HTTP state keyed by FDS
+`ConnectionId` tokens in a `ConnTable`, and ports its read/parse/
+dispatch/wire-cache state machine onto the drain-to-EAGAIN discipline.
+The `ConnTable` slot-guard rule is the invariant consumers must keep:
+hold the guard for the connection's lifetime and let its `Drop` release
+the slot — calling `release_slot` while a guard is alive double-releases
+the free-list ring.
 
 ## Configuration
 

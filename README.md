@@ -13,7 +13,7 @@ paper (thesis) and a software standard:
 | 1 | **Paper + standard** — the Mol category theory (NT1–NT55), a rewriting-based cost model, an ARCSS-style software standard, and proof-verification tools | `docs/paper/`, `docs/standard/`, `docs/paper/verify/` | merged |
 | 2 | **Mol framework** — `mol-core` (lib `mol`): atoms, molecules, composition, lock-free rings, buffers, memory layout, SIMD checksums, authoring templates | `crates/mol-core/`, `templates/` | merged |
 | 3 | **Build tooling** — adaptive build script + `config.json` hardware detection | `build/`, `config/`, `crates/fds-detect/` | merged |
-| 4 | **Transport engine** — `fds-core` (bin `fds`): epoll busy-poll reactor, UDP/TCP/SCTP transports, hot/cold connection state, metrics, bench/fuzz | `crates/fds-core/`, `docs/ops-tuning.md` | merged |
+| 4 | **Transport engine** — `fds-core` (lib `fds_core` + bin `fds`): epoll busy-poll reactor, UDP/TCP/SCTP transports, hot/cold connection state, metrics, bench/fuzz; consumed by Atomos's H1 server | `crates/fds-core/`, `docs/ops-tuning.md` | merged |
 
 ## Quick start
 
@@ -94,9 +94,11 @@ scripts/perf.sh            # perf stat/record, llvm-mca, cachegrind, iperf3 wrap
 ## Conventions
 
 - **No Python anywhere**; Rust only.
-- **No public API on the engine**: `fds-core` is a binary package; every
-  module is `pub(crate)`. The `fds` binary is the product. (The framework
-  `mol-core` is a normal library with a public API and templates.)
+- **The engine is lib + bin**: `fds-core` exposes the transport
+  primitives (`reactor`, `tcp`, `udp`, `conn`, `config`, `metrics`,
+  `util`) for consumers — Atomos's H1 server builds on them — while the
+  `fds` binary is a thin CLI over the built-in echo engine. Experimental
+  paths (io_uring, AF_XDP) and parser/checksum atoms stay crate-private.
 - **Zero allocation in hot paths** (enforced by tests where it matters);
   structures are preallocated at startup.
 - **Every `unsafe` block carries a `SAFETY:` comment**.
