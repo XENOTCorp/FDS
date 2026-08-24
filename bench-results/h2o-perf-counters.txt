@@ -1,0 +1,18 @@
+
+ Performance counter stats for process id '26344':
+
+    17,970,313,240      cycles                                                                  (55.30%)
+     9,111,273,138      instructions                     #    0.51  insn per cycle              (66.47%)
+     1,872,393,129      branches                                                                (66.52%)
+        21,279,607      branch-misses                    #    1.14% of all branches             (66.78%)
+     2,481,639,509      dTLB-loads                                                              (66.52%)
+         4,968,428      dTLB-load-misses                 #    0.20% of all dTLB cache accesses  (67.12%)
+        26,005,389      cache-misses                                                            (44.63%)
+       252,111,056      L1-dcache-load-misses                                                   (44.23%)
+       425,549,528      L1-icache-load-misses                                                   (44.20%)
+                 0      page-faults                                                           
+            47,094      context-switches                                                      
+               159      cpu-migrations                                                        
+
+       4.003789648 seconds time elapsed
+

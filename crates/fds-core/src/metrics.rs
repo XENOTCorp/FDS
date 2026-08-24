@@ -186,6 +186,7 @@ fn write_kind(out: &mut String, sets: &[CounterSet]) {
 }
 
 /// Pull endpoint: a Unix socket that serves [`Metrics::write_into`] text.
+#[derive(Debug)]
 pub struct MetricsServer {
     /// The bound listener (nonblocking at the kernel level).
     listener: std::os::unix::net::UnixListener,
@@ -200,13 +201,16 @@ impl rustix::fd::AsFd for MetricsServer {
 }
 
 impl MetricsServer {
-    /// Bind the Unix socket at `path` (unlinks a stale file first).
+    /// Bind the Unix socket at `path`, best-effort-unlinking a stale
+    /// socket file first. Unlink failures are ignored: a stale file
+    /// owned by another user must not fail the engine with a misleading
+    /// `PermissionDenied` — the bind below then reports the accurate
+    /// condition (`AddrInUse` when a socket is actually bound there).
     pub fn bind(path: &Path) -> std::io::Result<Self> {
-        // A stale socket file from a previous run must not fail the bind.
         match std::fs::remove_file(path) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e),
+            Err(_) => {}
         }
         let listener = std::os::unix::net::UnixListener::bind(path)?;
         // Kernel-level nonblocking (FIONBIO) so accept() returns
@@ -314,6 +318,24 @@ mod tests {
         assert!(report.contains("packets"), "report: {report}");
 
         // Dropping the server unlinks the socket file.
+        drop(server);
+        assert!(!path.exists(), "socket path must be unlinked on drop");
+    }
+
+    #[test]
+    fn stale_socket_file_is_rebound() {
+        static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "fds-metrics-stale-{}-{}.sock",
+            std::process::id(),
+            seq
+        ));
+
+        // A stale file at the socket path (no live listener) must be
+        // unlinked and rebound.
+        std::fs::write(&path, b"").expect("stale file");
+        let server = MetricsServer::bind(&path).expect("stale file must be rebound");
         drop(server);
         assert!(!path.exists(), "socket path must be unlinked on drop");
     }

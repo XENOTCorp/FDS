@@ -417,6 +417,18 @@ fn spawn_xdp_thread(
     let stop = stop.clone();
     match crate::af_xdp::XskSocket::open(ifindex as i32, queue) {
         Ok(xsk) => {
+            // Register the socket in the pinned XSKMAP so the attached
+            // XDP program can steer frames into it. Without this the
+            // socket binds but receives nothing.
+            if !cfg.af_xdp.xskmap.is_empty() {
+                if let Err(e) = xsk.register_in_map(&cfg.af_xdp.xskmap, queue) {
+                    eprintln!(
+                        "fds: af_xdp xskmap {} update failed ({e}); kernel datapath only",
+                        cfg.af_xdp.xskmap
+                    );
+                    return None;
+                }
+            }
             eprintln!(
                 "fds: af_xdp bound {} queue {queue} (ifindex {ifindex}); forwarding frames",
                 cfg.af_xdp.device

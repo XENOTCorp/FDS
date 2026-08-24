@@ -1,28 +1,28 @@
-# reactor A/B: epoll-busy-poll vs io_uring (fds engine TCP echo) — 2026-08-24
+# reactor A/B: epoll-busy-poll vs io_uring vs io_uring SQPOLL — 2026-08-24
 # host: xenot | cpu: Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz | kernel: 7.2.0_1
-# tool: --bench-tcp-against (4 conns x 60 KiB write flood, 3s) + --latency-against
-# verdict: the io_uring experimental datapath is SLOWER on this
-#   Broadwell laptop. epoll-busy-poll stays the default.
+# tool: --bench-udp-against (4 sockets x 60KiB echo) + --bench-tcp-against
+#       (4 conns x 60KiB write flood) against the RUNNING engine per
+#       strategy (the --bench/--bench-large in-process modes ignore the
+#       strategy env — they are the syscall datapath; not used here).
+# verdict: epoll-busy-poll stays the default. io_uring matches UDP but
+#   its TCP accept/echo path stalls under this load; SQPOLL's kernel
+#   thread contends with 4 workers on 2 physical cores and loses badly.
 
-## TCP echo throughput, client->server
-epoll-busy-poll   16.02 Gbps (2003 MiB/s)
-io-uring          10.25 Gbps (1282 MiB/s)   <- -36%
+## UDP echo, 4 sockets x 60KiB
+epoll-busy-poll   10.31 Gbps sent / 10.25 echoed (99.40%)
+io-uring          10.14 Gbps sent / 10.12 echoed (99.76%)
+io-uring SQPOLL    5.65 Gbps sent /  5.53 echoed (97.76%)   <- -45%
 
-## UDP echo RTT (--latency-against, 2s)
-epoll-busy-poll   p50 22.6us, 29524 samples, p99 2229.6us
-io-uring          p50 20.0us,  7141 samples, p99 6432.1us
-                  (io_uring UDP echo starved: client recv timeouts,
-                   ~1/4 of epoll's sample count, worse tail)
+## TCP echo, 4 conns x 60KiB write flood
+epoll-busy-poll   20.22 Gbps (2528 MiB/s)
+io-uring          (no output — bench timed out; accept/echo stalled)
+io-uring SQPOLL    0.21 Gbps (27 MiB/s)                     <- ~100x worse
 
 ## notes
-- io_uring run used 256 entries, sq_thread 0 (no SQPOLL), no registered
-  buffers / fixed files: the ring adds submission overhead on a 2C/4T
-  chip where the epoll loop is already sendmmsg/recvmmsg-batched.
-- SO_ZEROCOPY setsockopt succeeds WITHOUT root (the "requires CAP_NET_RAW"
-  comment in udp.rs is wrong); wiring MSG_ZEROCOPY into the engine send
-  path is doable unprivileged. The engine echo currently never calls
-  send_to_zerocopy — it is dead code in the datapath.
-- GSO/GRO (UDP_SEGMENT/UDP_GRO) are socket-level options already wired;
-  on loopback a 60 KiB datagram fits the 65535 limit in one skb, so GSO
-  segmentation would only add packets — the win is on real NICs (MTU
-  1500), not measurable on lo.
+- MetricsServer::bind bug fixed (stale root-owned /tmp/fds-metrics.sock
+  made unprivileged engine starts fail with a misleading EPERM; the
+  unlink is now best-effort and bind reports the accurate error).
+- AF_XDP / DPDK are not runnable on this box: the only live link is
+  wifi (no XDP), enp0s25 is a non-XDP ethernet (e1000e-class, no
+  carrier), and veth has no AF_XDP socket support. Kernel bypass ends
+  at io_uring here, and it does not beat epoll on this 2C/4T part.

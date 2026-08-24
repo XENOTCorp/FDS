@@ -250,6 +250,10 @@ pub struct AfXdpConfig {
     pub device: String,
     /// Queue id on the device.
     pub queue: u32,
+    /// Pinned XSKMAP path (bpffs) to register this socket in; empty =
+    /// do not register (frames will not reach the socket without an XDP
+    /// program steering into the map).
+    pub xskmap: String,
 }
 
 impl Config {
@@ -302,6 +306,9 @@ impl Config {
         }
         if let Some(v) = env_u32("FDS_AF_XDP_QUEUE") {
             self.af_xdp.queue = v;
+        }
+        if let Ok(v) = std::env::var("FDS_AF_XDP_XSKMAP") {
+            self.af_xdp.xskmap = v;
         }
         if let Some(v) = env_flag("FDS_UDP_GRO") {
             self.udp.gro = v;

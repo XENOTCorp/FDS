@@ -590,6 +590,82 @@ impl XskSocket {
         self.tx_in_flight = true;
         true
     }
+
+    /// Insert this socket into an XSKMAP so an attached XDP program can
+    /// steer frames into the socket's RX ring. `map_path` is a pinned
+    /// bpffs map (e.g. `/sys/fs/bpf/xskmap`); the socket is registered
+    /// at `queue`. The map fd comes from `BPF_OBJ_GET` — plain `open()`
+    /// on a pinned XSKMAP returns EIO on this kernel (verified; array
+    /// maps open fine, XSKMAP does not).
+    pub(crate) fn register_in_map(&self, map_path: &str, queue: u32) -> io::Result<()> {
+        const BPF_OBJ_GET: libc::c_int = 7;
+        const BPF_MAP_UPDATE_ELEM: libc::c_int = 2;
+        let path = std::ffi::CString::new(map_path)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "map path contains NUL"))?;
+        // `union bpf_attr` for BPF_OBJ_GET: pathname pointer at 0,
+        // bpf_fd at 8, file_flags at 16.
+        #[repr(C)]
+        struct BpfAttrObjGet {
+            pathname: u64,
+            bpf_fd: u32,
+            file_flags: u32,
+        }
+        let oattr = BpfAttrObjGet {
+            pathname: path.as_ptr() as u64,
+            bpf_fd: 0,
+            file_flags: 0,
+        };
+        // SAFETY: `path` is a NUL-terminated C string alive for the call.
+        let map_fd = unsafe {
+            libc::syscall(
+                libc::SYS_bpf,
+                BPF_OBJ_GET,
+                &oattr as *const BpfAttrObjGet,
+                std::mem::size_of::<BpfAttrObjGet>(),
+            )
+        };
+        if map_fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // `union bpf_attr` for BPF_MAP_UPDATE_ELEM: map_fd/key/value/flags
+        // — key/value are POINTERS to the actual u32s (repr(C) aligns the
+        // u64s after the u32 map_fd, matching the kernel's bpf_attr).
+        #[repr(C)]
+        struct BpfAttrUpdateElem {
+            map_fd: u32,
+            key: u64,
+            value: u64,
+            flags: u64,
+        }
+        let key: u32 = queue;
+        let value: u32 = self.fd as u32;
+        let attr = BpfAttrUpdateElem {
+            map_fd: map_fd as u32,
+            key: (&key as *const u32) as u64,
+            value: (&value as *const u32) as u64,
+            flags: 0,
+        };
+        // SAFETY: the bpf(2) syscall reads `attr` and the pointed-to
+        // key/value synchronously; all three outlive the call (stack
+        // locals), and the struct layouts match the kernel's `bpf_attr`
+        // for BPF_OBJ_GET / BPF_MAP_UPDATE_ELEM (verified against
+        // <linux/bpf.h> and empirically on this kernel).
+        let ret = unsafe {
+            libc::syscall(
+                libc::SYS_bpf,
+                BPF_MAP_UPDATE_ELEM,
+                &attr as *const BpfAttrUpdateElem,
+                std::mem::size_of::<BpfAttrUpdateElem>(),
+            )
+        };
+        // SAFETY: `map_fd` was returned by the kernel in the call above
+        // and is not needed after this function.
+        unsafe { libc::close(map_fd as libc::c_int) };
+        if ret < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
 }
 
 impl Drop for XskSocket {

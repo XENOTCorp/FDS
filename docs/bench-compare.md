@@ -10,9 +10,11 @@ same `127.0.0.1:<port>`, same wrk (`-t4 -c100 -d5s`), 4 workers each
 | Server | cached page req/s | 64 KiB req/s | notes |
 | --- | --- | --- | --- |
 | **Atomos H1** (FDS epoll) | **85,652–95,870** | **27,398** | in-memory response cache / wire cache |
+| h2o 2.2.6 (num-threads 4) | 69,858 | 20,547 | C, sendfile on 64 KiB (loopback re-copy penalty) |
 | nginx `return 200` (mem) | 78,679 | — | nginx engine ceiling, no static path |
 | nginx `open_file_cache` | 54,719 | **28,185** | tuned static path (sendfile) |
 | nginx default static | 10,613 | 9,147 | per-request open/stat (8x penalty here) |
+| Caddy 2.11.4 (Go, 4 procs) | 15,242 | 12,852 | Go runtime + per-request allocation overhead |
 | Seastar httpd (io_uring demo) | 20,999 | 7,788 | demo app, no sendfile/response cache |
 
 Atomos 64 KiB is the byte path (wire cache, 1.43–1.68 GB/s across runs);
@@ -54,6 +56,15 @@ with `ATOMOS_SF_MIN` lowered it switches to the sendfile path (see below).
   and no sendfile; its demo httpd is a framework sample, not a tuned
   static server — the point of the row is that Seastar-the-framework
   does not beat plain epoll here out of the box.
+- **h2o (the C SOTA-class server) is +23–37% behind Atomos** on the
+  cached page (69.9k vs 85.7–95.9k) and +33% on 64 KiB (20.5k vs
+  27.4k; h2o uses sendfile, which this loopback re-copies). Caddy
+  (Go) is 5.6x behind — the runtime overhead is the whole story there.
+- **H2/H3 after the governor fix**: the memory governor was reading
+  `/proc/self/status` twice per request (≈60% of H2-path CPU, found by
+  perf). Cached RSS (100 ms TTL) + refcount-only body clones: H2 seq
+  7.3k → 11.8–12.6k (+74%), H2 mux 15k → 72–78k (+380–420%), H3 5.0k
+  → 7.2–8.0k (+44–61%). H2 mux now beats h2o's H1 number on this box.
 - All three servers are kernel-dominated on this box (mpstat %sys+%soft
   > %usr; nginx IPC 0.50, Seastar IPC 0.59, Atomos IPC 0.54; 0
   cpu-migrations for all three).
@@ -64,6 +75,8 @@ with `ATOMOS_SF_MIN` lowered it switches to the sendfile path (see below).
 - `scripts/bench-seastar.sh <app_httpd>`; for a byte-fair short URL the
   bench files are symlinked at `/` (`/index.html`, `/file64k.bin`) and
   the script is run with `PAGE=/file/index.html BIG=/file/file64k.bin`.
+- `scripts/bench-h2o-caddy.sh` (+ `scripts/h2o-bench.conf`): h2o
+  `num-threads 4`, caddy `file-server` (GOMAXPROCS=4).
 - The root dir is `/tmp/nginx-bench/root` (same content for all three;
   Seastar's demo serves under the unavoidable `/file/` prefix).
 - Atomos 64 KiB runs use the default byte path; the sendfile A/B (same

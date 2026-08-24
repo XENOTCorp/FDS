@@ -13,73 +13,75 @@ CPU under loopback load, and three "modern" optimizations (PGO,
 io_uring naive, MSG_ZEROCOPY) all regressed on this stripped kernel.
 Getting off the kernel path is the only remaining big lever.
 
-### 1a. io_uring — already in-tree, needs the production settings
+### 1a. io_uring — measured: does not beat epoll on this box
 
 `fds-core/src/io_uring_reactor.rs` exists (feature `io-uring`, enabled
-by default) and was A/B'd: 10.25 vs 16.02 Gbps TCP echo — the ring
-LOST because the experimental path runs no SQPOLL and no registered
-buffers/files. The production recipe:
+by default). Measured against the RUNNING engine per strategy
+(bench-results/reactor-compare.txt, 2026-08-24) — the in-process
+`--bench`/`--bench-large` modes ignore the strategy env, so the numbers
+below come from `--bench-udp-against` / `--bench-tcp-against`:
 
-- `IORING_REGISTER_FILES` — fixed files, skips the file table lookup
-  per op (the engine's sockets are long-lived: perfect fit).
-- `IORING_REGISTER_BUFFERS` — pre-registered receive buffers; recv
-  writes directly into them (kernel->user copy removed on the receive
-  side).
-- `IORING_SETUP_SQPOLL` — kernel-side submission thread; removes the
-  syscall on the submit path. Config exists: `FDS_REACTOR_IO_URING_ENTRIES`,
-  `FDS_REACTOR_IO_URING_SQ_THREAD` (currently 0 = no SQPOLL).
-- Multishot recv / `IORING_OP_PROVIDE_BUFFERS` for the accept/recv
-  steady state.
+| strategy | UDP echo (4x60 KiB) | TCP echo (4x60 KiB) |
+| --- | --- | --- |
+| epoll busy-poll | 10.31 Gbps (99.4%) | 20.22 Gbps |
+| io-uring | 10.14 Gbps (99.8%) | stalls (no output) |
+| io-uring SQPOLL | 5.65 Gbps (97.8%) | 0.21 Gbps |
 
-Expected: the epoll loop is already batched and tight, so io_uring wins
-only when registered buffers remove the recv copy AND SQPOLL removes the
-submit syscall. Re-run `--bench-tcp-against` after wiring those two;
-without them io_uring is a regression on 2C/4T (measured).
+SQPOLL's kernel submission thread contends with 4 workers on 2 physical
+cores and loses badly; plain io_uring matches epoll on UDP but its TCP
+accept/echo path stalls under this load. **epoll-busy-poll stays the
+default** — the recipe below is what it would take to flip that on
+server-class hardware (registered files/buffers, multishot recv):
 
-### 1b. AF_XDP — raw frames to userspace, no sk_buff
+- `IORING_REGISTER_FILES` / `IORING_REGISTER_BUFFERS` / multishot recv.
+- Config exists: `FDS_REACTOR_IO_URING_ENTRIES`,
+  `FDS_REACTOR_IO_URING_SQ_THREAD` (0 = no SQPOLL).
+
+### 1b. AF_XDP — RX proven end-to-end on veth; TX needs a real NIC
 
 `fds-core/src/af_xdp.rs` implements the frame pipeline (Eth/IPv4/UDP
 parse, checksum, MAC-swap/TTL echo) on a real AF_XDP socket (umem +
-rx/tx rings + bind; tests skip without a device). Status on this
-machine (2026-08-24, `scripts/veth-xdp.sh`):
+rx/tx/fill/completion rings + bind). Status on this machine
+(2026-08-24, `scripts/veth-af-xdp.sh`):
 
-- veth pair creation + XDP attach path verified: the kernel accepts
-  generic-XDP programs via `ip link set dev veth1 xdp obj ... sec xdp`.
-- The BPF compile step is blocked by TOOLING, not the kernel: this box
-  has no clang driver (LLVM tools only), no gcc-bpf, and the rustc
-  `bpfel-unknown-none` target is not installed. `xbps-install -S clang`
-  unblocks the harness in one command.
-- Real production target remains an XDP-capable NIC (ixgbe/i40e/ice,
-  mlx5); veth gives a local end-to-end test once clang exists.
-
-Requirements to make it the datapath (full plan in the section below
-this one in earlier revisions — condensed):
-
-1. **A NIC with XDP support** (or the veth pair for local testing).
-2. **UMEM + rings.** `XDP_UMEM_REG`, fill/completion + rx/tx rings, one
-   set per worker, queue pinned to the core (af_xdp.rs builds this).
-3. **XDP program attach** (`ip link ... xdp obj`, or aya/libbpf-rs).
-4. **Busy-poll the rings** (rx->process->tx->refill) — no syscalls, no
-   skb alloc (which is where this kernel's init_on_alloc tax lives).
-
-Checksum/GSO: AF_XDP bypasses GRO/GSO — the driver offloads or you do
-it in user space (af_xdp.rs already computes checksums).
+- **Toolchain unblocked**: `xbps-install -Sy clang bpftool` installed;
+  the XDP steering program (`scripts/xdp_redirect.c`, BTF-defined
+  XSKMAP, no libbpf headers) compiles and attaches in driver mode.
+- **XSK bind on veth works as root** (unprivileged BPF is off on this
+  kernel: `CONFIG_BPF_UNPRIV_DEFAULT_OFF=y`; `bind` EPERMs as a
+  non-root user).
+- **Pinned-map registration added** (`XskSocket::register_in_map`,
+  `FDS_AF_XDP_XSKMAP`): the engine updates the XSKMAP via
+  `BPF_OBJ_GET` + `BPF_MAP_UPDATE_ELEM`. Two kernel quirks found and
+  worked around: plain `open()` on a pinned XSKMAP returns EIO (use
+  `BPF_OBJ_GET`), and `BPF_MAP_UPDATE_ELEM` takes *pointers* to
+  key/value in `bpf_attr`.
+- **RX proven**: a crafted L2 frame from veth1 is XDP_REDIRECTed into
+  the engine's RX ring, validated, checksummed and echoed into the TX
+  ring ("af_xdp thread stopped (1 forwarded, 0 dropped)").
+- **TX blocked by veth, not fds**: veth has no XSK TX path (no
+  ndo_xsk_wakeup), so the echoed frame stays in the TX ring. A real
+  XDP-capable NIC (ixgbe/i40e/ice, mlx5) completes the loop. The
+  laptop's only live link is wifi; enp0s25 is a non-XDP ethernet with
+  no carrier.
 
 ### 1c. DPDK (Rust: dpdk-rs) — the heavy option
 
 Only for real NICs with DPDK PMD support. Needs hugepages, UIO/VFIO,
 and binding the device (`dpdk-devbind.py -b vfio-pci 0000:03:00.0`).
 Overkill while AF_XDP covers the same ground with a stock kernel; keep
-as the fallback if the target NIC lacks XDP.
+as the fallback if the target NIC lacks XDP. Not runnable here (no
+DPDK-PMD NIC with a carrier).
 
 ### 1d. Order of attack
 
-1. veth + generic XDP + af_xdp.rs frame pipeline end-to-end on this
-   laptop (proves the code without new hardware).
-2. io_uring production settings (registered files/buffers, SQPOLL) +
-   re-A/B against epoll (`--bench-tcp-against` / `--bench-udp-against`).
+1. **DONE**: veth + driver-mode XDP + af_xdp.rs RX pipeline end-to-end
+   (proves the code without new hardware); XSK TX needs a real NIC.
+2. **DONE (measured)**: io_uring production settings A/B — SQPOLL and
+   registered ops do not beat epoll on 2C/4T (reactor-compare.txt);
+   re-verify on server hardware.
 3. Real NIC (any XDP-capable Intel/NVIDIA server card) for the wire
-   numbers and the AF_XDP full datapath.
+   numbers, XSK TX, and the full AF_XDP datapath.
 
 ## 2. AMD / Intel CPU targeting
 
