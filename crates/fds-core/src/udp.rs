@@ -24,6 +24,13 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 /// [`UdpSocket`] are preallocated to this size in `new`.
 const MAX_BATCH: usize = 64;
 
+/// Receive-buffer size that fits ANY IPv4 UDP datagram whole: the wire
+/// maximum is 65535 bytes (16-bit IPv4 length field), so 65536 = 1<<16
+/// never truncates, not even for loopback GSO/GRO jumbo datagrams. The
+/// engine and the large-datagram bench allocate [`mol::Buffer`]s of this
+/// size; small buffers are only used by tests exercising MSG_TRUNC.
+pub(crate) const MAX_DATAGRAM: usize = 65536;
+
 /// `UDP_SEGMENT` (GSO) socket option, `<linux/udp.h>`. libc 0.2 does not
 /// export it for glibc targets, so define it here (103, verified against
 /// /usr/include/linux/udp.h).
@@ -77,7 +84,7 @@ fn zeroed_array<T>() -> Box<[T]> {
 }
 
 /// `setsockopt` with a single `int` value.
-fn set_int(fd: i32, level: libc::c_int, opt: libc::c_int, val: libc::c_int) -> io::Result<()> {
+pub(crate) fn set_int(fd: i32, level: libc::c_int, opt: libc::c_int, val: libc::c_int) -> io::Result<()> {
     // SAFETY: `val` is valid for the duration of the call; the kernel
     // copies the option value before `setsockopt` returns.
     let ret = unsafe {
@@ -226,9 +233,12 @@ impl UdpSocket {
     /// Receive a batch of up to `bufs.len()` datagrams into the given
     /// preallocated buffers. Returns the number of datagrams received
     /// (0 = would block). Callers MUST drain until 0 (drain-to-EAGAIN).
-    pub(crate) fn recv_batch(
+    /// Generic over the buffer size so the engine can receive jumbo
+    /// datagrams whole ([`MAX_DATAGRAM`]) while tests use small buffers
+    /// to exercise MSG_TRUNC.
+    pub(crate) fn recv_batch<const N: usize>(
         &self,
-        bufs: &mut [mol::Buffer<2048>],
+        bufs: &mut [mol::Buffer<N>],
         out: &mut [RecvResult],
     ) -> std::io::Result<usize> {
         let n = bufs.len().min(out.len()).min(MAX_BATCH);
@@ -262,7 +272,8 @@ impl UdpSocket {
         }
         // SAFETY: `hdrs` points at `n` initialized `mmsghdr` entries with
         // matching iovecs and name buffers; the iovec targets are valid
-        // for 2048 bytes each for the duration of the call.
+        // for `N` bytes each (the full buffer capacity) for the duration
+        // of the call.
         let ret = unsafe {
             libc::recvmmsg(
                 self.fd.as_raw_fd(),

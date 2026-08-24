@@ -9,8 +9,9 @@
 //! build tooling is sub-project 3.
 //!
 //! Usage: `fds [config.json]` runs the engine; `fds --bench <secs>` runs
-//! the UDP loopback benchmark; `fds --fuzz <iters>` runs the parser
-//! fuzz harness.
+//! the UDP loopback benchmark; `fds --bench-large <datagram> <secs>` runs
+//! the one-way large-datagram byte-ceiling benchmark; `fds --fuzz
+//! <iters>` runs the parser fuzz harness.
 //!
 //! Architecture: per-core [`reactor::Reactor`] instances poll epoll
 //! edge-triggered with a drain-to-EAGAIN discipline; transports
@@ -65,6 +66,11 @@ fn main() {
         Some("--bench") => {
             let secs = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(2);
             bench::run(secs)
+        }
+        Some("--bench-large") => {
+            let datagram = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(60_000);
+            let secs = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(3);
+            bench::run_large(datagram, secs)
         }
         Some("--latency") => {
             let secs = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(2);

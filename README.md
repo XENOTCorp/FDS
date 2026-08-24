@@ -19,7 +19,7 @@ paper (thesis) and a software standard:
 
 ```sh
 # Build and test everything
-cargo test --workspace          # 87 tests, ~2 s
+cargo test --workspace          # 88 tests, ~2 s
 cargo clippy --workspace --all-targets -- -D warnings
 
 # Run the engine (UDP + TCP echo on 127.0.0.1:7777 / 7778)
@@ -27,6 +27,8 @@ cargo run -p fds-core
 
 # Measure: throughput, transport latency, engine latency
 cargo run -p fds-core --release -- --bench 5
+# Byte ceiling: one-way large-datagram throughput per direction (the 10-40+ Gbps loopback number)
+cargo run -p fds-core --release -- --bench-large 60000 5
 cargo run -p fds-core --release -- --latency 5
 # (engine running in another terminal)
 cargo run -p fds-core --release -- --latency-against 127.0.0.1:7777 5

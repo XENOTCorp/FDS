@@ -3,8 +3,9 @@
 //!
 //! The crate is a BINARY package with no public API, so an external
 //! bench target cannot reach crate-private items; the harness lives here
-//! and is invoked from the `fds` binary via `--bench <seconds>` (arg
-//! dispatch wired at the integration milestone).
+//! and is invoked from the `fds` binary via `--bench <seconds>` /
+//! `--bench-large <datagram> <seconds>` (arg dispatch wired at the
+//! integration milestone).
 //!
 //! Datapath: [`BATCH`] fixed-size datagrams are sent to a peer socket
 //! bound on 127.0.0.1 and echoed back; packets and bytes are counted and
@@ -15,10 +16,19 @@
 //! [`std::net::UdpSocket`] pair so the measurement still runs. The hot
 //! loop allocates nothing: payload, message vector and receive buffers
 //! are preallocated once.
+//!
+//! `--bench-large` is the byte-ceiling measurement: one-way, per
+//! direction, with datagrams up to the IPv4 UDP wire maximum — the
+//! "10-40+ Gbps loopback" number the standard quotes is a
+//! memory-bandwidth bound that only shows up with large datagrams (see
+//! docs/engine.md "Throughput").
 
 use crate::config::UdpConfig;
-use crate::udp::{RecvResult, UdpSocket};
+use crate::udp::{set_int, RecvResult, UdpSocket};
 use std::net::SocketAddr;
+use std::os::fd::AsRawFd;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 /// Datagrams per measurement round.
@@ -375,6 +385,174 @@ fn run_inner(seconds: u64) -> std::io::Result<Stats> {
     Ok(stats)
 }
 
+/// One-way large-datagram loopback throughput (thesis NT47 batching at
+/// the memory-bandwidth ceiling): measures each direction separately so
+/// the per-packet echo cost of [`run`] does not hide the byte ceiling.
+/// `datagram` is clamped to the IPv4 UDP payload maximum (65507).
+/// Prints Gbps + kpps per direction; these are the numbers behind the
+/// quoted "10-40+ Gbps loopback": at 60 KiB datagrams the loopback is
+/// memory-bound, at 1400 B it is packet-rate-bound (~200k syscalls/s per
+/// core on the dev machine).
+pub(crate) fn run_large(datagram: usize, seconds: u64) -> std::io::Result<()> {
+    let seconds = seconds.max(1);
+    let asked = datagram;
+    let datagram = datagram.clamp(64, 65_507);
+    if datagram != asked {
+        eprintln!("bench-large: clamped {asked}B to {datagram}B (IPv4 UDP payload max 65507)");
+    }
+    eprintln!("bench-large: {datagram}B datagrams, {seconds}s, one-way (per direction)");
+
+    let cfg = UdpConfig {
+        rcvbuf: 16 << 20,
+        sndbuf: 16 << 20,
+        ..Default::default()
+    };
+    let (s_bytes, s_pkts, s_elapsed) = large_send(datagram, seconds, &cfg)?;
+    let (r_bytes, r_pkts, r_elapsed) = large_recv(datagram, seconds, &cfg)?;
+    println!(
+        "bench-large: {datagram}B — send {:.2} Gbps ({:.0} kpps), recv {:.2} Gbps ({:.0} kpps)",
+        s_bytes as f64 * 8.0 / s_elapsed / 1e9,
+        s_pkts as f64 / s_elapsed / 1000.0,
+        r_bytes as f64 * 8.0 / r_elapsed / 1e9,
+        r_pkts as f64 / r_elapsed / 1000.0,
+    );
+    Ok(())
+}
+
+/// Phase 1 of [`run_large`]: engine-side sender (batched `sendmmsg`) to
+/// a std drain socket. Returns (bytes, packets, elapsed seconds) as
+/// counted at the drain.
+fn large_send(
+    datagram: usize,
+    seconds: u64,
+    cfg: &UdpConfig,
+) -> std::io::Result<(u64, u64, f64)> {
+    let sock = UdpSocket::new(SocketAddr::from(([127, 0, 0, 1], 0)), cfg)?;
+    let drain = std::net::UdpSocket::bind("127.0.0.1:0")?;
+    drain.set_nonblocking(true)?;
+    // Kernel clamps SO_RCVBUF to rmem_max, then doubles: 16 MiB lands
+    // well above the default rmem_max for jumbo-datagram headroom.
+    set_int(drain.as_raw_fd(), libc::SOL_SOCKET, libc::SO_RCVBUF, 16 << 20)?;
+    let dst = drain.local_addr()?;
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_drain = stop.clone();
+    let drain_rx = drain.try_clone()?;
+    let drain_thread = std::thread::spawn(move || {
+        let mut buf = vec![0u8; datagram + 4096];
+        let (mut bytes, mut pkts) = (0u64, 0u64);
+        loop {
+            if stop_drain.load(Ordering::Relaxed) {
+                // Drain whatever is still in flight, then exit.
+                while let Ok((n, _)) = drain_rx.recv_from(&mut buf) {
+                    bytes += n as u64;
+                    pkts += 1;
+                }
+                break;
+            }
+            match drain_rx.recv_from(&mut buf) {
+                Ok((n, _)) => {
+                    bytes += n as u64;
+                    pkts += 1;
+                }
+                Err(_) => std::thread::yield_now(),
+            }
+        }
+        (bytes, pkts)
+    });
+
+    let payload = vec![0xABu8; datagram];
+    let msgs: Vec<(&[u8], SocketAddr)> = (0..64).map(|_| (payload.as_slice(), dst)).collect();
+    let start = Instant::now();
+    let deadline = start + std::time::Duration::from_secs(seconds);
+    let mut sent = 0u64;
+    while Instant::now() < deadline {
+        // sendmmsg may accept a partial batch (send buffer full); push
+        // until the whole batch is accepted (no allocation per round).
+        let mut done = 0;
+        while done < msgs.len() {
+            done += sock.send_batch(&msgs[done..])?;
+        }
+        sent += done as u64;
+    }
+    stop.store(true, Ordering::Relaxed);
+    let (bytes, pkts) = drain_thread.join().unwrap();
+    let elapsed = start.elapsed().as_secs_f64();
+    eprintln!(
+        "bench-large send: sent {sent} pkts, drained {pkts} pkts ({bytes} B) in {elapsed:.2}s"
+    );
+    Ok((bytes, pkts, elapsed))
+}
+
+/// Phase 2 of [`run_large`]: a std sender thread to the engine-side
+/// receiver (batched `recvmmsg` into [`crate::udp::MAX_DATAGRAM`]
+/// buffers). Returns (bytes, packets, elapsed seconds) as counted by the
+/// engine datapath.
+fn large_recv(
+    datagram: usize,
+    seconds: u64,
+    cfg: &UdpConfig,
+) -> std::io::Result<(u64, u64, f64)> {
+    let sock = UdpSocket::new(SocketAddr::from(([127, 0, 0, 1], 0)), cfg)?;
+    let dst = sock.local_addr()?;
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_sender = stop.clone();
+    let sender_thread = std::thread::spawn(move || {
+        let tx = match std::net::UdpSocket::bind("127.0.0.1:0") {
+            Ok(s) => s,
+            Err(_) => return 0u64,
+        };
+        let _ = tx.set_nonblocking(true);
+        let payload = vec![0x5Au8; datagram];
+        let mut sent = 0u64;
+        while !stop_sender.load(Ordering::Relaxed) {
+            match tx.send_to(&payload, dst) {
+                Ok(_) => sent += 1,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::yield_now()
+                }
+                Err(_) => break,
+            }
+        }
+        sent
+    });
+
+    let mut bufs: Vec<mol::Buffer<{ crate::udp::MAX_DATAGRAM }>> =
+        vec![mol::Buffer::new(); SLOTS];
+    let mut out: Vec<RecvResult> = (0..SLOTS)
+        .map(|_| RecvResult {
+            len: 0,
+            src: SocketAddr::from(([0, 0, 0, 0], 0)),
+            truncated: false,
+        })
+        .collect();
+    let start = Instant::now();
+    let deadline = start + std::time::Duration::from_secs(seconds);
+    let (mut bytes, mut pkts) = (0u64, 0u64);
+    while Instant::now() < deadline {
+        let n = sock.recv_batch(&mut bufs, &mut out)?;
+        if n == 0 {
+            continue;
+        }
+        for r in &out[..n] {
+            // MAX_DATAGRAM buffers cannot truncate a legal IPv4 datagram.
+            if r.truncated {
+                continue;
+            }
+            bytes += r.len as u64;
+            pkts += 1;
+        }
+    }
+    stop.store(true, Ordering::Relaxed);
+    let sent = sender_thread.join().unwrap_or(0);
+    let elapsed = start.elapsed().as_secs_f64();
+    eprintln!(
+        "bench-large recv: sender pushed {sent} pkts, engine received {pkts} pkts ({bytes} B) in {elapsed:.2}s"
+    );
+    Ok((bytes, pkts, elapsed))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -393,5 +571,23 @@ mod tests {
             Ok(Err(e)) => eprintln!("bench smoke: skipped ({e})"),
             Err(_) => eprintln!("bench smoke: skipped (UdpSocket still a stub)"),
         }
+    }
+
+    /// Smoke: 60 KiB one-way datagrams must move bytes in BOTH directions
+    /// through the crate socket (send path and recv path).
+    #[test]
+    fn bench_large_smoke() {
+        let cfg = UdpConfig {
+            rcvbuf: 16 << 20,
+            sndbuf: 16 << 20,
+            ..Default::default()
+        };
+        let (sb, sp, _) = large_send(60_000, 1, &cfg).unwrap();
+        let (rb, rp, _) = large_recv(60_000, 1, &cfg).unwrap();
+        assert!(sp > 0 && sb > 0, "large send moved no data: {sp} pkts {sb} B");
+        assert!(rp > 0 && rb > 0, "large recv moved no data: {rp} pkts {rb} B");
+        eprintln!(
+            "bench-large smoke: send {sp} pkts/{sb} B, recv {rp} pkts/{rb} B in 1s each"
+        );
     }
 }

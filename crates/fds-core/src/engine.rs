@@ -82,8 +82,11 @@ pub(crate) fn run(cfg: &Config) -> std::io::Result<()> {
         std::collections::HashMap::new();
 
     let mut ctx = Ctx::default();
-    // Preallocated receive batch (hot path allocates nothing).
-    let mut rx_bufs: Vec<mol::Buffer<2048>> = vec![mol::Buffer::new(); 64];
+    // Preallocated receive batch (hot path allocates nothing). Buffers
+    // are sized to the IPv4 UDP wire maximum (65535), so ANY datagram —
+    // including loopback GSO/GRO jumbo — is received whole, never
+    // truncated: 64 x 64 KiB = 4 MiB, allocated once.
+    let mut rx_bufs: Vec<mol::Buffer<{ crate::udp::MAX_DATAGRAM }>> = vec![mol::Buffer::new(); 64];
     let mut rx_out: Vec<crate::udp::RecvResult> = (0..64)
         .map(|_| crate::udp::RecvResult {
             len: 0,
@@ -200,7 +203,7 @@ fn startup_probes(cfg: &Config) {
 /// source via one `sendmmsg` batch per receive batch. No allocation.
 fn drain_udp(
     udp: &crate::udp::UdpSocket,
-    bufs: &mut [mol::Buffer<2048>],
+    bufs: &mut [mol::Buffer<{ crate::udp::MAX_DATAGRAM }>],
     out: &mut [crate::udp::RecvResult],
     ctx: &mut Ctx,
 ) -> std::io::Result<()> {

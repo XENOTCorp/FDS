@@ -50,14 +50,14 @@ Loop invariants:
 | `main.rs` | Arg dispatch (`--bench`, `--latency`, `--latency-against`, `--fuzz`, else engine), config.json loading, async-signal-safe SIGINT |
 | `engine.rs` | The loop: reactor wiring, UDP/TCP echo handlers, counters, metrics serving, core pinning |
 | `reactor.rs` | epoll instance + preallocated event array; `register/modify/unregister`, `poll_timeout`, `poll_busy`, `copy_events` |
-| `udp.rs` | Nonblocking IPv4 socket; `recv_batch`/`send_batch` (recvmmsg/sendmmsg, preallocated arrays), GSO (UDP_SEGMENT), GRO, MSG_TRUNC, SO_INCOMING_CPU, MSG_ZEROCOPY (`send_to_zerocopy`) |
+| `udp.rs` | Nonblocking IPv4 socket; `recv_batch`/`send_batch` (recvmmsg/sendmmsg, preallocated arrays; receive buffers const-generic, engine uses `MAX_DATAGRAM` = 64 KiB so any datagram arrives whole), GSO (UDP_SEGMENT), GRO, MSG_TRUNC, SO_INCOMING_CPU, MSG_ZEROCOPY (`send_to_zerocopy`) |
 | `tcp.rs` | `TcpListener` (accept4 nonblocking, FASTOPEN/NODELAY/QUICKACK/DEFER_ACCEPT/CORK), `TcpStream` (read/readv/write_all/writev/splice_from_fd via a pipe — `splice(file→socket)` is EINVAL on Linux) |
 | `sctp.rs` | libsctp FFI (declared in-crate against `netinet/sctp.h`; `sctp_recvmsg` returns `c_int`), send/recv with stream ids, peeloff, multi-homing via `sctp_bindx`; tests skip when the kernel module is absent |
 | `conn.rs` | `HotState`/`ColdState` on own cache lines (false-sharing discipline), `ConnTable` (preallocated slots + lock-free free list), packed `ConnectionId` (core << 32 | slot) used as epoll tokens |
 | `checksum.rs` | IP/TCP/UDP one's-complement via the framework SIMD; SCTP CRC32c (table-driven) |
 | `parse.rs` | Bounds-safe IPv4/UDP/TCP header parsers as pure atoms; LCG property sweep |
 | `metrics.rs` | Per-core padded counters (`CounterSet`), report formatting without allocation, Unix-socket pull server |
-| `bench.rs` | `--bench` (throughput), `--latency` (transport RTT), `--latency-against` (engine RTT) |
+| `bench.rs` | `--bench` (throughput, echo), `--bench-large` (one-way byte-ceiling, per direction), `--latency` (transport RTT), `--latency-against` (engine RTT) |
 | `fuzz.rs` | Deterministic xorshift64 harness over parsers/checksums (libFuzzer would need a public API — see below) |
 | `config.rs` | config.json + `FDS_*` env overrides; all sections defaulted |
 | `io_uring_reactor.rs` | Experimental io_uring path (feature `io-uring`, io-uring crate 0.7, SQPOLL fallback) |
@@ -94,7 +94,12 @@ in-module with a fast default suite.
 
 ## Measurement
 
-- `--bench <secs>`: UDP loopback throughput (pps / MB/s), batched.
+- `--bench <secs>`: UDP loopback throughput (pps / MB/s), 1400-byte
+  datagrams echoed by a std peer — the realistic round-trip number.
+- `--bench-large <datagram> <secs>`: one-way loopback throughput per
+  direction (engine send → std drain, then std source → engine recv) with
+  datagrams up to the IPv4 wire max (65507 B). This is the byte-ceiling
+  measurement behind the "10–40+ Gbps loopback" claim.
 - `--latency <secs>`: single-flight transport RTT (p50/p99/p999/max).
 - `--latency-against <addr> <secs>`: RTT against a running engine —
   the end-to-end number the busy-poll + pinning target.
@@ -107,12 +112,45 @@ Reference numbers on the dev laptop (i5-5200U, loopback, release):
 |---|---|---|---|---|
 | transport RTT | 12µs | 30µs | 73µs | 2.4ms |
 | engine RTT (pinned) | 13µs | 23µs | 43µs | 0.5ms |
-| throughput | 107k pps (dev) / 127k pps (release), 143–169 MB/s |
+| throughput (1400 B echo) | 114k pps, 152 MB/s (~1.2 Gbps) | | | |
 
-The datapath is syscall/kernel-bound on loopback; the busy-poll reactor
-removes wakeup latency and core pinning removes migration stalls. True
-sub-µs paths require AF_XDP/io_uring on real NIC hardware (compiled,
-device-gated).
+Large-datagram throughput (one-way, per direction, 3 s):
+
+| Datagram size | Path | Measured |
+|---|---|---|
+| 60 000 B | engine send (sendmmsg) → std drain | 32.3 Gbps (67 kpps) |
+| 60 000 B | std sender → engine recv (recvmmsg) | 29.0 Gbps (60 kpps) |
+| 60 000 B | std-only one-way probe (per-packet) | 27.7 Gbps (58 kpps) |
+| 8 192 B | std-only one-way probe | 9.2 Gbps (141 kpps) |
+| 1 400 B | std-only one-way probe | 2.1 Gbps (191 kpps) |
+| 1 400 B | engine send (one-way) | 2.9 Gbps (258 kpps) |
+| 64 B | std-only one-way probe | 0.11 Gbps (205 kpps) |
+
+### Why `--bench` shows ~1.2 Gbps and not 10–40+ Gbps
+
+Throughput is **packet rate × packet size**. Loopback's byte ceiling is
+memory bandwidth (~30+ Gbps on this machine, verified above), but every
+datagram costs at least one syscall on each side, and a per-packet
+syscall on this CPU tops out around 200k pps. The quoted "10–40+ Gbps"
+assumes large datagrams; the arithmetic:
+
+- 1 400 B datagrams: 10 Gbps needs ~900k pps — unreachable with
+  per-packet syscalls. `--bench` also pays a full echo (recv *and* send
+  at the std peer, 2 syscalls per packet), which is why the round-trip
+  number lands at ~114k pps ≈ 1.2 Gbps.
+- 60 000 B datagrams: 30 Gbps needs only ~62k pps — trivially met, so
+  the loopback shows its real memory-bound ceiling (29–32 Gbps).
+- Batching (recvmmsg/sendmmsg) multiplies the syscall budget: the
+  engine's batched send at 1 400 B does 258 kpps vs 191 kpps for the
+  per-packet std probe — a 1.35× lift from syscall amortization alone.
+
+So the engine datapath is not bandwidth-starved; it is packet-rate
+starved for small datagrams, which is a kernel-syscall reality, and
+bandwidth-bound for large datagrams, where it delivers the quoted
+numbers. Production tricks to move more bytes at small packet sizes:
+GSO/GRO (send one large buffer, let the kernel segment/coalesce), larger
+datagrams at the application layer, and — for NIC traffic — AF_XDP
+(compiled, device-gated; see `af_xdp.rs`).
 
 ## Known limitations
 
