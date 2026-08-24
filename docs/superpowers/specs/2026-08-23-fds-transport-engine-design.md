@@ -1,30 +1,31 @@
 # FDS Sub-Project 4: Transport Engine — Design Spec
 
 **Date:** 2026-08-23
-**Status:** Draft for review (written in advance per author request; design-approval loop still applies before implementation)
-**Depends on:** Sub-project 1 (standard policies [IO], [SIMD], [CONC], [SEC], [OBS]), Sub-project 2 (framework: rings, buffers, memory, layout), Sub-project 3 (config.json, build flags)
+**Status:** Implementation in progress 2026-08-24 (author rulings recorded in §7; crate is `crates/fds-core`)
+**Depends on:** Sub-project 1 (standard policies [IO], [SIMD], [CONC], [SEC], [OBS]), Sub-project 2 (framework: rings, buffers, memory, layout), Sub-project 3 (config.json, build flags — the config.json runtime side shipped early in this sub-project; the adaptive build tooling remains sub-project 3)
 **Framing:** The engine is the flagship instantiation of Mol: the reactor loop is a traced molecule (NT34–NT36), batching is operadic composition (NT46–NT47), connection state is a hybrid molecule, and every optimization is backed by a theorem or a standard decision matrix.
 
 ---
 
 ## 1. Purpose
 
-The TCP/UDP/SCTP dataplane: nonblocking, edge-triggered, busy-polling, batched, zero-allocation I/O engineered for latency/throughput up to the silicon, per the original brief. Linux-only.
+The TCP/UDP/SCTP dataplane: nonblocking, edge-triggered, busy-polling, batched, zero-allocation I/O engineered for latency/throughput up to the silicon, per the original brief. Linux-only. **The engine is a binary package with no public API** (author ruling §7.5): every module is crate-private and the `fds` binary is the product.
 
 ## 2. Deliverables
 
 | # | Deliverable | Path |
 |---|-------------|------|
-| 1 | Reactor (edge-triggered epoll, busy-poll) | `crates/fds-transport/src/reactor.rs` |
-| 2 | UDP transport (recvmmsg/sendmmsg, GSO/GRO, zero-copy) | `crates/fds-transport/src/udp.rs` |
-| 3 | TCP transport (scatter-gather, sendfile/splice, options) | `crates/fds-transport/src/tcp.rs` |
-| 4 | SCTP transport (control buffers, peeloff, multi-homing) | `crates/fds-transport/src/sctp.rs` |
-| 5 | Connection/association state (hot/cold split) | `crates/fds-transport/src/conn.rs` |
-| 6 | SIMD parsing/checksum atoms (bounds-safe) | `crates/fds-transport/src/parse.rs`, `checksum.rs` |
-| 7 | Observability (lock-free per-core counters, pull metrics) | `crates/fds-transport/src/metrics.rs` |
-| 8 | Benchmarks + profiling harness | `benches/`, `scripts/perf.sh` |
-| 9 | Fuzz targets for parsers | `fuzz/` |
+| 1 | Reactor (edge-triggered epoll, busy-poll) | `crates/fds-core/src/reactor.rs` |
+| 2 | UDP transport (recvmmsg/sendmmsg, GSO/GRO, zero-copy) | `crates/fds-core/src/udp.rs` |
+| 3 | TCP transport (scatter-gather, sendfile/splice, options) | `crates/fds-core/src/tcp.rs` |
+| 4 | SCTP transport (control buffers, peeloff, multi-homing) | `crates/fds-core/src/sctp.rs` |
+| 5 | Connection/association state (hot/cold split) | `crates/fds-core/src/conn.rs` |
+| 6 | SIMD parsing/checksum atoms (bounds-safe) | `crates/fds-core/src/parse.rs`, `checksum.rs` |
+| 7 | Observability (lock-free per-core counters, Unix-socket pull) | `crates/fds-core/src/metrics.rs` |
+| 8 | Benchmarks + profiling harness (in-crate bench mode + script) | `src/bench.rs`, `scripts/perf.sh` |
+| 9 | Fuzz (in-crate deterministic harness; no libFuzzer — see §7.6) | `src/fuzz.rs` |
 | 10 | Ops/system-tuning document | `docs/ops-tuning.md` |
+| 11 | Engine entry point (config.json, per-core wiring) | `crates/fds-core/src/main.rs` |
 
 ## 3. Design
 
@@ -95,20 +96,24 @@ The TCP/UDP/SCTP dataplane: nonblocking, edge-triggered, busy-polling, batched, 
 - Userspace TCP/IP stacks, kernel-bypass beyond the listed options.
 - Portability beyond Linux.
 
-## 7. Open Decision Points (for author)
+## 7. Design Decisions (author rulings, 2026-08-24)
 
-1. io_uring vs epoll as the *default* reactor (epoll default recommended; io_uring feature-gated).
-2. SCTP feature-gated behind `libsctp` presence — acceptable?
-3. Metrics endpoint: Unix socket vs HTTP (no-alloc constraint favors Unix socket).
-4. Whether AF_XDP ships at all in the first engine milestone (recommended: experimental flag only).
+1. **Scope: "everything now"** — the first milestone includes the full engine: epoll reactor, UDP, TCP, SCTP, conn, parse/checksum, metrics, plus the experimental io_uring and AF_XDP paths (default-on crate features) and fuzz/bench tooling.
+2. **Config ordering: fds-core first, sub-project 3 after** — the engine ships a minimal `config.json` runtime module (§3.8); the adaptive build script/config remains sub-project 3.
+3. **SCTP enabled** — libsctp installed on the host (`/usr/lib/libsctp.so` + pkg-config); the module is always compiled (feature `sctp`, default-on), FFI declared in-crate (libc has no SCTP bindings).
+4. **Metrics endpoint: Unix socket pull** (no HTTP stack; §3.8).
+5. **No public API** — the engine is a binary package (`[[bin]] fds`); every module is `pub(crate)`; tests live in-module; there is no library surface. Benches and fuzz are in-crate modes rather than external crates.
+6. **Fuzz = in-crate deterministic harness** (`src/fuzz.rs`, xorshift64 LCG, parser/checksum no-panic + determinism assertions) — libFuzzer/cargo-fuzz targets would need a public API (ruling §7.5) and nightly (absent on this host); the harness runs on stable and is the runnable equivalent.
+7. **io_uring links the system liburing** (installed by the author; the `io-uring` crate's default build picks it up via pkg-config). AF_XDP UAPI constants declared in-crate (`linux/if_xdp.h` values); runtime requires an XDP device — tests skip gracefully.
 
 ## 8. Risks & Mitigations
 
 | Risk | Mitigation |
 |------|------------|
 | Edge-triggered epoll missed events | Drain-to-EAGAIN discipline is a hard policy ([IO]); reactor tests with racy fd churn |
-| Zero-copy lifetime bugs (registered buffers, splice fds) | Valid-fd discipline, single-owner fds, fuzz + sanitizer CI |
+| Zero-copy lifetime bugs (registered buffers, splice fds) | Valid-fd discipline, single-owner fds, in-crate tests + fuzz harness |
 | FASTOPEN spoofing | Config-gated off-by-default with documented risk |
-| SCTP availability | Build-time detection; feature flag; graceful absence |
-| SIMD OOB | Bounds/alignment prechecks mandatory; UBSan + fuzz CI |
-| Cache-line false sharing regressions | static_assertions on layout; perf cache-miss regression tests |
+| SCTP availability | Feature flag default-on; tests skip gracefully when the kernel module is absent |
+| SIMD OOB | Bounds/alignment prechecks mandatory; parser fuzz harness + UBSan |
+| Cache-line false sharing regressions | static_assertions on layout; perf cache-miss runs in perf.sh |
+| No public API limits external tooling (libFuzzer, plugins) | In-crate harnesses; hook points revisited with the [PLUGIN] sub-project |

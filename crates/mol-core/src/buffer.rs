@@ -146,6 +146,14 @@ impl<T, const N: usize> Pool<T, N> {
         Some(PoolGuard { pool: self, idx })
     }
 
+    /// Return slot `idx` to the free list. The caller must own the slot
+    /// (i.e. hold no live guard for it); used by tables that release
+    /// slots out-of-order (e.g. connection close).
+    pub fn release_index(&self, idx: usize) {
+        assert!(idx < N, "Pool::release_index: index out of range");
+        self.release(idx);
+    }
+
     fn release(&self, idx: usize) {
         // Push the index back; the ring never fills (N slots, at most
         // N − 1 in flight by the ring invariant).

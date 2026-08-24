@@ -8,6 +8,10 @@
 //! configuration comes from `config.json` (see [`config`]); the adaptive
 //! build tooling is sub-project 3.
 //!
+//! Usage: `fds [config.json]` runs the engine; `fds --bench <secs>` runs
+//! the UDP loopback benchmark; `fds --fuzz <iters>` runs the parser
+//! fuzz harness.
+//!
 //! Architecture: per-core [`reactor::Reactor`] instances poll epoll
 //! edge-triggered with a drain-to-EAGAIN discipline; transports
 //! ([`udp`], [`tcp`], [`sctp`]) batch with recvmmsg/sendmmsg, readv/writev
@@ -19,15 +23,20 @@
 //! Experimental reactor paths: io_uring SQPOLL ([`io_uring_reactor`],
 //! feature `io-uring`) and AF_XDP ([`af_xdp`], feature `af-xdp`).
 
-// Interim: modules are implemented before the engine-loop wiring lands
-// (integration milestone), so crate items are not all reachable from
-// `main` yet. Remove this allow when the loop references every module.
+// Interim: the engine loop currently wires the epoll reactor + UDP/TCP
+// echo; SCTP/io_uring/AF_XDP are startup-probed, and several crate items
+// (connection hot-state fields, UAPI constants pinned by tests) are only
+// reachable from tests or future wiring. Remove this allow when the
+// per-core multi-protocol loop lands.
 #![allow(dead_code)]
 
 mod af_xdp;
+mod bench;
 mod checksum;
 mod config;
 mod conn;
+mod engine;
+mod fuzz;
 mod io_uring_reactor;
 mod metrics;
 mod parse;
@@ -40,7 +49,6 @@ use config::Config;
 
 /// The engine's per-core runtime context: the preallocated bundles
 /// (rings, buffers, counters) threaded through every reactor step.
-/// Transport modules extend it with their own preallocated state.
 #[derive(Default)]
 pub(crate) struct Ctx {
     /// Total packets processed (padded counter, no false sharing).
@@ -52,40 +60,34 @@ pub(crate) struct Ctx {
 }
 
 fn main() {
-    let path = std::env::args()
-        .nth(1)
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from("config.json"));
-
-    let cfg = match std::fs::metadata(&path) {
-        Ok(_) => Config::from_file(&path).unwrap_or_else(|e| {
-            eprintln!("fds: bad config {}: {e}", path.display());
-            std::process::exit(1);
-        }),
-        Err(_) => {
-            let cfg = Config::default();
-            eprintln!(
-                "fds: no config at {} — using defaults (epoll busy-poll)",
-                path.display()
-            );
-            cfg
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let code = match args.first().map(String::as_str) {
+        Some("--bench") => {
+            let secs = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(2);
+            bench::run(secs)
+        }
+        Some("--fuzz") => {
+            let iters = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(1_000_000);
+            fuzz::run(iters);
+            Ok(())
+        }
+        _ => {
+            let path = args
+                .first()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from("config.json"));
+            let cfg = load_config(&path);
+            engine::run(&cfg)
         }
     };
-
-    signals::install();
-    eprintln!("fds: engine starting (pid {}); Ctrl-C to stop", std::process::id());
-
-    // The engine loop lands with the transports (integration milestone);
-    // this skeleton idles until interrupted so the binary is runnable.
-    let _ = cfg;
-    while !signals::interrupted() {
-        std::thread::sleep(std::time::Duration::from_millis(100));
+    if let Err(e) = code {
+        eprintln!("fds: {e}");
+        std::process::exit(1);
     }
-    eprintln!("fds: shutting down");
 }
 
 /// Async-signal-safe Ctrl-C handling (no dependencies): a signal handler
-/// that only stores to an atomic; the main loop polls it.
+/// that only stores to an atomic; the engine loop polls it.
 mod signals {
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -96,7 +98,7 @@ mod signals {
     }
 
     /// Install the SIGINT handler (idempotent).
-    pub fn install() {
+    pub(crate) fn install() {
         // SAFETY: the handler does only an atomic store, which is
         // async-signal-safe; libc::signal is safe to call once at startup.
         unsafe {
@@ -104,7 +106,28 @@ mod signals {
         }
     }
 
-    pub fn interrupted() -> bool {
+    pub(crate) fn interrupted() -> bool {
         INTERRUPTED.load(Ordering::Relaxed)
+    }
+}
+
+/// Load `config.json`, falling back to defaults with a note.
+fn load_config(path: &std::path::Path) -> Config {
+    match std::fs::metadata(path) {
+        Ok(_) => match Config::from_file(path) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                eprintln!("fds: bad config {}: {e}", path.display());
+                std::process::exit(1);
+            }
+        },
+        Err(_) => {
+            let cfg = Config::default();
+            eprintln!(
+                "fds: no config at {} — using defaults (epoll busy-poll, udp 127.0.0.1:7777)",
+                path.display()
+            );
+            cfg
+        }
     }
 }

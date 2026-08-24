@@ -126,6 +126,17 @@ impl Reactor {
         self.events.iter().take(n).map(EpollEvent::from_raw)
     }
 
+    /// Copy the first `n` delivered events into `out` (converted), so the
+    /// caller can process them without holding a borrow on the reactor.
+    /// Returns the number copied.
+    pub(crate) fn copy_events(&self, n: usize, out: &mut [EpollEvent]) -> usize {
+        let m = n.min(self.events.len()).min(out.len());
+        for (dst, src) in out.iter_mut().zip(self.events.iter()).take(m) {
+            *dst = EpollEvent::from_raw(src);
+        }
+        m
+    }
+
     /// The raw epoll fd (for tests / io_uring handoff).
     pub(crate) fn as_raw_fd(&self) -> i32 {
         self.ep.as_raw_fd()

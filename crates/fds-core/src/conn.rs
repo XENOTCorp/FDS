@@ -127,6 +127,13 @@ impl<const CAP: usize> ConnTable<CAP> {
         self.pool.in_use()
     }
 
+    /// Release a slot back to the free list (the caller must own it —
+    /// e.g. after closing a connection). The slot's data stays in place
+    /// for the next owner.
+    pub(crate) fn release_slot(&self, slot: usize) {
+        self.pool.release_index(slot);
+    }
+
     /// Capacity.
     pub(crate) const fn capacity() -> usize {
         CAP

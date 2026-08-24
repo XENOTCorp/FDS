@@ -20,6 +20,28 @@ pub(crate) struct Config {
     pub sctp: SctpConfig,
     pub metrics: MetricsConfig,
     pub zero_copy: ZeroCopyConfig,
+    pub engine: EngineConfig,
+}
+
+/// Application-level binds for the built-in engine loop (UDP/TCP echo).
+/// The engine is the minimal runnable dataplane; real applications wire
+/// their own handlers around the same reactor/transport primitives.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct EngineConfig {
+    /// UDP echo bind address ("ip:port").
+    pub udp_bind: String,
+    /// TCP echo bind address ("ip:port").
+    pub tcp_bind: String,
+}
+
+impl Default for EngineConfig {
+    fn default() -> Self {
+        EngineConfig {
+            udp_bind: "127.0.0.1:7777".to_string(),
+            tcp_bind: "127.0.0.1:7778".to_string(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -241,6 +263,12 @@ impl Config {
         }
         if let Some(v) = env_flag("FDS_TCP_QUICKACK") {
             self.tcp.quickack = v;
+        }
+        if let Ok(v) = std::env::var("FDS_ENGINE_UDP_BIND") {
+            self.engine.udp_bind = v;
+        }
+        if let Ok(v) = std::env::var("FDS_ENGINE_TCP_BIND") {
+            self.engine.tcp_bind = v;
         }
     }
 }
