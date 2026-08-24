@@ -333,3 +333,134 @@ cores and stay there (watch the delta, not the absolute count).
 | LRO/GRO | `ethtool -K gro on lro off` | `UdpConfig::gro` |
 | MSG_ZEROCOPY | `ethtool -K tx-udp-segmentation on` | `UdpConfig::zerocopy`, `ZeroCopyConfig::udp_zerocopy` |
 | SCTP module | `modprobe sctp` | `SctpConfig::*` (nodelay, init_max_streams, max_burst, partial_delivery_point) |
+| init_on_alloc off | `init_on_alloc=0` boot param | none (kernel-wide; see §8) |
+| H2/H3 (tokio) | builder flags in `h2serve.rs`/`h3serve.rs` | `Config::http2`, `Config::http3`, `Config::workers` (see §9) |
+
+## 8. This kernel's datapath tax: init_on_alloc (measured)
+
+Measured on this box (2026-08-24, see `bench-results/root-measurements.txt`):
+the `sched:sched_switch` call graph shows ~18% of context switches under
+TCP load originate in `tcp_sendmsg -> skb_page_frag_refill ->
+alloc_pages -> clear_highpages_kasan_tagged`. The kernel is built with
+`CONFIG_INIT_ON_ALLOC_DEFAULT_ON=y` — **every page allocated for an skb
+is zeroed before use** (a hardening feature that prevents
+uninitialized-memory leaks). That memset is pure datapath cost.
+
+Check the runtime state:
+
+```sh
+cat /sys/module/kernel/parameters/init_on_alloc   # Y/N
+zcat /proc/config.gz | grep INIT_ON_ALLOC
+```
+
+Disable at boot (tradeoff: uninitialized memory can leak kernel data to
+userspace; acceptable on a bench/dev box, not on a multitenant host):
+
+```sh
+# GRUB (Debian/Ubuntu/Void-with-grub):
+#   edit /etc/default/grub, add init_on_alloc=0 to GRUB_CMDLINE_LINUX_DEFAULT
+sudo grub-mkconfig -o /boot/grub/grub.cfg && sudo reboot
+# EFISTUB/systemd-boot: append init_on_alloc=0 to the kernel cmdline entry
+# rEFInd: add the option in /boot/refind_linux.conf
+```
+
+Verify after boot: `cat /sys/module/kernel/parameters/init_on_alloc` → `N`,
+and re-run `perf record -g -e sched:sched_switch` — the alloc_pages chain
+should drop out of the top of the report.
+
+### This kernel is stripped (measurement limits)
+
+`bpftrace -l` shows no kprobes and only a handful of net tracepoints;
+`perf record -e sched:sched_switch` works, but `kprobe:udp_sendmsg`
+does not exist; and UDP `MSG_ZEROCOPY` silently copies (verified by the
+mutation probe — `bench-results/msg-zerocopy-compare.txt`). If you want
+the full measurement surface, boot a stock mainline kernel
+(CONFIG_KPROBES=y, net/skb/udp tracepoints, working UDP zerocopy) and
+re-run the battery. This is the single highest-value kernel change for
+both *measuring* and *running* faster on this laptop.
+
+### SCTP module vs the modprobe blacklist
+
+`/etc/modprobe.d/xenot-blacklist.conf` maps `install sctp /bin/true`
+(your hardening), so `modprobe sctp` silently no-ops. Options:
+
+```sh
+# session-only (what we used): bypass the install rule
+sudo insmod /lib/modules/$(uname -r)/kernel/net/sctp/sctp.ko.zst
+# permanent: load at boot without touching the blacklist
+echo sctp | sudo tee /etc/modules-load.d/sctp.conf
+# or remove the line from /etc/modprobe.d/xenot-blacklist.conf
+```
+
+## 9. H2/H3 (tokio) tunables
+
+The H2/H3 paths (Atomos `src/net/h2serve.rs`, `h3serve.rs`) wrap the
+`h2` 0.4 / `h3` 0.0.8 crates. The builder flags below are the knobs;
+apply them in `h2serve::handle` / `h3serve::handle_conn`. Current code
+sets only `max_concurrent_streams(256)` on h2 and nothing on h3.
+
+### h2::server::Builder
+
+```rust
+h2::server::Builder::new()
+    .max_concurrent_streams(256)          // in-flight streams per conn
+    .initial_window_size(1 << 20)         // per-stream flow-control window
+    .initial_connection_window_size(16 << 20) // connection window (throughput!)
+    .max_frame_size(16 * 1024)            // 16 KiB data frames
+    .max_header_list_size(64 * 1024)      // HPACK header block cap
+    .max_send_buffer_size(1 << 20)        // per-stream send buffering
+    .header_table_size(4096)              // HPACK dynamic table (bytes)
+    .handshake(io).await
+```
+
+Throughput on high-BDP loopback/link is bounded by the flow-control
+windows: raise `initial_connection_window_size` first. `header_table_size`
+trades memory for header compression on repetitive request sets.
+
+### h3 / quinn
+
+h3 0.0.8 exposes few builder options (max_field_section_size etc.); the
+real knobs are quinn's transport config (`quinn::TransportConfig`):
+
+```rust
+let mut tc = quinn::TransportConfig::default();
+tc.max_bi_streams(256u16.into());        // bidirectional streams
+tc.max_uni_streams(256u16.into());
+tc.send_window(16 << 20);                // per-conn send window
+tc.receive_window(16 << 20);             // per-conn recv window
+tc.stream_receive_window(1 << 20);       // per-stream recv window
+tc.initial_mtu(1452);
+tc.congestion_controller_factory(Arc::new(quinn::congestion::CubicConfig::default()));
+```
+
+`quinn::congestion` has NewReno / Cubic / BBR factories; Cubic or BBR
+beats NewReno on real links. Enable 0-RTT on the client (quinn
+`enable_0rtt`) to cut H3 handshakes; the server must persist session
+tickets (TlsHold already issues tickets).
+
+### Preconditions for the tokio path to be fast
+
+1. **Pin tokio workers.** `atomos-proto` runs `current_thread` today —
+   every accepted connection and stream is one thread. A
+   `multi_thread` runtime with `worker_threads = workers` and pinned
+   affinity (match `Config::cpu_pin`) is the first precondition for
+   H2/H3 scaling past one core.
+2. **Never block in `serve_one`.** The h2/h3 handlers are spawned per
+   stream on the runtime; a blocking call (fs, lock, slow module)
+   stalls every stream on that worker. The H1 fast path's zero-alloc
+   rule applies here too: `serve_one` already reuses `BytesMut` bodies
+   but still allocates per response (`Bytes::copy_from_slice`).
+3. **Warm the tables.** HPACK/QPACK compress best after the dynamic
+   table is warm (measured: H2 wire 149 B/req -> 12 B/req steady).
+   Keep response header sets small and constant; pre-encode static
+   responses as `Bytes::from_static`.
+4. **Sized flow-control windows** (above) are the throughput
+   precondition; defaults are conservative.
+
+## 10. Verification (H2/H3)
+
+```sh
+bash scripts/bench-h23.sh 2000        # FDS script; boots atomos-proto + benches
+curl --http2-prior-knowledge -s http://127.0.0.1:8090/metrics   # h2 counters
+curl -s http://127.0.0.1:8090/metrics | grep -E 'h2|h3'         # prometheus text
+```
