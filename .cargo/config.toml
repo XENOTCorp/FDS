@@ -1,0 +1,5 @@
+# Baseline build configuration (portable). Hardware-adaptive flags —
+# target-cpu=native, target_feature sets, L3-derived sizes — come from the
+# build tooling (sub-project 3, build/build.sh); this file is the baseline.
+[build]
+rustflags = ["-C", "relocation-model=pic"]

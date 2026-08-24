@@ -1,0 +1,18 @@
+[package]
+name = "mol-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Mol: the category of stateful transformations — atom/molecule framework for zero-allocation dataplanes (FDS)."
+
+[lib]
+name = "mol"
+
+[dependencies]
+heapless = "0.8"
+arrayvec = "0.7"
+static_assertions = "1.1"
+rustix = { version = "1", features = ["mm"] }
+
+[dev-dependencies]
