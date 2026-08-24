@@ -12,6 +12,10 @@ use rustix::event::Timespec;
 use rustix::fd::OwnedFd;
 use std::os::fd::AsRawFd;
 
+/// Re-exported so consumers can build poll timeouts without depending on
+/// rustix directly.
+pub use rustix::event::Timespec as PollTimeout;
+
 /// The events a registration is interested in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Interest {

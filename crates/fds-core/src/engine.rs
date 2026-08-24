@@ -322,6 +322,7 @@ fn parse_addr(s: &str, fallback: &str) -> SocketAddr {
 
 /// Presence probes for the optional transports (feature-gated; absence is
 /// reported, never fatal).
+#[allow(unused_variables)]
 fn startup_probes(cfg: &Config) {
     #[cfg(feature = "sctp")]
     {
