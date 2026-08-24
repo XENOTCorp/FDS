@@ -1,5 +1,5 @@
 //! Memory layer: hugepage mappings, zeroed init, global state (standard
-//! [ALLOC], [CACHE]; thesis NT50).
+//! \[ALLOC\], \[CACHE\]; thesis NT50).
 //!
 //! `huge_page` maps a private anonymous region and advises it with
 //! `MADV_HUGEPAGE`, so transparent-huge-page 2 MiB pages are used when the

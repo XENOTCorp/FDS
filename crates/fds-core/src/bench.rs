@@ -1,5 +1,5 @@
 //! In-crate benchmark harness for the UDP loopback datapath (thesis
-//! NT46/NT47 batching; standard [OBS], [ALLOC]).
+//! NT46/NT47 batching; standard \[OBS\], \[ALLOC\]).
 //!
 //! The crate is a BINARY package with no public API, so an external
 //! bench target cannot reach crate-private items; the harness lives here
@@ -187,6 +187,121 @@ pub(crate) fn run(seconds: u64) -> std::io::Result<()> {
         stats.seconds,
         stats.packets as f64 / secs,
         stats.bytes as f64 / (secs * 1024.0 * 1024.0),
+    );
+    Ok(())
+}
+
+/// Round-trip latency distribution of the UDP echo datapath (single
+/// in-flight datagram): samples the RTT for `seconds` seconds and reports
+/// the p50/p99/p999 percentiles plus max. p99 is the tail-latency budget
+/// the engine targets (standard \[OBS\]; thesis NT25 cost model).
+pub(crate) fn run_latency(seconds: u64) -> std::io::Result<()> {
+    let seconds = seconds.max(1);
+    let sock = try_io(|| {
+        UdpSocket::new(
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            &UdpConfig::default(),
+        )
+    })
+    .ok_or_else(|| std::io::Error::other("no UDP datapath available"))?;
+    let peer = std::net::UdpSocket::bind("127.0.0.1:0")?;
+    let peer_addr = peer.local_addr()?;
+    // A dedicated echo thread keeps the peer's half of the loopback
+    // round-trip busy; the measured socket is used single-flight.
+    let echo_peer = peer.try_clone()?;
+    std::thread::spawn(move || {
+        let mut buf = [0u8; RCV_CAP];
+        while let Ok((n, src)) = echo_peer.recv_from(&mut buf) {
+            let _ = echo_peer.send_to(&buf[..n], src);
+        }
+    });
+
+    let payload = [0u8; 32];
+    let mut bufs = [mol::Buffer::<RCV_CAP>::new()];
+    let mut out = [RecvResult {
+        len: 0,
+        src: SocketAddr::from(([0, 0, 0, 0], 0)),
+        truncated: false,
+    }];
+
+    // Samples are a bench-mode allocation (not the engine hot path).
+    let mut samples: Vec<u64> = Vec::with_capacity(200_000);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
+    let mut count: u64 = 0;
+    while std::time::Instant::now() < deadline {
+        let t0 = std::time::Instant::now();
+        sock.send_to(&payload, peer_addr)?;
+        loop {
+            if sock.recv_batch(&mut bufs, &mut out)? > 0 {
+                break;
+            }
+        }
+        samples.push(t0.elapsed().as_nanos() as u64);
+        count += 1;
+    }
+    let dur = seconds as f64;
+
+    samples.sort_unstable();
+    let n = samples.len();
+    // Nearest-rank quantile: index = floor(q * n), q in [0, 1).
+    let idx = |q: f64| ((n as f64) * q) as usize;
+    let p50 = samples[idx(0.50)] as f64 / 1000.0;
+    let p99 = samples[idx(0.99)] as f64 / 1000.0;
+    let p999 = samples[idx(0.999)] as f64 / 1000.0;
+    let max = *samples.last().unwrap_or(&0) as f64 / 1000.0;
+    println!(
+        "latency: {count} samples over {dur:.0}s — p50 {p50:.1}µs, p99 {p99:.1}µs, p999 {p999:.1}µs, max {max:.1}µs"
+    );
+    Ok(())
+}
+
+/// Round-trip latency against a RUNNING engine (`fds` in default mode,
+/// UDP echo on its configured bind): single-flight datagrams to `addr`,
+/// RTT percentiles over `seconds`. This is the end-to-end number the
+/// engine's busy-poll loop targets.
+pub(crate) fn run_engine_latency(addr: SocketAddr, seconds: u64) -> std::io::Result<()> {
+    let seconds = seconds.max(1);
+    let sock = try_io(|| {
+        UdpSocket::new(
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            &UdpConfig::default(),
+        )
+    })
+    .ok_or_else(|| std::io::Error::other("no UDP datapath available"))?;
+
+    let payload = [0u8; 32];
+    let mut bufs = [mol::Buffer::<RCV_CAP>::new()];
+    let mut out = [RecvResult {
+        len: 0,
+        src: SocketAddr::from(([0, 0, 0, 0], 0)),
+        truncated: false,
+    }];
+
+    let mut samples: Vec<u64> = Vec::with_capacity(200_000);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
+    let mut count: u64 = 0;
+    while std::time::Instant::now() < deadline {
+        let t0 = std::time::Instant::now();
+        sock.send_to(&payload, addr)?;
+        loop {
+            if sock.recv_batch(&mut bufs, &mut out)? > 0 {
+                break;
+            }
+        }
+        samples.push(t0.elapsed().as_nanos() as u64);
+        count += 1;
+    }
+    let dur = seconds as f64;
+
+    samples.sort_unstable();
+    let n = samples.len();
+    let idx = |q: f64| ((n as f64) * q) as usize;
+    let p50 = samples[idx(0.50)] as f64 / 1000.0;
+    let p99 = samples[idx(0.99)] as f64 / 1000.0;
+    let p999 = samples[idx(0.999)] as f64 / 1000.0;
+    let max = *samples.last().unwrap_or(&0) as f64 / 1000.0;
+    println!(
+        "engine latency vs {addr}: {count} samples over {dur:.0}s — p50 {p50:.1}µs, p99 {p99:.1}µs, p999 {p999:.1}µs, max {max:.1}µs"
     );
     Ok(())
 }

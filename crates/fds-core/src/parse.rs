@@ -1,4 +1,4 @@
-//! Parser atoms (standard [A], [SIMD], [SEC]; thesis NT10 left factoring,
+//! Parser atoms (standard \[A\], \[SIMD\], \[SEC\]; thesis NT10 left factoring,
 //! NT28 fast-path specialization): the protocol header parsers are PURE
 //! molecules — total functions from validated `&[u8]` inputs to parsed
 //! headers — with every length checked before any indexing. The protocol

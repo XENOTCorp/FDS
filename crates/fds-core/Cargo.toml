@@ -15,7 +15,7 @@ path = "src/main.rs"
 [dependencies]
 mol-core = { path = "../mol-core" }
 libc = "0.2"
-rustix = { version = "1", features = ["net", "mm", "process", "event"] }
+rustix = { version = "1", features = ["net", "mm", "process", "event", "thread"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

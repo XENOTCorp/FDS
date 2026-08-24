@@ -1,5 +1,5 @@
 //! Layout discipline: cache-line alignment, hot/cold separation, padded
-//! counters (standard [CACHE]; thesis NT25/NT53 cache-line accounting).
+//! counters (standard \[CACHE\]; thesis NT25/NT53 cache-line accounting).
 
 /// The cache-line size in bytes for alignment purposes.
 pub const fn cache_line_size() -> usize {
@@ -51,12 +51,12 @@ impl<T: Default> Default for CachePadded<T> {
 }
 
 /// A frequently written counter in its own cache line. Use sharded or
-/// per-core instances and aggregate rarely (standard [OBS], [CONC]).
+/// per-core instances and aggregate rarely (standard \[OBS\], \[CONC\]).
 pub type PaddedCounter = CachePadded<core::sync::atomic::AtomicU64>;
 
 /// Hot/cold state separation marker.
 ///
-/// The FDS pattern for connection state (standard [CACHE], thesis NT53):
+/// The FDS pattern for connection state (standard \[CACHE\], thesis NT53):
 /// split the state into a `Hot` struct (fields read/written every step)
 /// and a `Cold` struct (rarely touched fields), each in its own cache
 /// line. This struct pairs them; align both with [`CachePadded`] or

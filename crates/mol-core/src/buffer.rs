@@ -1,5 +1,5 @@
-//! Fixed-capacity buffers and a lock-free object pool (standard [R],
-//! [ALLOC]; thesis NT48, NT50).
+//! Fixed-capacity buffers and a lock-free object pool (standard \[R\],
+//! \[ALLOC\]; thesis NT48, NT50).
 //!
 //! `Buffer` is a fixed-size byte buffer with a length; `Pool` is an
 //! arena of `N` values with a lock-free free list (an MPMC ring of free
@@ -152,6 +152,22 @@ impl<T, const N: usize> Pool<T, N> {
     pub fn release_index(&self, idx: usize) {
         assert!(idx < N, "Pool::release_index: index out of range");
         self.release(idx);
+    }
+
+    /// Mutable access to slot `idx`. The caller must own the slot (hold
+    /// its guard, or the table must have handed it out); used by
+    /// connection tables to update hot/cold state per packet.
+    ///
+    /// `&self -> &mut T` is sound here because the pool is interior-mutable
+    /// (`UnsafeCell` slots) and exclusive ownership is enforced by the
+    /// free-list protocol, not by the borrow checker — the same contract
+    /// as `PoolGuard`'s deref.
+    #[allow(clippy::mut_from_ref)]
+    pub fn get_mut(&self, idx: usize) -> &mut T {
+        assert!(idx < N, "Pool::get_mut: index out of range");
+        // SAFETY: the caller owns the slot, so it is initialized and not
+        // aliased by any guard.
+        unsafe { (*self.slots.get())[idx].assume_init_mut() }
     }
 
     fn release(&self, idx: usize) {

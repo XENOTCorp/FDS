@@ -1,7 +1,7 @@
-//! Connection/association state (standard [CACHE], thesis NT53): hot
+//! Connection/association state (standard \[CACHE\], thesis NT53): hot
 //! fields (touched every step) and cold fields (rarely touched) live in
 //! separate cache lines; per-core tables are preallocated at startup
-//! (standard [ALLOC]) and index by a packed [`ConnectionId`].
+//! (standard \[ALLOC\]) and index by a packed [`ConnectionId`].
 
 use mol::{CachePadded, Pool, PoolGuard};
 use std::net::SocketAddr;
@@ -132,6 +132,12 @@ impl<const CAP: usize> ConnTable<CAP> {
     /// for the next owner.
     pub(crate) fn release_slot(&self, slot: usize) {
         self.pool.release_index(slot);
+    }
+
+    /// Mutable access to an owned slot's connection (the caller must own
+    /// the slot — e.g. the reactor holds it for a live connection).
+    pub(crate) fn conn_mut(&self, slot: usize) -> &mut Connection {
+        self.pool.get_mut(slot)
     }
 
     /// Capacity.

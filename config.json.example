@@ -1,0 +1,51 @@
+{
+  "core": {
+    "pin_cores": true,
+    "threads": 0,
+    "stack_bytes": 1048576
+  },
+  "reactor": {
+    "strategy": "epoll-busy-poll",
+    "max_events": 256,
+    "busy_poll": true,
+    "timeout_ms": 0
+  },
+  "udp": {
+    "rcvbuf": 4194304,
+    "sndbuf": 4194304,
+    "gso_segment_size": 0,
+    "gro": false,
+    "zerocopy": false,
+    "reuseport": true,
+    "incoming_cpu": true
+  },
+  "tcp": {
+    "nodelay": true,
+    "quickack": false,
+    "defer_accept": false,
+    "fastopen": 0,
+    "cork": false,
+    "reuseport": true,
+    "rcvbuf": 4194304,
+    "sndbuf": 4194304
+  },
+  "sctp": {
+    "nodelay": true,
+    "init_max_streams": 10,
+    "partial_delivery_point": 0,
+    "max_burst": 0,
+    "reuseport": true
+  },
+  "metrics": {
+    "socket_path": "/tmp/fds-metrics.sock"
+  },
+  "zero_copy": {
+    "splice": true,
+    "registered_buffers": false,
+    "udp_zerocopy": false
+  },
+  "engine": {
+    "udp_bind": "127.0.0.1:7777",
+    "tcp_bind": "127.0.0.1:7778"
+  }
+}

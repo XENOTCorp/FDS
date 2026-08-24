@@ -1,4 +1,4 @@
-//! UDP transport (standard [IO], [SIMD]; thesis NT46/NT47 batching):
+//! UDP transport (standard \[IO\], \[SIMD\]; thesis NT46/NT47 batching):
 //! nonblocking sockets with `recvmmsg`/`sendmmsg` batch I/O, UDP_SEGMENT
 //! (GSO) and UDP_GRO offloads, optional MSG_ZEROCOPY for large
 //! datagrams. The batch ring between recvmmsg and processing is the

@@ -1,4 +1,4 @@
-//! Bounds-safe SIMD helpers (standard [SIMD]; thesis NT25/NT53).
+//! Bounds-safe SIMD helpers (standard \[SIMD\]; thesis NT25/NT53).
 //!
 //! Discipline: vectorized loops run over `chunks_exact` only — never past
 //! the slice end — and the remainder is handled by a scalar loop. Length

@@ -1,10 +1,10 @@
 //! The reactor core: edge-triggered epoll with a drain-to-EAGAIN
-//! busy-poll discipline (standard [IO]; thesis ch. 10 reactor-as-trace).
+//! busy-poll discipline (standard \[IO\]; thesis ch. 10 reactor-as-trace).
 //!
 //! A [`Reactor`] owns one epoll instance and a preallocated event array.
 //! Every registered fd is edge-triggered: after an event fires, the
 //! handler MUST drain the fd until EAGAIN before returning, otherwise no
-//! further edge is generated and events are lost. [`Reactor::run_once`]
+//! further edge is generated and events are lost. [`Reactor::poll_busy`]
 //! busy-polls (timeout 0) until the ready list is empty.
 
 use rustix::event::epoll;
@@ -33,7 +33,7 @@ impl Interest {
 }
 
 /// One delivered epoll event: the token (a packed
-/// [`crate::ConnectionId`]) and the ready flags.
+/// [`crate::conn::ConnectionId`]) and the ready flags.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct EpollEvent {
     pub token: u64,

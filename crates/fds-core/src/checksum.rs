@@ -1,8 +1,8 @@
-//! Checksum atoms (standard [SIMD]; thesis NT47 batching): IP/TCP/UDP use
+//! Checksum atoms (standard \[SIMD\]; thesis NT47 batching): IP/TCP/UDP use
 //! the one's-complement sum from the framework's bounds-safe SIMD helpers;
 //! SCTP uses CRC32c (Castagnoli), table-driven with a byte-at-a-time
 //! reference (vectorizable later). All parsers validate lengths before
-//! reading (standard [SEC]).
+//! reading (standard \[SEC\]).
 
 use mol::{checksum_finalize, sum_u16};
 

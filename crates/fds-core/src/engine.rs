@@ -1,6 +1,6 @@
 //! The built-in engine loop: the minimal runnable dataplane that binds
 //! the reactor, transports, connection state, counters, and metrics
-//! together (thesis ch. 10 reactor-as-trace; standard [IO], [ALLOC]).
+//! together (thesis ch. 10 reactor-as-trace; standard \[IO\], \[ALLOC\]).
 //!
 //! Default mode is a UDP + TCP echo server on the addresses from
 //! [`crate::config::EngineConfig`]. The transports are the real code
@@ -19,17 +19,29 @@ use crate::signals;
 use crate::Ctx;
 use std::net::SocketAddr;
 
-/// Token layout: reserved high tokens for the UDP socket and TCP
-/// listener; connection tokens are packed [`ConnectionId`]s (core in the
-/// high half, slot in the low half — core 0 here).
+/// Token layout: reserved high tokens for the UDP socket, TCP listener
+/// and metrics listener; connection tokens are packed [`ConnectionId`]s
+/// (core in the high half, slot in the low half — core 0 here).
 const TOKEN_UDP: u64 = u64::MAX - 1;
 const TOKEN_TCP_LISTENER: u64 = u64::MAX;
+const TOKEN_METRICS: u64 = u64::MAX - 2;
 /// Connection table capacity (preallocated slots).
 const CONN_CAP: usize = 1024;
 
 /// Run the engine until SIGINT.
 pub(crate) fn run(cfg: &Config) -> std::io::Result<()> {
     signals::install();
+
+    // Pin the engine thread to a core before the sockets bind: stable
+    // CPU affinity removes migration stalls from the tail-latency
+    // distribution (the p999/max outliers are scheduler + frequency
+    // noise; pinning removes the migration component).
+    if cfg.core.pin_cores {
+        match pin_to_core(0) {
+            Ok(()) => eprintln!("fds: pinned to core 0"),
+            Err(e) => eprintln!("fds: core pinning unavailable ({}), continuing unpinned", e),
+        }
+    }
 
     let udp_addr: SocketAddr = parse_addr(&cfg.engine.udp_bind, "127.0.0.1:7777");
     let tcp_addr: SocketAddr = parse_addr(&cfg.engine.tcp_bind, "127.0.0.1:7778");
@@ -43,15 +55,6 @@ pub(crate) fn run(cfg: &Config) -> std::io::Result<()> {
     reactor.register(&udp_sock, TOKEN_UDP, Interest::Readable)?;
     reactor.register(&tcp_listener, TOKEN_TCP_LISTENER, Interest::Readable)?;
 
-    // Preallocated connection table + active-stream map (the map allocates
-    // only at connection setup/teardown, never per packet).
-    let conns: ConnTable<CONN_CAP> = ConnTable::new();
-    for i in 0..CONN_CAP {
-        conns.initialize(i, Connection::new("0.0.0.0:0".parse().unwrap(), 0));
-    }
-    let mut streams: std::collections::HashMap<u64, crate::tcp::TcpStream> =
-        std::collections::HashMap::new();
-
     let metrics_path = if cfg.metrics.socket_path.is_empty() {
         None
     } else {
@@ -61,7 +64,22 @@ pub(crate) fn run(cfg: &Config) -> std::io::Result<()> {
         Some(p) => Some(crate::metrics::MetricsServer::bind(p)?),
         None => None,
     };
+    // The metrics listener lives in the reactor: serving metrics costs a
+    // syscall only when a client actually connects, never per loop
+    // iteration (the hot loop stays syscall-free apart from epoll).
+    if let Some(s) = &metrics_server {
+        reactor.register(s, TOKEN_METRICS, Interest::Readable)?;
+    }
     let metrics = Metrics::new(1);
+
+    // Preallocated connection table + active-stream map (the map allocates
+    // only at connection setup/teardown, never per packet).
+    let conns: ConnTable<CONN_CAP> = ConnTable::new();
+    for i in 0..CONN_CAP {
+        conns.initialize(i, Connection::new("0.0.0.0:0".parse().unwrap(), 0));
+    }
+    let mut streams: std::collections::HashMap<u64, crate::tcp::TcpStream> =
+        std::collections::HashMap::new();
 
     let mut ctx = Ctx::default();
     // Preallocated receive batch (hot path allocates nothing).
@@ -101,18 +119,23 @@ pub(crate) fn run(cfg: &Config) -> std::io::Result<()> {
                 TOKEN_TCP_LISTENER => {
                     drain_accept(&tcp_listener, &mut reactor, &conns, &mut streams)?;
                 }
+                TOKEN_METRICS => {
+                    // Drain all pending metric requests (edge-triggered:
+                    // serve until none remain). Best-effort: a bad client
+                    // never kills the engine.
+                    if let Some(s) = &mut metrics_server {
+                        metrics.set_totals(
+                            ctx.packets.load(std::sync::atomic::Ordering::Relaxed),
+                            ctx.bytes.load(std::sync::atomic::Ordering::Relaxed),
+                            ctx.drops.load(std::sync::atomic::Ordering::Relaxed),
+                        );
+                        while let Ok(true) = s.poll_once(&metrics) {}
+                    }
+                }
                 tok => {
                     drain_tcp(tok, &mut reactor, &conns, &mut streams, &mut ctx)?;
                 }
             }
-        }
-        if let Some(s) = &mut metrics_server {
-            metrics.set_totals(
-                ctx.packets.load(std::sync::atomic::Ordering::Relaxed),
-                ctx.bytes.load(std::sync::atomic::Ordering::Relaxed),
-                ctx.drops.load(std::sync::atomic::Ordering::Relaxed),
-            );
-            let _ = s.poll_once(&metrics);
         }
     }
 
@@ -130,6 +153,21 @@ fn parse_addr(s: &str, fallback: &str) -> SocketAddr {
         eprintln!("fds: bad bind address {s:?} — using {fallback}");
         fallback.parse().unwrap()
     })
+}
+
+/// Pin the calling thread to `core` (sched_setaffinity).
+fn pin_to_core(core: usize) -> std::io::Result<()> {
+    let mut set = rustix::thread::CpuSet::new();
+    set.set(core);
+    rustix::thread::sched_setaffinity(None, &set).map_err(std::io::Error::from)
+}
+
+/// Coarse monotonic ticks (seconds since first call) for hot-state
+/// activity stamps — no clock syscall per packet (Instant::elapsed reads
+/// a vDSO time).
+fn now_ticks() -> u64 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed().as_secs()
 }
 
 /// Presence probes for the optional transports (feature-gated; absence is
@@ -253,6 +291,11 @@ fn drain_tcp(
                 Ok(n) => {
                     ctx.packets.fetch_add(1, Relaxed);
                     ctx.bytes.fetch_add(n as u64, Relaxed);
+                    // Hot state: sequence + activity on every step (the
+                    // per-connection hot/cold split in action).
+                    let hot = &mut conns.conn_mut(slot).hot;
+                    hot.seq = hot.seq.wrapping_add(n as u32);
+                    hot.last_activity = now_ticks();
                     match stream.write_all(&buf[..n]) {
                         Ok(()) => {}
                         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {

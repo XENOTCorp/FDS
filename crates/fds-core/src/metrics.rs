@@ -1,4 +1,4 @@
-//! Observability (standard [OBS]): lock-free per-core counters (padded
+//! Observability (standard \[OBS\]): lock-free per-core counters (padded
 //! atomics from the framework) and a pull-based Unix socket endpoint —
 //! no allocation in the hot path, no HTTP stack. The endpoint accepts
 //! one connection at a time, writes the metrics text, and closes.
@@ -180,6 +180,12 @@ pub(crate) struct MetricsServer {
     path: std::path::PathBuf,
 }
 
+impl rustix::fd::AsFd for MetricsServer {
+    fn as_fd(&self) -> rustix::fd::BorrowedFd<'_> {
+        std::os::fd::AsFd::as_fd(&self.listener)
+    }
+}
+
 impl MetricsServer {
     /// Bind the Unix socket at `path` (unlinks a stale file first).
     pub(crate) fn bind(path: &Path) -> std::io::Result<Self> {
@@ -198,6 +204,12 @@ impl MetricsServer {
             listener,
             path: path.to_path_buf(),
         })
+    }
+
+    /// The raw fd (for epoll reactor registration).
+    pub(crate) fn as_raw_fd(&self) -> i32 {
+        use std::os::fd::AsRawFd as _;
+        self.listener.as_raw_fd()
     }
 
     /// Serve one request: accept, write metrics text, close. Returns

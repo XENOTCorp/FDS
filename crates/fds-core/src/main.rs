@@ -1,7 +1,7 @@
 //! FDS transport engine: a nonblocking, edge-triggered, busy-polling,
 //! batched, zero-allocation TCP/UDP/SCTP dataplane on the Mol framework
 //! (thesis NT34–NT36 reactor-as-trace, NT46–NT47 batching, NT48 rings;
-//! standard policies [IO], [SIMD], [CONC], [SEC], [OBS], [ALLOC]).
+//! standard policies \[IO\], \[SIMD\], \[CONC\], \[SEC\], \[OBS\], \[ALLOC\]).
 //!
 //! This is a BINARY package with no public API: every module is
 //! crate-private and the `fds` binary is the product. Runtime
@@ -65,6 +65,21 @@ fn main() {
         Some("--bench") => {
             let secs = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(2);
             bench::run(secs)
+        }
+        Some("--latency") => {
+            let secs = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(2);
+            bench::run_latency(secs)
+        }
+        Some("--latency-against") => {
+            let addr: std::net::SocketAddr = args
+                .get(1)
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_else(|| {
+                    eprintln!("fds: --latency-against <addr> [secs] — using 127.0.0.1:7777");
+                    "127.0.0.1:7777".parse().unwrap()
+                });
+            let secs = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(2);
+            bench::run_engine_latency(addr, secs)
         }
         Some("--fuzz") => {
             let iters = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(1_000_000);
