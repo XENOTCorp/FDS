@@ -46,6 +46,14 @@ impl<const N: usize> Buffer<N> {
         &self.data
     }
 
+    /// The full backing array, mutable (for receive paths where the
+    /// length is only known after the syscall; call [`Buffer::set_len`]
+    /// afterwards to publish the received length).
+    #[inline]
+    pub fn as_mut_full_slice(&mut self) -> &mut [u8; N] {
+        &mut self.data
+    }
+
     /// Current length.
     #[inline]
     pub fn len(&self) -> usize {
