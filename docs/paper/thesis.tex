@@ -1,0 +1,56 @@
+\documentclass[11pt]{report}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{natbib}
+\bibliographystyle{plainnat}
+
+% Theorem environments (numbered by chapter)
+\newtheorem{theorem}{Theorem}[chapter]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{example}[theorem]{Example}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+\title{\textbf{Mol}: The Category of Stateful Transformations ---\\ An Algebraic Theory of Zero-Allocation Dataplane Construction}
+\author{XENOT}
+\date{2026}
+
+\begin{document}
+\maketitle
+\input{chapters/ch00-abstract.tex}
+\tableofcontents
+
+% --- Part I: Foundations ---
+\input{chapters/ch01-intro.tex}      % ch:intro
+\input{chapters/ch02-prelim.tex}     % ch:prelim
+\input{chapters/ch03-mol.tex}        % ch:mol
+\input{chapters/ch04-lawvere.tex}    % ch:lawvere
+\input{chapters/ch05-rewrite.tex}    % ch:rewrite
+\input{chapters/ch06-free.tex}       % ch:free
+\input{chapters/ch07-enrich.tex}     % ch:enrich
+\input{chapters/ch08-kleisli.tex}    % ch:kleisli
+
+% --- Part II: Structure theorems ---
+\input{chapters/ch09-coalgebra.tex}  % ch:coalgebra
+\input{chapters/ch10-trace.tex}      % ch:trace
+\input{chapters/ch11-operad.tex}     % ch:operad
+\input{chapters/ch12-linear.tex}     % ch:linear
+
+% --- Part III: Applications ---
+\input{chapters/ch13-situations.tex} % ch:situations
+\input{chapters/ch14-testing.tex}    % ch:testing
+\input{chapters/ch15-related.tex}    % ch:related
+\input{chapters/ch16-conclusion.tex} % ch:conclusion
+
+\appendix
+\input{chapters/appendix-a.tex}      % app:a
+\input{chapters/appendix-b.tex}      % app:b
+
+\bibliography{refs}
+\end{document}
