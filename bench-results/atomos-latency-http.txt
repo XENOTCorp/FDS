@@ -1,0 +1,5 @@
+# HTTP request latency distribution (loopback) — 2026-08-24 15:30:08Z
+# host: xenot | cpu: Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz | kernel: 7.2.0_1
+# tool: curl time_total x200 | params: fresh connection per request | duration: 4s
+samples 200 — p10 252.0 p20 258.0 p30 264.0 p40 274.0 p50 287.0 p60 303.0 p70 343.0 p80 377.0 p90 417.0 p95 500.0 p99 1514.0 p999 1884.0 µs
+mean 347.8 µs, stdev 211.1 µs, jitter(stdev/mean) 0.61

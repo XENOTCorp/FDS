@@ -812,3 +812,50 @@ pub fn run_metrics_pull(path: &str) -> std::io::Result<()> {
     print!("{report}");
     Ok(())
 }
+
+/// Round-trip latency distribution of the TCP echo datapath (single
+/// connection, single in-flight request): one connect, then 32-byte
+/// request/response RTT samples for `seconds`, reported as the same
+/// p10..p999 ladder as the UDP mode (`--latency-tcp <secs>`).
+pub fn run_latency_tcp(seconds: u64) -> std::io::Result<()> {
+    use std::io::{Read, Write};
+    let seconds = seconds.max(1);
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let echo = std::thread::spawn(move || -> std::io::Result<()> {
+        let (mut conn, _) = listener.accept()?;
+        conn.set_nodelay(true)?;
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = conn.read(&mut buf)?;
+            if n == 0 {
+                return Ok(());
+            }
+            conn.write_all(&buf[..n])?;
+        }
+    });
+
+    let mut sock = std::net::TcpStream::connect(addr)?;
+    sock.set_nodelay(true)?;
+    let payload = [0xabu8; 32];
+    let mut samples: Vec<u64> = Vec::with_capacity(200_000);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
+    let mut count: u64 = 0;
+    let mut buf = [0u8; 64];
+    while std::time::Instant::now() < deadline {
+        let t0 = std::time::Instant::now();
+        sock.write_all(&payload)?;
+        let mut got = 0;
+        while got < payload.len() {
+            got += sock.read(&mut buf[got..payload.len()])?;
+        }
+        samples.push(t0.elapsed().as_nanos() as u64);
+        count += 1;
+    }
+    // Close the client so the echo thread's read returns EOF and the
+    // join below cannot hang.
+    drop(sock);
+    let _ = echo.join();
+    report_latency("tcp latency", &mut samples, count, seconds as f64);
+    Ok(())
+}

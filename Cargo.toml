@@ -19,6 +19,10 @@ codegen-units = 1
 panic = "abort"
 overflow-checks = false
 debug-assertions = false
+# Stripped symbols shrink the binary's cache footprint (I-cache/d-cache
+# share the same physical cache on Broadwell); backtraces are already
+# useless with panic=abort.
+strip = true
 
 # Dev profile: own code at opt-level 1 (still debuggable, still checks
 # overflow and assertions) with dependencies at opt-level 3 (compiled once,
