@@ -6,8 +6,9 @@
 //! [`crate::config::EngineConfig`], run by **one worker thread per
 //! logical CPU** (config `core.threads`; default 0 = auto, which is 2x
 //! the physical core count on hyperthreaded machines). Each worker owns
-//! a [`Poller`] (epoll by default, io_uring as the `io-uring` strategy),
-//! its own SO_REUSEPORT socket pair, connection table, receive batch and
+//! its readiness/datapath (epoll busy-poll by default, the io_uring
+//! completion-driven datapath as the `io-uring` strategy), its own
+//! SO_REUSEPORT socket pair, connection table, receive batch and
 //! per-core counters — the kernel steers traffic across workers, so the
 //! loop scales with the core count. The transports are the real code
 //! (recvmmsg batches, edge-triggered drain, hot/cold connection state);
@@ -18,9 +19,9 @@
 //! replacement.
 
 use crate::config::Config;
-use crate::conn::{ConnTable, Connection, ConnectionId};
+use crate::conn::{ConnTable, Connection, ConnectionId, CONN_CAP};
 use crate::metrics::Metrics;
-use crate::reactor::{Interest, Poller};
+use crate::reactor::{Interest, Reactor};
 use crate::signals;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -32,8 +33,6 @@ use std::sync::Arc;
 const TOKEN_UDP: u64 = u64::MAX - 1;
 const TOKEN_TCP_LISTENER: u64 = u64::MAX;
 const TOKEN_METRICS: u64 = u64::MAX - 2;
-/// Connection table capacity per worker (preallocated slots).
-const CONN_CAP: usize = 1024;
 
 /// Run the engine until SIGINT.
 pub(crate) fn run(cfg: &Config) -> std::io::Result<()> {
@@ -109,8 +108,8 @@ fn worker_count(core: &crate::config::CoreConfig) -> usize {
     }
 }
 
-/// One worker: pin to its CPU, bind its SO_REUSEPORT socket pair, build
-/// its poller, then run the edge-triggered busy-poll loop until `stop`.
+/// One worker: pin to its CPU, bind its SO_REUSEPORT socket pair, then
+/// run the configured strategy's loop until `stop`.
 fn worker_main(
     id: usize,
     cfg: &Config,
@@ -131,9 +130,6 @@ fn worker_main(
     // address; the kernel steers datagrams/connections across workers.
     let udp_sock = crate::udp::UdpSocket::new(udp_addr, &cfg.udp)?;
     let tcp_listener = crate::tcp::TcpListener::bind(tcp_addr, &cfg.tcp)?;
-    let mut poller = Poller::new(&cfg.reactor)?;
-    poller.register(udp_sock.as_raw_fd(), TOKEN_UDP, Interest::Readable)?;
-    poller.register(tcp_listener.as_raw_fd(), TOKEN_TCP_LISTENER, Interest::Readable)?;
 
     // The metrics pull endpoint lives on worker 0 only; it aggregates
     // the per-core counters of every worker.
@@ -146,18 +142,84 @@ fn worker_main(
         Some(p) => Some(crate::metrics::MetricsServer::bind(p)?),
         None => None,
     };
-    if let Some(s) = &metrics_server {
-        poller.register(s.as_raw_fd(), TOKEN_METRICS, Interest::Readable)?;
+
+    if id == 0 {
+        eprintln!(
+            "fds: engine up — udp echo on {udp_addr}, tcp echo on {tcp_addr} (Ctrl-C to stop)"
+        );
+    }
+
+    match cfg.reactor.strategy {
+        crate::config::ReactorStrategy::EpollBusyPoll => worker_epoll_loop(
+            id,
+            cfg,
+            &udp_sock,
+            &tcp_listener,
+            &mut metrics_server,
+            metrics,
+            stop,
+        ),
+        crate::config::ReactorStrategy::IoUring => {
+            #[cfg(feature = "io-uring")]
+            {
+                worker_io_uring_loop(
+                    id,
+                    cfg,
+                    &udp_sock,
+                    &tcp_listener,
+                    &mut metrics_server,
+                    metrics,
+                    stop,
+                )
+            }
+            #[cfg(not(feature = "io-uring"))]
+            {
+                eprintln!("fds: worker {id}: io-uring feature disabled; using epoll");
+                worker_epoll_loop(
+                    id,
+                    cfg,
+                    &udp_sock,
+                    &tcp_listener,
+                    &mut metrics_server,
+                    metrics,
+                    stop,
+                )
+            }
+        }
+    }
+}
+
+/// The default strategy: epoll edge-triggered busy-poll readiness with
+/// the syscall transports (recvmmsg/sendmmsg, readv/writev).
+fn worker_epoll_loop(
+    id: usize,
+    cfg: &Config,
+    udp_sock: &crate::udp::UdpSocket,
+    tcp_listener: &crate::tcp::TcpListener,
+    metrics_server: &mut Option<crate::metrics::MetricsServer>,
+    metrics: &Metrics,
+    stop: &(dyn Fn() -> bool + Send + Sync),
+) -> std::io::Result<()> {
+    let mut reactor = Reactor::new(cfg.reactor.max_events)?;
+    reactor.register(udp_sock.as_raw_fd(), TOKEN_UDP, Interest::Readable)?;
+    reactor.register(tcp_listener.as_raw_fd(), TOKEN_TCP_LISTENER, Interest::Readable)?;
+    if let Some(s) = metrics_server {
+        reactor.register(s.as_raw_fd(), TOKEN_METRICS, Interest::Readable)?;
     }
 
     // Per-worker connection table + active-stream map (the map allocates
-    // only at connection setup/teardown, never per packet).
+    // only at connection setup/teardown, never per packet). The
+    // `ConnectionSlot` is HELD for the connection's lifetime: dropping
+    // it releases the table slot, so releasing it again at close would
+    // double-release (a free-list ring spin).
     let conns: ConnTable<CONN_CAP> = ConnTable::new();
     for i in 0..CONN_CAP {
         conns.initialize(i, Connection::new("0.0.0.0:0".parse().unwrap(), 0));
     }
-    let mut streams: std::collections::HashMap<u64, crate::tcp::TcpStream> =
-        std::collections::HashMap::new();
+    let mut streams: std::collections::HashMap<
+        u64,
+        (crate::tcp::TcpStream, crate::conn::ConnectionSlot<'_, CONN_CAP>),
+    > = std::collections::HashMap::new();
 
     // Preallocated receive batch (hot path allocates nothing). Buffers
     // are sized to the IPv4 UDP wire maximum (65535), so ANY datagram —
@@ -172,56 +234,82 @@ fn worker_main(
         })
         .collect();
 
-    if id == 0 {
-        eprintln!(
-            "fds: engine up — udp echo on {udp_addr}, tcp echo on {tcp_addr} (Ctrl-C to stop)"
-        );
-    }
-
     let timeout_ms = if cfg.reactor.busy_poll {
         0
     } else {
-        cfg.reactor.timeout_ms
+        cfg.reactor.timeout_ms.max(0)
+    };
+    let timeout = rustix::event::Timespec {
+        tv_sec: (timeout_ms / 1000) as i64,
+        tv_nsec: ((timeout_ms % 1000) as i64) * 1_000_000,
     };
     // Sized to max_events so a full batch is always copied out in one go.
     let mut evbuf = vec![crate::reactor::EpollEvent::default(); cfg.reactor.max_events.max(1)];
 
     while !stop() {
-        let n = poller.wait(timeout_ms)?;
+        let n = reactor.poll_timeout(Some(&timeout))?;
         if n == 0 {
             continue;
         }
-        let m = poller.copy_events(n, &mut evbuf);
+        let m = reactor.copy_events(n, &mut evbuf);
         for ev in evbuf.iter().take(m) {
             if ev.error {
                 metrics.add_drops(id, 1);
                 continue;
             }
             match ev.token {
-                TOKEN_UDP => drain_udp(&udp_sock, &mut rx_bufs, &mut rx_out, metrics, id)?,
+                TOKEN_UDP => drain_udp(udp_sock, &mut rx_bufs, &mut rx_out, metrics, id)?,
                 TOKEN_TCP_LISTENER => {
-                    drain_accept(&tcp_listener, &mut poller, &conns, &mut streams, id)?;
+                    drain_accept(tcp_listener, &mut reactor, &conns, &mut streams, id)?;
                 }
                 TOKEN_METRICS => {
                     // Drain all pending metric requests (edge-triggered:
                     // serve until none remain). Best-effort: a bad client
                     // never kills the engine.
-                    if let Some(s) = &mut metrics_server {
+                    if let Some(s) = metrics_server {
                         while let Ok(true) = s.poll_once(metrics) {}
                     }
                 }
-                tok => drain_tcp(tok, &mut poller, &conns, &mut streams, metrics, id)?,
-            }
-            // io_uring single-shot polls are consumed by their completion;
-            // re-arm now that the handler drained to EAGAIN. No-op on
-            // epoll, which re-arms implicitly on drain.
-            if let Err(e) = poller.rearm(ev.token) {
-                metrics.add_drops(id, 1);
-                eprintln!("fds: worker {id}: poll re-arm failed for token {}: {e}", ev.token);
+                tok => drain_tcp(tok, &mut reactor, &conns, &mut streams, metrics, id)?,
             }
         }
     }
     Ok(())
+}
+
+/// The `io-uring` strategy: the completion-driven datapath
+/// ([`crate::io_uring_reactor::IoUringDatapath`]) — UDP/TCP echo runs
+/// through the ring (RECVMSG/SENDMSG/ACCEPT/READ/WRITE) instead of the
+/// syscall transports.
+#[cfg(feature = "io-uring")]
+fn worker_io_uring_loop(
+    id: usize,
+    cfg: &Config,
+    udp_sock: &crate::udp::UdpSocket,
+    tcp_listener: &crate::tcp::TcpListener,
+    metrics_server: &mut Option<crate::metrics::MetricsServer>,
+    metrics: &Metrics,
+    stop: &(dyn Fn() -> bool + Send + Sync),
+) -> std::io::Result<()> {
+    let mut datapath = crate::io_uring_reactor::IoUringDatapath::new(
+        id,
+        udp_sock.as_raw_fd(),
+        tcp_listener.as_raw_fd(),
+        metrics_server.as_ref().map(|s| s.as_raw_fd()),
+        cfg.reactor.io_uring_entries,
+        cfg.reactor.io_uring_sq_thread,
+    )?;
+    eprintln!(
+        "fds: worker {id}: io_uring datapath ({} entries, sq_thread {})",
+        cfg.reactor.io_uring_entries, cfg.reactor.io_uring_sq_thread
+    );
+    datapath.run(
+        stop,
+        metrics,
+        id,
+        metrics_server,
+        cfg.reactor.busy_poll,
+    )
 }
 
 fn parse_addr(s: &str, fallback: &str) -> SocketAddr {
@@ -240,8 +328,8 @@ fn pin_to_core(core: usize) -> std::io::Result<()> {
 
 /// Coarse monotonic ticks (seconds since first call) for hot-state
 /// activity stamps — no clock syscall per packet (Instant::elapsed reads
-/// a vDSO time).
-fn now_ticks() -> u64 {
+/// a vDSO time). Shared by the epoll and io_uring datapaths.
+pub(crate) fn now_ticks() -> u64 {
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
     START
         .get_or_init(std::time::Instant::now)
@@ -288,7 +376,7 @@ struct SendXsk(crate::af_xdp::XskSocket);
 unsafe impl Send for SendXsk {}
 
 impl SendXsk {
-    fn recv_frame(&mut self, out: &mut [u8]) -> bool {
+    fn recv_frame(&mut self, out: &mut [u8]) -> Option<usize> {
         self.0.recv_frame(out)
     }
     fn send_frame(&mut self, data: &[u8]) -> bool {
@@ -339,6 +427,7 @@ fn spawn_xdp_thread(
                     .spawn(move || {
                         let mut buf = [0u8; 4096];
                         let mut forwarded = 0u64;
+                        let mut dropped = 0u64;
                         while !stop() {
                             // Method calls on the whole `SendXsk` wrapper
                             // (not the inner field): the move closure then
@@ -346,10 +435,25 @@ fn spawn_xdp_thread(
                             // impl is in effect. Capturing `guarded.0`
                             // directly would capture the raw-pointer
                             // `XskSocket` field and fail to send.
-                            if guarded.recv_frame(&mut buf) && guarded.send_frame(&buf) {
-                                forwarded += 1;
+                            //
+                            // recv_frame consumes the RX frame (returning
+                            // it to the fill ring); the datapath validates
+                            // + rewrites it for echo, and only Echoed
+                            // frames are transmitted.
+                            if let Some(n) = guarded.recv_frame(&mut buf) {
+                                match crate::af_xdp::process_frame(&mut buf[..n]) {
+                                    crate::af_xdp::FrameAction::Echo => {
+                                        if guarded.send_frame(&buf[..n]) {
+                                            forwarded += 1;
+                                        }
+                                    }
+                                    crate::af_xdp::FrameAction::Drop => dropped += 1,
+                                }
                             }
                         }
+                        eprintln!(
+                            "fds: af_xdp thread stopped ({forwarded} forwarded, {dropped} dropped)"
+                        );
                         forwarded
                     }) {
                     Ok(h) => h,
@@ -417,32 +521,35 @@ fn drain_udp(
 }
 
 /// Accept connections until EAGAIN; register each with the worker's
-/// poller and store its stream keyed by its [`ConnectionId`] token.
-fn drain_accept(
+/// reactor and store its stream + slot guard keyed by its
+/// [`ConnectionId`] token. The guard is held for the connection's
+/// lifetime (dropping it releases the slot exactly once, at close).
+fn drain_accept<'a>(
     listener: &crate::tcp::TcpListener,
-    poller: &mut Poller,
-    conns: &ConnTable<CONN_CAP>,
-    streams: &mut std::collections::HashMap<u64, crate::tcp::TcpStream>,
+    reactor: &mut Reactor,
+    conns: &'a ConnTable<CONN_CAP>,
+    streams: &mut std::collections::HashMap<
+        u64,
+        (crate::tcp::TcpStream, crate::conn::ConnectionSlot<'a, CONN_CAP>),
+    >,
     core: usize,
 ) -> std::io::Result<()> {
     loop {
         match listener.accept()? {
             None => break,
             Some((stream, peer)) => {
-                let slot = match conns.try_acquire() {
+                match conns.try_acquire() {
                     Some(mut slot) => {
                         let idx = slot.index();
                         slot.conn_mut().cold.peer = peer;
-                        idx
+                        let token = ConnectionId::new(core as u32, idx as u32).as_u64();
+                        reactor.register(stream.as_raw_fd(), token, Interest::Readable)?;
+                        streams.insert(token, (stream, slot));
                     }
                     None => {
                         eprintln!("fds: connection table full; dropping peer {peer}");
-                        continue;
                     }
-                };
-                let token = ConnectionId::new(core as u32, slot as u32).as_u64();
-                poller.register(stream.as_raw_fd(), token, Interest::Readable)?;
-                streams.insert(token, stream);
+                }
             }
         }
     }
@@ -452,18 +559,21 @@ fn drain_accept(
 /// Drain one TCP connection: echo received bytes back until EAGAIN.
 /// `WouldBlock` during the echo write counts a drop and discards the
 /// remainder of the read burst (see module docs).
-fn drain_tcp(
+fn drain_tcp<'a>(
     token: u64,
-    poller: &mut Poller,
-    conns: &ConnTable<CONN_CAP>,
-    streams: &mut std::collections::HashMap<u64, crate::tcp::TcpStream>,
+    reactor: &mut Reactor,
+    conns: &'a ConnTable<CONN_CAP>,
+    streams: &mut std::collections::HashMap<
+        u64,
+        (crate::tcp::TcpStream, crate::conn::ConnectionSlot<'a, CONN_CAP>),
+    >,
     metrics: &Metrics,
     core: usize,
 ) -> std::io::Result<()> {
     let slot = ConnectionId::from_u64(token).slot() as usize;
     let close = {
         let stream = match streams.get_mut(&token) {
-            Some(s) => s,
+            Some((s, _)) => s,
             None => return Ok(()),
         };
         let mut close = false;
@@ -505,9 +615,11 @@ fn drain_tcp(
         close
     };
     if close {
-        if let Some(stream) = streams.remove(&token) {
-            let _ = poller.unregister(stream.as_raw_fd(), token);
-            conns.release_slot(slot);
+        // Removing the (stream, slot) tuple drops the slot guard, which
+        // releases the table slot exactly once — never call
+        // `release_slot` here (that would double-release).
+        if let Some((stream, _slot)) = streams.remove(&token) {
+            let _ = reactor.unregister(stream.as_raw_fd());
         }
     }
     Ok(())
@@ -570,6 +682,56 @@ mod tests {
         let mut tbuf = [0u8; 64];
         let n = tcp.read(&mut tbuf).unwrap();
         assert_eq!(&tbuf[..n], b"hello tcp worker");
+
+        stop.store(true, Ordering::Relaxed);
+        handle.join().unwrap().expect("engine run_until failed");
+    }
+
+    /// Same smoke on the `io-uring` strategy: the completion-driven
+    /// datapath must serve the same UDP + TCP echo over loopback.
+    #[test]
+    fn engine_io_uring_echo() {
+        let mut cfg = Config::default();
+        cfg.reactor.strategy = crate::config::ReactorStrategy::IoUring;
+        cfg.core.pin_cores = false;
+        cfg.core.threads = 2;
+        cfg.core.stack_bytes = 1 << 20;
+        cfg.engine.udp_bind = "127.0.0.1:19011".to_string();
+        cfg.engine.tcp_bind = "127.0.0.1:19012".to_string();
+        cfg.metrics.socket_path = String::new();
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop2 = stop.clone();
+        let handle = std::thread::spawn(move || {
+            run_until(&cfg, Arc::new(move || stop2.load(Ordering::Relaxed)))
+        });
+
+        let client = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let payload = b"engine-io-uring";
+        let mut buf = [0u8; 256];
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut echoed = 0u64;
+        while Instant::now() < deadline && echoed == 0 {
+            let _ = client.send_to(payload, "127.0.0.1:19011");
+            if let Ok((n, _)) = client.recv_from(&mut buf) {
+                assert_eq!(&buf[..n], payload);
+                echoed += 1;
+            }
+        }
+        assert!(echoed >= 1, "io_uring engine never echoed a UDP datagram");
+
+        let mut tcp = std::net::TcpStream::connect("127.0.0.1:19012").unwrap();
+        tcp.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        tcp.write_all(b"hello io_uring tcp").unwrap();
+        let mut tbuf = [0u8; 64];
+        let n = tcp.read(&mut tbuf).unwrap();
+        assert_eq!(&tbuf[..n], b"hello io_uring tcp");
+        // Closing the client surfaces the EOF path (slot release).
+        drop(tcp);
+        std::thread::sleep(Duration::from_millis(200));
 
         stop.store(true, Ordering::Relaxed);
         handle.join().unwrap().expect("engine run_until failed");

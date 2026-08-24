@@ -70,6 +70,10 @@ pub(crate) struct Connection {
     pub fd: i32,
 }
 
+/// Connection table capacity per worker (preallocated slots). Shared by
+/// the epoll and io_uring datapaths.
+pub(crate) const CONN_CAP: usize = 1024;
+
 impl Connection {
     pub(crate) fn new(peer: SocketAddr, established_at: u64) -> Self {
         Connection {
@@ -120,6 +124,14 @@ impl<const CAP: usize> ConnTable<CAP> {
     pub(crate) fn try_acquire(&self) -> Option<ConnectionSlot<'_, CAP>> {
         let guard = self.pool.try_alloc()?;
         Some(ConnectionSlot { guard })
+    }
+
+    /// Acquire a slot index without a guard: the caller owns the slot
+    /// and MUST call [`ConnTable::release_slot`] exactly once (used by
+    /// completion-driven datapaths where the slot outlives the accept
+    /// frame and a guard would release it early).
+    pub(crate) fn acquire_index(&self) -> Option<usize> {
+        self.pool.try_alloc_index()
     }
 
     /// Number of slots in use.

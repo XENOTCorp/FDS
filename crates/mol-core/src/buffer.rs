@@ -153,6 +153,15 @@ impl<T, const N: usize> Pool<T, N> {
         Some(PoolGuard { pool: self, idx })
     }
 
+    /// Allocate a slot INDEX without a guard. The caller owns the slot
+    /// and MUST call [`Pool::release_index`] exactly once — used by
+    /// completion-driven datapaths that track slot ownership themselves
+    /// (a guard would release the slot on drop, which for a long-lived
+    /// connection would double-release at close).
+    pub fn try_alloc_index(&self) -> Option<usize> {
+        self.free.try_pop()
+    }
+
     /// Return slot `idx` to the free list. The caller must own the slot
     /// (i.e. hold no live guard for it); used by tables that release
     /// slots out-of-order (e.g. connection close).

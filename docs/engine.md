@@ -12,8 +12,10 @@ The engine runs **one worker thread per logical CPU** (`core.threads`;
 0 = auto, which is 2x the physical core count on hyperthreaded
 machines). Each worker owns, exclusively:
 
-- a [`Poller`](crates/fds-core/src/reactor.rs) — epoll by default
-  (edge-triggered busy-poll), io_uring as the `io-uring` strategy;
+- its datapath — epoll edge-triggered busy-poll with the syscall
+  transports by default, or the **io_uring completion-driven datapath**
+  (recv/send/accept/read/write all through the ring) as the `io-uring`
+  strategy;
 - its own SO_REUSEPORT UDP socket + TCP listener on the shared bind
   addresses — the kernel steers flows across workers by 4-tuple hash;
 - its own `ConnTable`, active-stream map, 64 KiB-datagram receive batch
@@ -28,8 +30,8 @@ shared-nothing, per-core recipe.
 
 ```
                      ┌────────────────────────────────────────────┐
-   sockets (UDP/TCP) │  Poller (epoll ET busy-poll / io_uring)    │
-      ────────events─▶│  wait → copy_events (stack/vec buffer)    │
+   sockets (UDP/TCP) │  epoll: wait → copy_events → drain_*       │
+                     │  io_uring: completions → dispatch → resub  │
                      │        │                                   │
                      │        ▼                                   │
                      │  drain_udp / drain_accept / drain_tcp      │
@@ -47,18 +49,21 @@ shared-nothing, per-core recipe.
                           MetricsServer (Unix socket pull)
 ```
 
-Loop invariants (each worker):
+Loop invariants (each worker, epoll path):
 
 - **Edge-triggered + drain-to-EAGAIN**: after an event fires, the
   handler MUST drain the fd until the syscall returns `EAGAIN`, or no
   further edge is generated and events are lost. This is the engine's
   hard policy (standard [IO]). The loop processes each poll batch fully
-  before polling again, so no batch is ever dropped.
+  before polling again, so no batch is ever dropped. The io_uring
+  datapath keeps the same discipline: each slot/connection has exactly
+  one op in flight, re-armed only after its handler finished.
 - **Busy-poll**: `wait(timeout 0)` is called repeatedly until the ready
   list is empty. The engine burns CPU when idle — that is the latency
   contract (no wakeup latency); disable by setting
   `reactor.busy_poll=false` in config (`reactor.timeout_ms` then
-  bounds the wait).
+  bounds the wait). The io_uring datapath busy-polls the completion
+  queue the same way (`reactor.busy_poll` drives it).
 - **No allocation in the hot path**: receive buffers, event arrays,
   echo batches, and the connection table are preallocated at startup.
   The only per-connection allocation is the `HashMap` entry created at
@@ -69,8 +74,8 @@ Loop invariants (each worker):
 | Module | Responsibility |
 |---|---|
 | `main.rs` | Arg dispatch (`--bench`, `--bench-large`, `--latency`, `--latency-against`, `--fuzz`, else engine), config.json loading, async-signal-safe SIGINT |
-| `engine.rs` | The loop: worker fan-out per logical CPU, poller strategy selection, UDP/TCP echo handlers, per-core counters, metrics serving, core pinning, AF_XDP forwarding thread |
-| `reactor.rs` | `Poller` abstraction: `Epoll` (rustix epoll, edge-triggered, preallocated event array) and `IoUring` (feature `io-uring`); `register/unregister/wait/copy_events/rearm` |
+| `engine.rs` | The loop: worker fan-out per logical CPU, strategy dispatch (epoll loop vs io_uring datapath), UDP/TCP echo handlers, per-core counters, metrics serving, core pinning, AF_XDP forwarding thread |
+| `reactor.rs` | `Reactor` (rustix epoll, edge-triggered, preallocated event array): `register/unregister/poll_timeout/copy_events` — the epoll strategy's readiness source |
 | `udp.rs` | Nonblocking IPv4 socket; `recv_batch`/`send_batch` (recvmmsg/sendmmsg, preallocated arrays; receive buffers const-generic, engine uses `MAX_DATAGRAM` = 64 KiB so any datagram arrives whole), GSO (UDP_SEGMENT), GRO, MSG_TRUNC, SO_INCOMING_CPU, MSG_ZEROCOPY (`send_to_zerocopy`); options are set **before bind** so SO_REUSEPORT group admission works |
 | `tcp.rs` | `TcpListener` (accept4 nonblocking, options before bind, FASTOPEN/NODELAY/QUICKACK/DEFER_ACCEPT/CORK), `TcpStream` (read/readv/write_all/writev/splice_from_fd via a pipe — `splice(file→socket)` is EINVAL on Linux) |
 | `sctp.rs` | libsctp FFI (declared in-crate against `netinet/sctp.h`; `sctp_recvmsg` returns `c_int`), send/recv with stream ids, peeloff, multi-homing via `sctp_bindx`; tests skip when the kernel module is absent; engine path not yet bound |
@@ -81,8 +86,8 @@ Loop invariants (each worker):
 | `bench.rs` | `--bench` (throughput, echo), `--bench-large` (one-way byte-ceiling, per direction), `--latency` (transport RTT), `--latency-against` (engine RTT) |
 | `fuzz.rs` | Deterministic xorshift64 harness over parsers/checksums (libFuzzer would need a public API — see below) |
 | `config.rs` | config.json + `FDS_*` env overrides; all sections defaulted |
-| `io_uring_reactor.rs` | `IoUringPoller` (feature `io-uring`, io-uring crate 0.7): single-shot IORING_OP_POLL_ADD completions with re-arm after drain; SQPOLL with EPERM fallback |
-| `af_xdp.rs` | Experimental AF_XDP path (feature `af-xdp`, UAPI declared in-crate): umem + rings + bind; engine runs a rx→tx forwarding thread when `af_xdp.device` is configured and opens |
+| `io_uring_reactor.rs` | `IoUringReactor` (feature `io-uring`, io-uring crate 0.7) + `IoUringDatapath`: the `io-uring` strategy's completion-driven UDP/TCP echo — IORING_OP_RECVMSG/SENDMSG per UDP slot, IORING_OP_ACCEPT/READ/WRITE per TCP connection, a periodic IORING_OP_TIMEOUT for idle wakeups; fds are blocking so ops wait in-kernel; SQPOLL with EPERM fallback |
+| `af_xdp.rs` | Experimental AF_XDP path (feature `af-xdp`, UAPI declared in-crate): umem + rings + bind, plus `process_frame` — the Ethernet/IPv4/UDP validate-and-echo pipeline (parse + checksum atoms, MAC swap, TTL decrement, IP checksum recompute) unit-tested with synthetic frames; the engine runs a forwarding thread when `af_xdp.device` is configured and opens |
 
 ## Configuration
 
@@ -98,13 +103,17 @@ Key knobs:
 
 - `core.threads`: worker count; 0 = one per logical CPU (default).
 - `core.pin_cores`: pin worker `i` to logical CPU `i` (default on).
-- `reactor.strategy`: `epoll-busy-poll` (default) or `io-uring`
-  (falls back to epoll with a log line if io_uring is unavailable).
+- `reactor.strategy`: `epoll-busy-poll` (default, syscall transports)
+  or `io-uring` — the completion-driven datapath where UDP/TCP echo
+  runs entirely through the ring (falls back to epoll with a log line
+  if io_uring is unavailable).
 - `reactor.io_uring_entries` / `reactor.io_uring_sq_thread`: ring size
-  and SQPOLL CPU (0 = off; needs CAP_SYS_ADMIN).
-- `af_xdp.device` / `af_xdp.queue`: bind an XDP device queue and forward
-  frames rx→tx on a dedicated thread (device-gated; absent hardware the
-  engine logs and runs on the kernel datapath).
+  (floored at 72; the initial 64 UDP recvs must fit) and SQPOLL CPU
+  (0 = off; needs CAP_SYS_ADMIN).
+- `af_xdp.device` / `af_xdp.queue`: bind an XDP device queue on a
+  dedicated thread and run `process_frame` (validate + echo) on every
+  frame (device-gated; absent hardware the engine logs and runs on the
+  kernel datapath).
 - `udp.incoming_cpu`: default **off** — on loopback it pins all traffic
   to one worker (see ops-tuning); enable only with NIC RSS/IRQ affinity.
 
@@ -114,19 +123,22 @@ The echo handlers are deliberately minimal placeholders — this is the
 extension point:
 
 1. **Bind** your socket(s) in `worker_main`, register them with
-   `poller.register(fd, token, Interest::Readable)` using a reserved
-   token (see the `TOKEN_*` constants).
-2. **Write a `drain_*` function** that loops until `EAGAIN`, pulls a
-   batch, processes each item (parse → validate lengths → update the
-   connection's hot state → produce output), and pushes output via the
-   transport's batch send. Keep it allocation-free; count into
-   `metrics.add_*(core, …)`.
-3. **Dispatch** the token in the `match ev.token` block; io_uring
-   single-shot polls are re-armed by the loop after the drain (an epoll
-   no-op).
+   `reactor.register(fd, token, Interest::Readable)` (epoll path) or
+   add ops to the datapath's `dispatch` (io_uring path) using a
+   reserved token (see the `TOKEN_*` constants).
+2. **Write a `drain_*` function** (epoll) that loops until `EAGAIN`,
+   pulls a batch, processes each item (parse → validate lengths →
+   update the connection's hot state → produce output), and pushes
+   output via the transport's batch send. Keep it allocation-free;
+   count into `metrics.add_*(core, …)`.
+3. **Dispatch** the token in the `match ev.token` block; in the io_uring
+   datapath, keep exactly one op in flight per slot/connection and
+   re-arm it from the completion handler.
 4. For a connection-oriented protocol, acquire a `ConnTable` slot at
-   accept, release it at close (`conns.release_slot`), and update
-   `conns.conn_mut(slot).hot` per step.
+   accept and release it at close — in the epoll path hold the
+   `ConnectionSlot` guard for the connection's lifetime; in the io_uring
+   path use `acquire_index`/`release_slot` (the guard would release at
+   accept and double-release at close).
 
 Rules that keep the code consistent with the standard: bounds before
 indexing; `SAFETY:` on every `unsafe`; no allocation per packet; tests
@@ -153,15 +165,22 @@ non-zero (loopback steers per-flow; a single client flow lands on one
 worker by design).
 
 Reference numbers on the dev laptop (i5-5200U, 2C/4T, loopback,
-release, 4 workers):
+release, 4 workers). The machine's tails are noisy under 5+ threads on
+4 logical CPUs; the two strategies are at parity, so treat the spread
+as scheduling noise, not a datapath difference:
 
-| Measurement | p50 | p99 | p999 | max |
-|---|---|---|---|---|
-| engine RTT, epoll (pinned) | 11.6µs | 24.1µs | 54.5µs | 0.7ms |
-| engine RTT, io_uring (pinned) | 12.0µs | 22.1µs | 51.8µs | 0.5ms |
-| throughput (1400 B echo, `--bench`) | 114k pps, 152 MB/s (~1.2 Gbps) | | | |
-| ping-pong, 4 clients → 4 workers | 123k pps | | | |
-| ping-pong, 8 clients → 4 workers | 153k pps | | | |
+| Measurement | p50 | p99 | p999 |
+|---|---|---|---|
+| engine RTT, epoll (pinned, busy-poll) | 12–21µs | 24–35µs | 55µs–5ms (noisy) |
+| engine RTT, io_uring (pinned, busy-poll CQ) | 12–22µs | 22–30µs | 51µs–2.5ms (noisy) |
+| throughput (1400 B echo, `--bench`) | 114k pps, 152 MB/s (~1.2 Gbps) | | |
+| ping-pong, 4 clients → 4 workers | 123k pps | | |
+| ping-pong, 8 clients → 4 workers | 153k pps | | |
+
+The io_uring datapath's win is syscall amortization (one ring, batched
+completions), not single-flight latency — on loopback both strategies
+are parity because the kernel datapath dominates. Jumbo (60 KB)
+datagrams round-trip intact through the ring (64 KiB slots).
 
 On this 4-thread laptop the client threads (per-packet syscalls) are the
 ping-pong ceiling; the per-core win shows as better tails and as headroom
@@ -211,14 +230,16 @@ datagrams at the application layer, and — for NIC traffic — AF_XDP
   tested in-module and startup-probed but not yet bound into the worker
   loop (an interim crate-scoped `#![allow(dead_code)]` documents the
   remaining unwired items: SCTP, MSG_ZEROCOPY, registered buffers,
-  splice, io_uring transport submissions).
-- AF_XDP is wired as a config-gated forwarding thread, but no XDP-capable
-  device exists on the dev machine, so the frame path is compile- and
-  unit-tested only, not exercised end-to-end here.
-- The io_uring strategy replaces epoll as the readiness source
-  (IORING_OP_POLL_ADD with re-arm); the transports still use
-  recvmmsg/sendmmsg syscalls. Transport ops through the ring
-  (`submit_read`/`submit_write`) are the next step.
+  splice, the io_uring transport-op helpers `submit_read`/`submit_write`
+  — the datapath uses RECVMSG/SENDMSG/READ/WRITE ops of its own).
+- AF_XDP's `process_frame` pipeline (validate + echo) is unit-tested
+  with synthetic frames, but no XDP-capable device exists on the dev
+  machine, so the umem/ring data path is compile- and unit-tested only,
+  not exercised end-to-end here.
+- The io_uring datapath is complete for the UDP + TCP echo workload
+  (recv/send/accept/read/write through the ring, busy-pollable CQ).
+  Remaining io_uring work: registered buffers, multishot recv, and
+  real-NIC validation (SQPOLL needs CAP_SYS_ADMIN).
 - TCP echo drops data on a write-`WouldBlock` instead of queueing (the
   production design is a per-connection send ring).
 - `fuzz.rs` is the deterministic stable-rust harness; libFuzzer targets

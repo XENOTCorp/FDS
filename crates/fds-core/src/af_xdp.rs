@@ -6,6 +6,13 @@
 //! available. The UAPI constants are declared in-crate (libc does not
 //! ship them) and were verified against `<linux/if_xdp.h>`.
 //!
+//! The datapath: [`process_frame`] validates each received frame
+//! (EtherType IPv4, IPv4/UDP headers, IP + UDP checksums via the
+//! parse/checksum atoms) and rewrites it for echo (MAC swap, TTL
+//! decrement, IP checksum recompute). It is a pure function over the
+//! frame bytes and is unit-tested with synthetic frames; the ring
+//! mechanics around it need a real XDP-capable device.
+//!
 //! NOT production-ready: single consumer/producer per ring (no
 //! contention), one in-flight TX frame on a fixed umem slot (reused only
 //! after the completion ring reports it), no `XDP_USE_NEED_WAKEUP`
@@ -470,16 +477,17 @@ impl XskSocket {
         Ok(sock)
     }
 
-    /// Receive one frame into `out`; `false` = ring empty (or the next
-    /// frame does not fit `out` and was dropped back to the fill ring).
-    pub(crate) fn recv_frame(&mut self, out: &mut [u8]) -> bool {
+    /// Receive one frame into `out`. Returns `Some(len)` with the frame
+    /// copied into `out[..len]`, or `None` when the ring is empty (or the
+    /// frame did not fit `out` and was dropped back to the fill ring).
+    pub(crate) fn recv_frame(&mut self, out: &mut [u8]) -> Option<usize> {
         let mask = self.ring_size - 1;
 
         // SAFETY: rx_producer() is the RX-ring producer word (written by
         // the kernel), inside the region mmap'd in open().
         let rx_head = unsafe { ring_load(self.rx_producer()) };
         if rx_head == self.rx_tail {
-            return false;
+            return None;
         }
 
         let idx = (self.rx_tail & mask) as usize;
@@ -519,7 +527,11 @@ impl XskSocket {
         // SAFETY: rx_consumer() is the RX-ring consumer word; the release
         // store pairs with the kernel's acquire read.
         unsafe { ring_store(self.rx_consumer(), self.rx_tail) };
-        fits
+        if fits {
+            Some(len)
+        } else {
+            None
+        }
     }
 
     /// Send one frame; `false` = tx ring full (or `data` larger than one
@@ -618,10 +630,101 @@ impl Drop for XskSocket {
     }
 }
 
+/// The outcome of processing one received frame.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum FrameAction {
+    /// Validated and rewritten for echo (MACs swapped, TTL decremented,
+    /// IP checksum recomputed) — transmit it.
+    Echo,
+    /// Not IPv4/UDP, malformed, bad checksum, or TTL expired — drop it.
+    Drop,
+}
+
+/// Process one received Ethernet frame in place for echo: validate
+/// (EtherType IPv4, IPv4 + UDP headers, IP + UDP checksums) and rewrite
+/// (swap MACs, decrement TTL, recompute the IP checksum; the UDP
+/// checksum is untouched because the IP addresses and payload do not
+/// change). A pure function over the frame bytes — the unit-tested core
+/// of the AF_XDP datapath, exercised here with synthetic frames (the
+/// ring mechanics themselves need an XDP-capable device).
+pub(crate) fn process_frame(frame: &mut [u8]) -> FrameAction {
+    // Ethernet II (14) + IPv4 (>= 20) + UDP (8) minimum.
+    if frame.len() < 14 + 20 + 8 {
+        return FrameAction::Drop;
+    }
+    let ethertype = u16::from_be_bytes([frame[12], frame[13]]);
+    if ethertype != 0x0800 {
+        return FrameAction::Drop;
+    }
+    let ip = match crate::parse::parse_ipv4(&frame[14..]) {
+        Ok(h) => h,
+        Err(_) => return FrameAction::Drop,
+    };
+    if ip.protocol != 17 {
+        return FrameAction::Drop; // not UDP
+    }
+    let ihl = usize::from(frame[14] & 0x0F) * 4;
+    let ip_total = ip.total_len as usize;
+    if ihl < 20
+        || ip_total < 20 + 8
+        || 14 + ip_total > frame.len()
+        || 14 + ihl + 8 > 14 + ip_total
+    {
+        return FrameAction::Drop;
+    }
+    // IP header checksum: a valid header (checksum field included) folds
+    // to zero (RFC 791; see checksum::tests).
+    if crate::checksum::ip_checksum(&frame[14..14 + ihl]) != 0 {
+        return FrameAction::Drop;
+    }
+    let udp_off = 14 + ihl;
+    let udp = match crate::parse::parse_udp(&frame[udp_off..]) {
+        Ok(h) => h,
+        Err(_) => return FrameAction::Drop,
+    };
+    let udp_len = udp.len as usize;
+    if udp_len < 8 || udp_off + udp_len > 14 + ip_total {
+        return FrameAction::Drop;
+    }
+    // UDP checksum (RFC 768): zero the field, verify, restore. Zero = off.
+    let csum_off = udp_off + 6;
+    let stored = u16::from_be_bytes([frame[csum_off], frame[csum_off + 1]]);
+    if stored != 0 {
+        frame[csum_off] = 0;
+        frame[csum_off + 1] = 0;
+        let calc = crate::checksum::udp_checksum(
+            ip.src,
+            ip.dst,
+            udp.len,
+            &frame[udp_off..udp_off + udp_len],
+        );
+        frame[csum_off] = (stored >> 8) as u8;
+        frame[csum_off + 1] = stored as u8;
+        if calc != stored {
+            return FrameAction::Drop;
+        }
+    }
+    // As a forwarder, expire datagrams with TTL 1 (no underflow).
+    if ip.ttl <= 1 {
+        return FrameAction::Drop;
+    }
+    // Rewrite for echo: swap MACs, decrement TTL, recompute the IP
+    // checksum over the zeroed header.
+    let (dst, rest) = frame.split_at_mut(6);
+    let (src, _) = rest.split_at_mut(6);
+    dst.swap_with_slice(src);
+    frame[14 + 8] -= 1; // TTL
+    frame[14 + 10] = 0;
+    frame[14 + 11] = 0;
+    let csum = crate::checksum::ip_checksum(&frame[14..14 + ihl]);
+    frame[14 + 10] = (csum >> 8) as u8;
+    frame[14 + 11] = csum as u8;
+    FrameAction::Echo
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
     /// UAPI option numbers and ring offsets, verified against
     /// `/usr/include/linux/if_xdp.h`.
     #[test]
@@ -698,5 +801,103 @@ mod tests {
             !sock.send_frame(&[0u8; 5000]),
             "oversized frame must be rejected"
         );
+    }
+
+    // ---- the frame-processing pipeline (hardware-independent) ----
+
+    /// Build a synthetic Ethernet/IPv4/UDP frame with correct checksums.
+    /// `ttl` is set verbatim; `corrupt` flips a UDP payload bit (to
+    /// produce a bad checksum when `bad_udp` is set) or the IP checksum
+    /// (when `bad_ip` is set).
+    fn build_udp_frame(ttl: u8, bad_ip: bool, bad_udp: bool) -> Vec<u8> {
+        let mut f = vec![0u8; 14 + 20 + 8 + 16];
+        f[..6].copy_from_slice(&[0xAA; 6]); // dst MAC
+        f[6..12].copy_from_slice(&[0xCC; 6]); // src MAC
+        f[12] = 0x08; // EtherType IPv4
+        f[13] = 0x00;
+        // IPv4 header: version/IHL 0x45, total length 44, TTL, UDP(17),
+        // src 10.0.0.1 -> dst 10.0.0.2.
+        f[14] = 0x45;
+        f[16..18].copy_from_slice(&44u16.to_be_bytes());
+        f[22] = ttl;
+        f[23] = 17;
+        f[26..30].copy_from_slice(&[10, 0, 0, 1]);
+        f[30..34].copy_from_slice(&[10, 0, 0, 2]);
+        let csum = crate::checksum::ip_checksum(&f[14..34]);
+        f[24] = (csum >> 8) as u8;
+        f[25] = csum as u8;
+        // UDP: sport 5000, dport 7777, len 24, payload.
+        f[34..36].copy_from_slice(&5000u16.to_be_bytes());
+        f[36..38].copy_from_slice(&7777u16.to_be_bytes());
+        f[38..40].copy_from_slice(&24u16.to_be_bytes());
+        f[42..].copy_from_slice(b"af-xdp-echo-test");
+        let u = crate::checksum::udp_checksum([10, 0, 0, 1], [10, 0, 0, 2], 24, &f[34..]);
+        f[40] = (u >> 8) as u8;
+        f[41] = u as u8;
+        if bad_ip {
+            f[14 + 10] ^= 0xFF; // corrupt the IP checksum field
+        }
+        if bad_udp {
+            f[42] ^= 0xFF; // corrupt the payload -> UDP checksum fails
+        }
+        f
+    }
+
+    #[test]
+    fn pipeline_echoes_valid_udp() {
+        let mut f = build_udp_frame(64, false, false);
+        assert_eq!(process_frame(&mut f), FrameAction::Echo);
+        // MACs swapped.
+        assert_eq!(&f[..6], &[0xCC; 6]);
+        assert_eq!(&f[6..12], &[0xAA; 6]);
+        // TTL decremented; IP checksum still valid.
+        assert_eq!(f[22], 63);
+        assert_eq!(crate::checksum::ip_checksum(&f[14..34]), 0);
+        // UDP checksum unchanged (payload + addresses untouched) and
+        // valid: recompute with the checksum field zeroed (RFC 768).
+        let stored_udp = u16::from_be_bytes([f[40], f[41]]);
+        f[40] = 0;
+        f[41] = 0;
+        let u = crate::checksum::udp_checksum([10, 0, 0, 1], [10, 0, 0, 2], 24, &f[34..]);
+        assert_eq!(stored_udp, u);
+    }
+
+    #[test]
+    fn pipeline_drops_bad_ip_checksum() {
+        let mut f = build_udp_frame(64, true, false);
+        assert_eq!(process_frame(&mut f), FrameAction::Drop);
+    }
+
+    #[test]
+    fn pipeline_drops_bad_udp_checksum() {
+        let mut f = build_udp_frame(64, false, true);
+        assert_eq!(process_frame(&mut f), FrameAction::Drop);
+    }
+
+    #[test]
+    fn pipeline_drops_non_udp_and_expired_ttl() {
+        // TTL 1: a forwarder must not echo.
+        let mut f = build_udp_frame(1, false, false);
+        assert_eq!(process_frame(&mut f), FrameAction::Drop);
+        // Wrong EtherType (ARP): dropped.
+        let mut g = build_udp_frame(64, false, false);
+        g[12] = 0x08;
+        g[13] = 0x06;
+        assert_eq!(process_frame(&mut g), FrameAction::Drop);
+        // Truncated frame: dropped.
+        let mut h = build_udp_frame(64, false, false);
+        h.truncate(30);
+        assert_eq!(process_frame(&mut h), FrameAction::Drop);
+    }
+
+    #[test]
+    fn pipeline_echo_is_stable_under_repeat() {
+        // Echoing an echoed frame is again a valid echo (MACs swap back,
+        // TTL keeps dropping).
+        let mut f = build_udp_frame(64, false, false);
+        assert_eq!(process_frame(&mut f), FrameAction::Echo);
+        assert_eq!(process_frame(&mut f), FrameAction::Echo);
+        assert_eq!(&f[..6], &[0xAA; 6]);
+        assert_eq!(f[22], 62);
     }
 }

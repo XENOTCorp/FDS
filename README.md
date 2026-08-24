@@ -19,7 +19,7 @@ paper (thesis) and a software standard:
 
 ```sh
 # Build and test everything
-cargo test --workspace          # 89 tests, ~2 s
+cargo test --workspace          # 96 tests, ~2 s
 cargo clippy --workspace --all-targets -- -D warnings
 
 # Run the engine (UDP + TCP echo on 127.0.0.1:7777 / 7778)

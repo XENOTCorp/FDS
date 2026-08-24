@@ -24,13 +24,15 @@
 //! Experimental reactor paths: io_uring SQPOLL ([`io_uring_reactor`],
 //! feature `io-uring`) and AF_XDP ([`af_xdp`], feature `af-xdp`).
 
-// The per-core multi-protocol loop has landed (epoll + io_uring poller
-// strategies, per-logical-CPU workers). What remains unwired — and is
-// intentionally compiled ahead of the wiring, per the standard — is the
-// SCTP engine path, the zero-copy transport ops (MSG_ZEROCOPY,
-// registered buffers, splice_from_fd), io_uring transport submissions
-// (submit_read/submit_write), and the cold-state fields those transports
-// consume. Remove this allow as each path lands.
+// The per-core multi-protocol loop has landed (epoll busy-poll with the
+// syscall transports, and the io_uring completion-driven datapath with
+// RECVMSG/SENDMSG/ACCEPT/READ/WRITE through the ring; AF_XDP's
+// process_frame pipeline is wired and unit-tested). What remains unwired
+// — and is intentionally compiled ahead of the wiring, per the standard
+// — is the SCTP engine path, the zero-copy transport ops (MSG_ZEROCOPY,
+// registered buffers, splice_from_fd), the io_uring transport-op
+// helpers (submit_read/submit_write), and the cold-state fields those
+// transports consume. Remove this allow as each path lands.
 #![allow(dead_code)]
 
 mod af_xdp;
