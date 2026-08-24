@@ -23,9 +23,13 @@ ladder() {
 
 wrkrow() { wrk -t4 -c100 -d5s "$1" 2>&1 | grep -E "Latency|Requests/sec" | sed 's/^/  /'; }
 
-pkill -x nginx atomos h2o caddy httpd 2>/dev/null; sleep 0.4
+printf '%s\n' 'alexosage' | sudo -S pkill -x nginx 2>/dev/null; pkill -x atomos h2o caddy httpd 2>/dev/null; sleep 0.4
 
 # --- nginx (tuned: open_file_cache) ---
+# nginx starts as root (below), so it must also be killed as root —
+# a non-root pkill cannot signal it and the leftover listener would
+# squat on port 8090 for later phases.
+printf '%s\n' 'alexosage' | sudo -S pkill -x nginx 2>/dev/null; sleep 0.3
 printf '%s\n' 'alexosage' | sudo -S bash -c "
 rm -rf $WORK && mkdir -p $WORK/root
 printf '<h1>hi</h1>' > $WORK/root/index.html
@@ -56,7 +60,7 @@ echo -n "no-load: "; ladder "http://127.0.0.1:8090/"
 wrkrow "http://127.0.0.1:8090/"
 
 # --- h2o ---
-pkill -x nginx 2>/dev/null; sleep 0.3
+printf '%s\n' 'alexosage' | sudo -S pkill -x nginx 2>/dev/null; sleep 0.3
 (h2o -c "$ROOT/scripts/h2o-bench.conf" >/tmp/h2o-lad.log 2>&1 &)
 sleep 1
 echo "== h2o =="
