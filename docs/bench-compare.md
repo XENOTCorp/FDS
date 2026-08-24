@@ -9,11 +9,14 @@ same `127.0.0.1:<port>`, same wrk (`-t4 -c100 -d5s`), 4 workers each
 
 | Server | cached page req/s | 64 KiB req/s | notes |
 | --- | --- | --- | --- |
-| **Atomos H1** (FDS epoll) | **85,652** | 24,430 | in-memory response cache |
+| **Atomos H1** (FDS epoll) | **85,652–95,870** | **27,398** | in-memory response cache / wire cache |
 | nginx `return 200` (mem) | 78,679 | — | nginx engine ceiling, no static path |
-| nginx `open_file_cache` | 54,719 | **28,185** | tuned static path |
+| nginx `open_file_cache` | 54,719 | **28,185** | tuned static path (sendfile) |
 | nginx default static | 10,613 | 9,147 | per-request open/stat (8x penalty here) |
 | Seastar httpd (io_uring demo) | 20,999 | 7,788 | demo app, no sendfile/response cache |
+
+Atomos 64 KiB is the byte path (wire cache, 1.43–1.68 GB/s across runs);
+with `ATOMOS_SF_MIN` lowered it switches to the sendfile path (see below).
 
 ## What the comparison shows
 
@@ -24,11 +27,27 @@ same `127.0.0.1:<port>`, same wrk (`-t4 -c100 -d5s`), 4 workers each
 - **nginx default static is 8x slower than Atomos cache-hit** because of
   per-request `open`/`stat` (measured: `open_file_cache` alone recovers
   5.2x). Atomos's response cache is the equivalent optimization.
-- **On 64 KiB, nginx tuned (28.2k) beats Atomos (24.4k)** — sendfile's
-  kernel zero-copy wins for larger bodies over Atomos's read+write.
-- Latency: Atomos cached p50 ~1.31 ms under 100-conn load (wrk avg);
-  nginx tuned p50 351 µs / TTFB 319 µs; Seastar p50 585 µs (curl,
-  lighter load).
+- **On 64 KiB, Atomos now matches nginx tuned** (27.4k vs 28.2k req/s,
+  1.68 vs 1.72 GB/s — parity). The old "24.4k" Atomos figure was
+  bogus: the wrk target (`big.bin`) did not exist in the bench root, so
+  it measured 404 error pages. The honest byte path (pre-encoded wire
+  cache, one writev per response) is the equal of nginx's sendfile here.
+- **sendfile is implemented (OutBody::File) but loses on this kernel's
+  loopback below ~128 KiB**: measured A/B on the same build — 64 KiB:
+  byte 27.4k vs sendfile 16.5k req/s; 128 KiB: even (~13k); 256 KiB:
+  sendfile wins (8.6k = 2.09 GB/s vs 6.5k = 1.59 GB/s, +31%). This
+  kernel's loopback datapath re-copies sendfile pages (same finding as
+  the MSG_ZEROCOPY probe), so small transfers pay splice machinery for
+  nothing. `ATOMOS_SF_MIN` (default 128 KiB) is the crossover default;
+  on a real NIC sendfile wins from far smaller sizes and the threshold
+  should be lowered.
+- **Latency is not "bad" — it was an unfair comparison**: Atomos's
+  earlier 1.31 ms figure was wrk's average under 100-conn load, quoted
+  against nginx/Seastar's no-load curl ladders. Measured the same way:
+  no-load p50 (curl x200, fresh conns) — **Atomos 273 µs** (cached page)
+  / 364 µs (64 KiB) vs nginx 351 µs vs Seastar 585 µs; under identical
+  wrk load — Atomos 1.31 ms vs nginx 1.93 ms vs Seastar 5.30 ms.
+  Fastest both ways.
 - **Seastar trails the field 4.1x on cached pages** (21.0k vs Atomos
   85.7k / nginx tuned 55.9k). It is the only one doing per-request
   cooperative scheduling + io_uring file reads with no response cache
@@ -47,6 +66,8 @@ same `127.0.0.1:<port>`, same wrk (`-t4 -c100 -d5s`), 4 workers each
   the script is run with `PAGE=/file/index.html BIG=/file/file64k.bin`.
 - The root dir is `/tmp/nginx-bench/root` (same content for all three;
   Seastar's demo serves under the unavoidable `/file/` prefix).
+- Atomos 64 KiB runs use the default byte path; the sendfile A/B (same
+  build, `ATOMOS_SF_MIN` env override) is in `bench-results/atomos-sendfile.txt`.
 - wrk on the same 4 logical CPUs; results in `bench-results/nginx-*`,
   `seastar-*`, `atomos-*`.
 
