@@ -1,0 +1,18 @@
+
+ Performance counter stats for process id '3030,3031,3032,3033,3034,':
+
+    18,765,949,372      cycles                                                                  (55.58%)
+     9,306,065,169      instructions                     #    0.50  insn per cycle              (66.35%)
+     1,914,432,941      branches                                                                (66.52%)
+        21,867,440      branch-misses                    #    1.14% of all branches             (66.81%)
+     2,613,513,347      dTLB-loads                                                              (66.63%)
+         4,860,680      dTLB-load-misses                 #    0.19% of all dTLB cache accesses  (66.46%)
+        26,367,477      cache-misses                                                            (44.72%)
+       267,559,014      L1-dcache-load-misses                                                   (44.32%)
+       464,424,695      L1-icache-load-misses                                                   (44.54%)
+                 0      page-faults                                                           
+            50,266      context-switches                                                      
+                 0      cpu-migrations                                                        
+
+       4.010429614 seconds time elapsed
+
