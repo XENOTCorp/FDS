@@ -1,0 +1,106 @@
+\chapter{Situations and Applications}\label{ch:situations}
+
+A \emph{situation} is a requirement --- an interface, a behavior, a budget --- and a \emph{solution} is a molecule that meets it. The decision matrices of the software standard are exactly the formal optimization over the set of solutions; the two theorems of this chapter make that set finite and decidable (NT51) and make zero-copy elimination sound (NT52).
+
+\paragraph{Situations.}
+Fix the finite type universe of the dataplane and the cost model of \autoref{ch:enrich}, which assigns every molecule a cost vector $\mathrm{cost}(M) = (t(M), m(M), c(M))$ --- time, memory, cache misses --- additive under composition (\autoref{nt:25}) and monotone under refinement (\autoref{nt:28}).
+
+A \emph{situation} is a triple $\sigma = (A \to B,\, \Phi,\, \bar c)$:
+\begin{itemize}
+\item $A \to B$: the interface, with finite input type $A$ and finite output type $B$ (\emph{bounded types});
+\item $\Phi$: a behavioral specification, a decidable predicate on molecules $A \to B$ invariant under behavioral equivalence --- e.g.\ ``$M$ realizes the regular language $L$'' (decidable by minimization, \autoref{ch:coalgebra});
+\item $\bar c = (c_T, c_M, c_C)$: a cost budget vector, where the memory component counts the states of the canonical presentation, $m(M) = |S_M|$.
+\end{itemize}
+
+A molecule $M : A \to B$ is a \emph{solution} of $\sigma$, written $M \models \sigma$, when $M \vdash \Phi$ and $\mathrm{cost}(M) \leq \bar c$ (componentwise); the feasible set is $F(\sigma) = \{ M : A \to B \mid M \models \sigma \}$. A \emph{decision matrix} for $\sigma$ is the computation
+\[
+M^{*} = \operatorname*{arg\,min}_{M \in F(\sigma)} \mathrm{cost}(M),
+\]
+returning \emph{infeasible} when $F(\sigma) = \emptyset$. Under the refinement preorder of \autoref{ch:enrich} the feasible set is a down-set: refinement preserves behavior and is cost-monotone (\autoref{nt:28}), so $M' \sqsubseteq M \models \sigma$ implies $M' \models \sigma$; the decision matrix therefore optimizes downward through the refinement poset, and by maximal refinement (\autoref{nt:29}) its output is the most-refined feasible molecule.
+
+\begin{theorem}[Situation solvability (NT51)]\label{nt:51}
+Let $\sigma = (A \to B, \Phi, \bar c)$ be a situation with finite types $A, B$, a decidable specification $\Phi$, and a memory budget $c_M$ that bounds state size via $m(M) = |S_M|$. Then:
+\begin{enumerate}
+\item the feasible set $F(\sigma)$ is finite;
+\item membership in $F(\sigma)$ is decidable: for every molecule $M : A \to B$, both $M \vdash \Phi$ and $\mathrm{cost}(M) \leq \bar c$ are decidable predicates;
+\item the decision-matrix computation, the minimization over $F(\sigma)$, terminates.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+(i) A solution satisfies $m(M) \leq c_M$, hence $|S_M| \leq K$ with $K = \lfloor c_M \rfloor$. Fix a state set $S = \{1, \ldots, K\}$: a Mealy machine $A \to B$ with state space $S$ is determined by its initial state $s_0 \in S$ and its transition $\delta : S \times A \to B \times S$, so there are at most $K \cdot (|B| \cdot K)^{K \cdot |A|}$ such machines, a finite number. The molecules of Mol are the state-isomorphism classes of such machines, and a quotient of a finite set is finite; since every solution has at most $K$ states, $F(\sigma)$ is finite.
+
+(ii) For a fixed molecule $M$, presented finitely as a Mealy machine, the predicate $M \vdash \Phi$ is decidable by hypothesis on $\Phi$. The cost $\mathrm{cost}(M)$ is computed from the declared constant cost vectors of the atoms of $M$ by the additive rules (\autoref{nt:25}): composition adds componentwise and the tensor combines components; the result is a vector of rationals, and comparing it with $\bar c$ is decidable. Hence membership in $F(\sigma)$ is decidable.
+
+(iii) By (i) the candidate set is finite and by (ii) membership is decidable, so enumerating $F(\sigma)$ and taking the minimum --- or reporting infeasibility when $F(\sigma)$ is empty --- terminates.
+\end{proof}
+
+\paragraph{Well-formed domains and zero copy.}
+Let $B$ be the byte-stream type and $T$ a structured type. A parser is a molecule $\mathrm{parse} : B \to T$ and a serializer is a molecule $\mathrm{serialize} : T \to B$. A subset $D \subseteq T$ is \emph{well-formed} when the roundtrip property holds on it: $\mathrm{parse} \circ \mathrm{serialize} = \mathrm{id}$ on $D$, that is, $\mathrm{parse}(\mathrm{serialize}(t)) = t$ for every $t \in D$. The \emph{well-formed byte domain} is $W = \mathrm{serialize}(D) \subseteq B$.
+
+\begin{theorem}[Zero-copy roundtrip (NT52)]\label{nt:52}
+Let $\mathrm{parse} : B \to T$ and $\mathrm{serialize} : T \to B$ be molecules with $\mathrm{parse} \circ \mathrm{serialize} = \mathrm{id}$ on a well-formed domain $D \subseteq T$, and let $W = \mathrm{serialize}(D)$. Then:
+\begin{enumerate}
+\item $\mathrm{serialize} \circ \mathrm{parse} = \mathrm{id}$ on $W$;
+\item for every molecule $X : T \to T$ with $X(D) \subseteq D$ and $X = \mathrm{id}$ on $D$, the roundtrip segment $\mathrm{serialize} \circ X \circ \mathrm{parse} : B \to B$ is the identity on $W$;
+\item the elimination is sound: if $X \neq \mathrm{id}$ on $D$, then $\mathrm{serialize} \circ X \circ \mathrm{parse} \neq \mathrm{id}$ on $W$, so replacing the segment by a pass-through would change behavior on well-formed traffic.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+(i) For $b \in W$, write $b = \mathrm{serialize}(t)$ with $t \in D$. The roundtrip property gives $\mathrm{parse}(b) = t$, hence
+\[
+(\mathrm{serialize} \circ \mathrm{parse})(b) = \mathrm{serialize}(\mathrm{parse}(b)) = \mathrm{serialize}(t) = b .
+\]
+
+(ii) For $b \in W$, write $b = \mathrm{serialize}(t)$ with $t \in D$. Since $\mathrm{parse}(b) = t$ and $X = \mathrm{id}$ on $D$,
+\[
+(\mathrm{serialize} \circ X \circ \mathrm{parse})(b) = \mathrm{serialize}\bigl(X(\mathrm{parse}(b))\bigr) = \mathrm{serialize}(X(t)) = \mathrm{serialize}(t) = b .
+\]
+
+(iii) The roundtrip property makes $\mathrm{serialize}$ injective on $D$: if $t, t' \in D$ and $\mathrm{serialize}(t) = \mathrm{serialize}(t')$, then $t = \mathrm{parse}(\mathrm{serialize}(t)) = \mathrm{parse}(\mathrm{serialize}(t')) = t'$. If $X \neq \mathrm{id}$ on $D$, take $t \in D$ with $X(t) \neq t$; since $X(D) \subseteq D$, both $t$ and $X(t)$ lie in $D$, and injectivity gives $\mathrm{serialize}(X(t)) \neq \mathrm{serialize}(t)$. For $b = \mathrm{serialize}(t) \in W$: $(\mathrm{serialize} \circ X \circ \mathrm{parse})(b) = \mathrm{serialize}(X(t)) \neq \mathrm{serialize}(t) = b$, so the segment differs from the identity on well-formed input and eliminating it would change behavior.
+\end{proof}
+
+\paragraph{Remark.}
+This is the license for decision matrix D-6 (zero-copy vs.\ copy): when $X$ is a no-op on the well-formed domain, NT52 guarantees that a proxy's parse--process--serialize segment may be replaced by a pass-through that forwards the buffer --- no parse, no serialize, no allocation --- while behavior on well-formed traffic is preserved; when $X$ moves within $D$, part (iii) shows the copy is semantically necessary.
+
+\paragraph{Precomputed dispatch.}
+By NT51 the decision matrix is a finite computation at design time, and its output is a finite table of (discriminant, molecule) pairs. At runtime, dispatch is a lookup keyed by a dense integer discriminant --- the precomputed lookup table of \autoref{ch:free} (NT24): no dynamic dispatch, no search, a single indexed jump. The decision-matrix output is thus exactly the runtime dispatch table.
+
+\paragraph{Canonical situations.}
+The software standard treats four situations as worked recipes; each is a special case of the formal setup above.
+\begin{itemize}
+\item \textbf{Web server (HTTP over TCP).} $B = $ TCP byte stream, $T = $ HTTP request; $\Phi$: RFC-conformant request framing; $\bar c$: bounded per-request latency and memory. The solution is a pipeline of linear atoms (\autoref{nt:50}): a ring-fed parser (\autoref{nt:48}), a framing atom, a dispatch atom (NT51 lookup); the batch size is set by the amortization curve of \autoref{nt:47} (matrix D-4), and for proxies \autoref{nt:52} makes a no-op relay a pass-through.
+\item \textbf{DNS (UDP and TCP).} Two transport modes, selected by matrix D-3; DNS messages are small, so batches are bounded by the ring invariant and the amortization law (\autoref{nt:47}, \autoref{nt:48}), and the response molecule is precomputed by NT51.
+\item \textbf{FTP (control and data).} Two coupled pipelines: a session state machine over the control channel, a bulk transfer path over the data channel, joined by a shared session-state atom; the memory budget is split between the two rings (\autoref{nt:48}).
+\item \textbf{Custom protocol.} A fixed binary protocol gives a finite interface: NT51 enumerates the feasible set, NT24 precomputes the dispatch table, and the parser/serializer pair is inverted on its well-formed domain (\autoref{nt:52}, zero copy) or kept with copy.
+\end{itemize}
+
+The decision matrices of the standard and the results that govern them are collected in \autoref{tab:decision-matrices}.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Matrix & Decision & Governing result \\
+\midrule
+D-1  & Ring/buffer sizing (L3-aware)        & \autoref{nt:48} \\
+D-2  & SoA vs.\ AoS layout                  & cost model, \autoref{ch:enrich} \\
+D-3  & Protocol selection (UDP/TCP/SCTP)    & \autoref{nt:51} (feasibility) \\
+D-4  & Batch size                           & \autoref{nt:47} \\
+D-5  & Polling: busy-poll vs.\ SQPOLL vs.\ AF\_XDP & \autoref{nt:47} \\
+D-6  & Zero-copy vs.\ copy                  & \autoref{nt:52} \\
+D-7  & Dispatch: monomorphization vs.\ indirect & \autoref{nt:24} \\
+D-8  & SIMD width                           & cost model, \autoref{ch:enrich} \\
+D-9  & Lock-free vs.\ locking               & cost model, \autoref{ch:enrich} \\
+D-10 & Hot/cold field split                 & cost model, \autoref{ch:enrich} \\
+D-11 & Allocation policy                    & \autoref{nt:50} \\
+D-12 & Plugin placement                     & \autoref{nt:51} (feasibility) \\
+\bottomrule
+\end{tabular}
+\caption{The decision matrices of the standard and the results that govern them.}
+\label{tab:decision-matrices}
+\end{table}
+
+In every case a solution is a molecule $M$ with $M \vdash \Phi$ and $\mathrm{cost}(M) \leq \bar c$, found by the terminating decision-matrix computation of NT51 and refined to zero copy by NT52. The situations of the standard mirror this chapter by construction, so each policy cites one of the results NT46--NT52 instead of restating a proof.

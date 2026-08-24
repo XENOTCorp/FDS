@@ -1,0 +1,347 @@
+\chapter{Free Molecules and Canonical Normal Forms}\label{ch:free}
+
+A molecule is a composition of atoms, but a behavior admits many different
+molecules, and what matters for engineering is structure: which atoms are
+fused, in what order they run, how their wires are crossed. This chapter
+separates the syntax of composition from its semantics. We construct
+$F(\Sigma)$, the \emph{free symmetric monoidal category} on an atom signature
+$\Sigma$: molecules built from the atoms of $\Sigma$, quotiented only by the
+laws of a symmetric monoidal category. Up to coherence, a molecule is a
+morphism of $F(\Sigma)$ --- a wiring diagram whose nodes are atoms --- and its
+meaning in Mol is the image of that diagram under the unique monoidal
+evaluation.
+
+Three facts about $F(\Sigma)$ do the work of the chapter. \emph{Existence and
+the universal property:} every molecule over $\Sigma$ factors uniquely, up to
+coherent isomorphism, through $F(\Sigma)$ (NT20, NT21). \emph{Finiteness:} for
+a finite signature with bounded types and a bounded number of atoms, hom-sets
+are finite (NT22). \emph{Normal forms:} the runtime rewrite system of
+\autoref{ch:rewrite} is terminating and confluent, so every molecule has a
+unique normal form, and $M \simeq M'$ exactly when $\mathit{NF}(M) =
+\mathit{NF}(M')$ (NT23, NT24). The pay-off is the \emph{precomputed lookup
+table} of optimized molecules: one canonical, cost-optimal molecule per
+behavior class, built once by exhaustive normalization (verified by the
+\texttt{normal\_forms} tool, \autoref{app:a}) and consulted at runtime for
+dense-integer dispatch; \autoref{sec:free-table} closes the chapter with it
+and its role in the design problems of \autoref{ch:situations}.
+
+\section{Types, atoms, and signatures}\label{sec:free-types}
+
+\begin{definition}[Types and atom signatures]\label{def:types}
+Fix a set $T$ of \emph{base types} (bytes, packets, contexts). A \emph{type}
+is a finite sequence $A = (X_1,\dots,X_m)$ of base types, of \emph{length}
+$|A| = m$; the empty sequence $I = ()$ is the unit type and the tensor is
+concatenation, $A \otimes B = (X_1,\dots,X_m,Y_1,\dots,Y_n)$. A type universe
+is \emph{bounded} when $T$ is finite and lengths are bounded by $d$; there
+are then exactly $\sum_{m=0}^{d}|T|^m$ types. An \emph{atom signature}
+$\Sigma$ is a set of \emph{atoms} typed $a \colon A \to B$ over the base
+types. A \emph{molecule over} $\Sigma$ is an expression built from the atoms,
+identities, and coherence isomorphisms by $\circ$ and $\otimes$.
+\end{definition}
+
+Types are exactly the objects of Mol, with tensor the tuple product and unit
+the empty tuple (\autoref{ch:mol}, NT3); Mol is a \emph{strict} symmetric
+monoidal category, since tensor is literal concatenation. The behavioral
+equivalence $\simeq$ (NT6) is a congruence for $\circ$ and $\otimes$ and is
+the relation for which the normal forms of this chapter are complete (NT24).
+
+\section{The free category on a signature}\label{sec:free-construction}
+
+$F(\Sigma)$ is the quotient of the molecules over $\Sigma$ by the symmetric
+monoidal axioms; we use the classical concrete model, morphisms as
+\emph{wiring diagrams}, in which the axioms hold by construction.
+
+\begin{definition}[The category $F(\Sigma)$]\label{def:fsigma}
+$F(\Sigma)$ has objects the types over $\Sigma$ and morphisms $A \to B$ the
+isomorphism classes of \emph{wiring diagrams} with boundary $(A,B)$: a finite
+set of \emph{nodes} labeled by atoms $a \colon A_a \to B_a$ (input ports
+labeled by the base types of $A_a$, output ports by those of $B_a$), the
+$|A|$ boundary inputs and $|B|$ boundary outputs, and a \emph{wiring} --- a
+bijection between the source ports (boundary inputs and node outputs) and the
+target ports (node inputs and boundary outputs) pairing only ports of the
+same base type, such that the directed graph of nodes and wires is acyclic.
+Composition $g \circ f$ plugs the boundary outputs of $f$ into the boundary
+inputs of $g$; the identity wires each input to the corresponding output; the
+tensor is disjoint union; the braiding $\sigma_{A,B} \colon A \otimes B \to
+B \otimes A$ crosses the wires of $A$ and $B$.
+\end{definition}
+
+\begin{remark}
+$F(\Sigma)$ is a small strict symmetric monoidal category: tensor is
+concatenation, the unit is $I$, associator and unitors are identities, and
+the braiding satisfies $\sigma_{B,A}\circ\sigma_{A,B} = \mathrm{id}$ and the
+hexagon laws, so Mac Lane's coherence conditions hold \cite{maclane}.
+Acyclicity is automatic for diagrams built from atoms (plugging never creates
+a wire back to a lower layer) and is what separates the free category from
+the traced structure of \autoref{ch:trace}.
+\end{remark}
+
+\section{Existence and the universal property}\label{sec:free-existence}
+
+\begin{theorem}[Existence of $F(\Sigma)$]\label{nt:20}
+\textbf{NT20 [C].} The free symmetric monoidal category $F(\Sigma)$ on an
+atom signature $\Sigma$ exists: it is the initial algebra for the theory of
+symmetric monoidal categories over $\Sigma$ --- the category of wiring
+diagrams of \autoref{sec:free-construction} --- and its existence also follows
+abstractly from accessible and locally presentable categories \cite{adamek}.
+\end{theorem}
+
+\begin{proof}
+\emph{Explicit construction.} The wiring diagrams form a symmetric monoidal
+category: plugging is associative and unital; disjoint union is a bifunctor,
+associative and unital with the empty diagram; the braiding is a natural
+isomorphism satisfying the symmetry and hexagon laws. The category carries
+the canonical $\Sigma$-structure $\rho_\Sigma$ (base type $X \mapsto (X)$;
+atom $a \mapsto$ the one-node diagram) and is freely generated by it: every
+morphism is a finite composite and tensor of atoms, identities, and braidings,
+with no equations beyond the symmetric monoidal axioms, since the quotient by
+them is part of the construction. Being initial among $\Sigma$-pointed
+symmetric monoidal categories (NT21), it is the free object.
+\emph{Abstract existence.} Small symmetric monoidal categories are exactly
+the models of a finitary essentially algebraic theory (category axioms,
+tensor bifunctor, coherence isos and equations); such model categories are
+locally presentable \cite{adamek}. The forgetful functor
+$U \colon \mathbf{SMC} \to \mathbf{Graph}$ creates limits and preserves
+filtered colimits (computed pointwise in $\mathbf{Graph}$), hence is
+accessible, so by the adjoint functor theorem for locally presentable
+categories --- a limit-preserving accessible functor between such categories
+has a left adjoint \cite{adamek} --- $U$ has a left adjoint; applied to the
+graph with vertices the base types and edges the atoms of $\Sigma$ it yields
+$F(\Sigma)$. The two constructions coincide by the uniqueness in NT21.
+\end{proof}
+
+\begin{theorem}[Universal property of $F(\Sigma)$]\label{nt:21}
+\textbf{NT21 [C].} Let $\mathcal{C}$ be a symmetric monoidal category with a
+$\Sigma$-structure $\rho$: an object $\rho(X)$ per base type $X$ and, per
+atom $a \colon A \to B$, a morphism $\rho(a) \colon \rho(A) \to \rho(B)$
+(with $\rho(A)$ the tensor of the images of the components of $A$). Then
+there is a unique \emph{strict} monoidal functor $\Phi \colon F(\Sigma) \to
+\mathcal{C}$ extending $\rho$; any strong monoidal functor extending $\rho$
+is isomorphic to $\Phi$ by a unique monoidal natural isomorphism
+\cite{maclane}. Consequently every molecule over $\Sigma$ factors uniquely,
+up to coherent isomorphism, through $F(\Sigma)$.
+\end{theorem}
+
+\begin{proof}
+\emph{Existence.} Set $\Phi(I) = I_{\mathcal{C}}$ and
+$\Phi((X_1,\dots,X_m)) = \rho(X_1) \otimes \cdots \otimes \rho(X_m)$; send
+the one-node diagram of $a$ to $\rho(a)$, identities to identities, crossings
+to the braiding of $\mathcal{C}$. Since a diagram is a finite arrangement of
+atoms, identities, and braidings by $\circ$ and $\otimes$, and the evaluation
+of a diagram in a symmetric monoidal category is well-defined by Mac Lane's
+coherence theorem \cite{maclane}, $\Phi$ extends to all diagrams and is a
+strict monoidal functor.
+\emph{Uniqueness.} Any strict monoidal functor extending $\rho$ is forced on
+objects (tensor of the $\rho(X)$), on one-node diagrams ($\rho(a)$), on
+identities and crossings, and then on all diagrams by induction, as it
+preserves $\circ$ and $\otimes$.
+\emph{Up to coherent iso.} If $\Psi$ is strong monoidal, its constraints
+$\varphi_{A,B} \colon \Psi(A) \otimes \Psi(B) \to \Psi(A \otimes B)$ define
+$\alpha_{(X)} = \mathrm{id}$ and $\alpha_{A \otimes B} = \varphi_{A,B} \circ
+(\alpha_A \otimes \alpha_B)$ by induction on the type length --- the unique
+monoidal natural isomorphism $\alpha \colon \Phi \Rightarrow \Psi$ (Mac
+Lane's coherence theorem) \cite{maclane}.
+\emph{Factorization.} Mol is strict symmetric monoidal (NT3), so the atoms of
+$\Sigma$ form a $\Sigma$-structure in Mol and $\mathrm{ev} \colon F(\Sigma)
+\to \mathrm{Mol}$ is the unique strict monoidal functor extending it. A
+molecule $M$ over $\Sigma$ is an expression, hence a unique morphism $[M]$ of
+$F(\Sigma)$ up to coherence, with meaning $\mathrm{ev}([M])$ in Mol; so
+molecules factor through $F(\Sigma)$ as $\mathrm{ev}$, uniquely up to the
+coherent isomorphism above.
+\end{proof}
+
+\section{Finiteness of hom-sets}\label{sec:free-finite}
+
+\begin{theorem}[Finiteness for bounded signatures]\label{nt:22}
+\textbf{NT22 [N].} Let $\Sigma$ be a finite atom signature with bounded
+types: finitely many base types, types of length at most $d$, and every atom
+with source and target of length at most $d$. Fix a bound $n$ on the number
+of atoms in a molecule. Then for all types $A, B$ the set of morphisms of
+$F(\Sigma)$ from $A$ to $B$ whose diagrams contain at most $n$ atoms is
+finite. In particular, with a fixed atom bound only finitely many normal
+forms exist (NT23), so the lookup table of NT24 is finite and precomputable.
+\end{theorem}
+
+\begin{proof}
+Only finitely many types occur, $\sum_{m=0}^{d}|T|^m$. A diagram $A \to B$
+with $m \le n$ nodes has at most $s^m \le s^n$ labelings, $s$ being the
+number of atoms. Each node has at most $d$ input and $d$ output ports,
+so the diagram has at most $|A| + md \le d + nd$ source ports and at most
+$|B| + md \le d + nd$ target ports, and a wiring is a label-respecting
+bijection between them, of which there are at most $(d + nd)!$. Hence at most
+$s^n (d + nd)!$ concrete diagrams, and no more isomorphism classes:
+$F(\Sigma)(A,B)$ restricted to at most $n$ atoms is finite. No rewrite rule
+introduces atoms (NT23), so the normal forms of molecules with at most $n$
+atoms are a subset of this finite set; by NT24 they are in bijection with the
+behavior classes.
+\end{proof}
+
+\begin{remark}[The atom bound is essential]\label{rem:nt22-bound}
+Bounded types alone do not make hom-sets finite: for a single base type $X$
+and a single atom $f \colon X \to X$, the morphisms $\mathrm{id}, f,
+f \circ f, \dots$ in $F(\Sigma)(X,X)$ are pairwise distinct, since the
+universal property (NT21) applied to the model in $\mathbf{Set}$ with
+$X = \mathbb{N}$ and $f$ the successor function would otherwise force
+$\mathrm{succ}^m = \mathrm{succ}^n$ for $m \neq n$. What a dataplane uses is
+finiteness of \emph{bounded-size} molecules; a cost budget bounds the atom
+count because every atom has positive cost (NT51). This is the bounded,
+enumerable class that the \texttt{normal\_forms} tool exhausts
+(\autoref{app:a}).
+\end{remark}
+
+\section{Unique normal forms up to coherence}\label{sec:free-normal}
+
+The free category fixes the \emph{structural} equations: molecules differing
+only by coherence denote the same morphism of $F(\Sigma)$. The
+\emph{behavioral} equations are handled by the runtime rewrite system of
+\autoref{ch:rewrite}: the behavior-preserving rules of the runtime theories
+--- ring cancellation (NT12), parser left factoring (NT16), batch flattening
+(NT17) --- read as local rewrites of a sub-diagram with fixed boundary, so
+the system is a well-defined relation on the morphisms of $F(\Sigma)$.
+
+\begin{theorem}[Unique normal forms]\label{nt:23}
+\textbf{NT23 [N].} Let $R$ be the runtime rewrite system of
+\autoref{ch:rewrite} on the molecules over a signature $\Sigma$. Then every
+molecule $M$ over $\Sigma$ has a unique normal form $\mathit{NF}(M)$: the
+unique $R$-irreducible morphism of $F(\Sigma)$ reachable from $M$, independent
+of the order of rewriting. The normal form is unique up to coherence:
+$\mathit{NF}(M)$ is a well-defined morphism of $F(\Sigma)$, and molecules
+with the same wiring diagram have the same normal form. Moreover
+$\mathit{NF}(M)$ contains at most as many atoms as $M$.
+\end{theorem}
+
+\begin{proof}
+\emph{Termination.} No rule introduces atoms, and each rule strictly
+decreases a well-founded measure: ring cancellation removes two nodes, batch
+flattening merges nested batch nodes, left factoring lowers the measure of
+NT16; the measures of NT13, NT16, NT17 rule out infinite reductions.
+\emph{Confluence.} The system is locally confluent: every critical pair joins
+(NT14, NT16, NT17), and redexes of different theories do not overlap, their
+patterns being labeled by disjoint atoms. Termination and local confluence
+imply confluence by Newman's lemma \cite{newman}.
+\emph{Uniqueness.} By termination every reduction from $M$ reaches an
+irreducible morphism; if $M \to^{*} u$ and $M \to^{*} v$ with $u, v$
+irreducible, confluence gives a common reduct $w$ of $u$ and $v$, and
+irreducibility forces $u = w = v$. Hence exactly one normal form
+$\mathit{NF}(M)$ exists.
+\emph{Up to coherence.} The rules replace a sub-diagram by another with the
+same boundary, so they act on wiring diagrams: molecules with the same
+diagram have the same normal form, a morphism of $F(\Sigma)$, and the atom
+count does not increase.
+\end{proof}
+
+At the level of expressions the structural rules $(x \circ y) \circ z \to
+x \circ (y \circ z)$, $\mathrm{id} \circ x \to x$, $x \circ \mathrm{id} \to
+x$ compute canonical representatives: they are terminating (the sum over
+composition nodes of the atoms in their left subtree strictly decreases) and
+locally confluent (the critical pairs $(\mathrm{id} \circ x) \circ z$,
+$(x \circ y) \circ \mathrm{id}$, $(x \circ \mathrm{id}) \circ z$,
+$((x \circ y) \circ z) \circ w$ join in at most three steps), hence confluent
+\cite{newman}, with normal forms the right-nested chains without identities;
+they preserve the wiring diagram, so they may be interleaved with the
+behavioral rules without changing $\mathit{NF}(M)$.
+
+\begin{theorem}[Completeness and the lookup table]\label{nt:24}
+\textbf{NT24 [N].} Let $R$ be the runtime rewrite system of
+\autoref{ch:rewrite} on the molecules over a signature $\Sigma$: terminating
+and confluent (NT13--NT17) and complete for behavioral equivalence, in that
+the congruence generated by the rules of $R$ is exactly $\simeq$ on the
+molecules over $\Sigma$ (a complete system in the sense of Knuth--Bendix
+\cite{knuthbendix}; established for the runtime theories by NT15, NT18,
+NT19). Then for all molecules $M, M'$ over $\Sigma$:
+\[
+M \simeq M' \quad\text{iff}\quad \mathit{NF}(M) = \mathit{NF}(M'),
+\]
+and $\mathit{NF}(M) \simeq M$ for every $M$. If $\Sigma$ is finite with
+bounded types and bounded atom count, the normal forms form a finite,
+precomputable lookup table of optimized molecules, one entry per behavior
+class.
+\end{theorem}
+
+\begin{proof}
+\emph{Soundness.} Each rule preserves behavior and is cost-nonincreasing
+(NT12, NT16--NT18), so $M \to^{*} \mathit{NF}(M)$ implies $M \simeq
+\mathit{NF}(M)$ by induction on the reduction.
+\emph{Completeness $(\Rightarrow)$.} By hypothesis $M \simeq M'$ means that
+$M$ and $M'$ are connected by $R$-steps, and this relation is joinability:
+joinability is reflexive, symmetric, transitive, and preserved by single
+steps on either side (if $u \downarrow v$ and $u' \to u$ then $u' \to^{*}
+w$; if $v \to v'$, confluence applied to $v$ yields a common reduct of $w$
+and $v'$). Hence $M$ and $M'$ have a common reduct, which by termination and
+confluence reduces to $\mathit{NF}(M) = \mathit{NF}(M')$.
+\emph{Completeness $(\Leftarrow)$.} If $\mathit{NF}(M) = \mathit{NF}(M')$,
+then $M \simeq \mathit{NF}(M) \simeq \mathit{NF}(M') \simeq M'$ by soundness.
+\emph{Lookup table.} By NT22 the normal forms of bounded molecules are finite
+in number, and the two completeness directions make $M \mapsto \mathit{NF}(M)$
+a bijection between behavior classes and normal forms; hence the table ---
+one cost-optimal molecule per class (NT26, NT29), indexed by the type pair
+and a dense integer --- is finite and precomputed by exhaustive normalization.
+The \texttt{normal\_forms} tool (\autoref{app:a}) performs exactly this
+enumeration on the signature $f \colon A \to B$, $g \colon B \to C$,
+$h \colon C \to D$: all $3{,}929$ well-typed terms with at most six atom
+occurrences reduce to the $10$ distinct normal forms, with equality of normal
+forms agreeing with equality of the realized functions on all
+$7{,}716{,}556$ pairs --- PASS.
+\end{proof}
+
+\section{The precomputed lookup table}\label{sec:free-table}
+
+A dataplane cannot optimize at runtime; it dispatches. The lookup table is the
+theory of this chapter compiled into a finite artifact: for the runtime
+signature (finite, bounded types, bounded hot-path size) it assigns to each
+type pair $A \to B$ its finitely many behavior classes (NT22), each
+represented by its normal form (NT23), which is exactly its behavior (NT24);
+with the costs of \autoref{ch:enrich} the stored representative is
+cost-optimal within its class (NT26, NT29). Using the table is a lookup
+followed by dense-integer dispatch (policy [MOL] of the companion standard):
+constant-time and allocation-free.
+
+For the signature $f \colon A \to B$, $g \colon B \to C$, $h \colon C \to D$
+the table is the following; the third column counts the well-typed terms of
+depth at most six that normalize to each entry (\texttt{normal\_forms},
+\autoref{app:a}).
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{@{}llr@{}}
+\toprule
+\textbf{Normal form $\mathit{NF}(M)$} & \textbf{Type} & \textbf{Terms in class} \\
+\midrule
+$\mathrm{id}_A$         & $A \to A$ & 65   \\
+$f$                     & $A \to B$ & 351  \\
+$g \circ f$             & $A \to C$ & 807  \\
+$h \circ g \circ f$     & $A \to D$ & 1002 \\
+$\mathrm{id}_B$         & $B \to B$ & 65   \\
+$g$                     & $B \to C$ & 351  \\
+$h \circ g$             & $B \to D$ & 807  \\
+$\mathrm{id}_C$         & $C \to C$ & 65   \\
+$h$                     & $C \to D$ & 351  \\
+$\mathrm{id}_D$         & $D \to D$ & 65   \\
+\midrule
+Total                   &           & 3929 \\
+\bottomrule
+\end{tabular}
+\caption{The lookup table for the signature $\{f, g, h\}$: the ten behavior
+classes (normal forms) and, for each, the number of enumerated well-typed
+terms of depth at most six that normalize to it.}
+\label{tab:lookup}
+\end{table}
+
+Each row is the unique normal form of its behavior class (NT23, NT24), so the
+table is consistent by construction; syntactically distinct terms in a class
+--- $h \circ (g \circ f)$ and $(h \circ g) \circ f$, or $f$ and
+$f \circ \mathrm{id}_A$ --- share one entry: the fusion promised by cut
+elimination (\autoref{ch:linear}, NT49) is, for bounded signatures, a table
+lookup. The same enumeration resolves the design decision problems of
+\autoref{ch:situations}: a situation $(A \to B, \Phi, \bar{c})$ seeks a
+molecule realizing class $\Phi$ within cost $\bar{c}$, and the table restricts
+the search to one candidate per class, computed once (NT51).
+
+\begin{remark}[Summary]
+$F(\Sigma)$ is the syntax of molecules: existence and the universal property
+(NT20, NT21) make it the canonical interface between expressions and Mol;
+finiteness (NT22) makes optimization exhaustive; unique normal forms (NT23)
+and completeness (NT24) make it unambiguous, so every behavior class has
+exactly one canonical, cost-optimal representative, precomputable before
+runtime and dispatched in constant time.
+\end{remark}

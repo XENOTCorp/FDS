@@ -1,0 +1,354 @@
+\chapter{The Rewrite Engine}\label{ch:rewrite}
+
+A dataplane is assembled from atoms and then kept in canonical shape by the
+rewrite engine: the runtime's equational theories, directed so that the
+engine applies them in one direction only, replacing redundant or expensive
+subexpressions by cheaper ones and reducing every expression to a unique
+normal form. This chapter formalizes that machinery. The equational theories
+of \autoref{ch:lawvere} --- the ring theory of bounded buffers
+(\autoref{nt:9}--\autoref{nt:12}), the parser theory of sequence and choice
+(\autoref{nt:10}), and the transport theory of batched I/O
+(\autoref{nt:11}) --- become term rewrite systems; monoidal coherence is
+absorbed into the representation by Mac Lane's strictification, so coherence
+generates no rewrite rules of its own \cite{maclane}. Termination is proved
+by well-founded orders (lexicographic path orders), confluence follows from
+critical-pair analysis and Newman's lemma \cite{newman}, and the systems are
+produced by Knuth--Bendix completion, the term-rewriting analogue of
+computing a Gr\"obner basis \cite{knuthbendix}. The seven theorems
+NT13--NT19, stated and proved in full below, then establish: termination,
+local confluence, and completion for the ring system (NT13--NT15);
+confluence and unique normal forms for the parser and batch rewrites
+(NT16--NT17); soundness of normalization for behavior and cost (NT18); and
+decidability of the full runtime equational theory on finite signatures
+(NT19).
+
+\paragraph{Term rewrite systems.}
+Fix a \emph{signature}: a finite set $\Sigma$ of operation symbols, each with
+a fixed arity, and a countably infinite set $X$ of variables. \emph{Terms}
+are built as usual: variables are terms, and for an $n$-ary symbol $f$ and
+terms $t_1, \ldots, t_n$ the expression $f(t_1, \ldots, t_n)$ is a term; the
+\emph{size} $|t|$ counts its operation symbols. A \emph{substitution}
+$\sigma$ maps variables to terms, extended homomorphically; a \emph{rewrite
+rule} is a pair $l \to r$ of terms; and a \emph{term rewrite system} (TRS)
+is a set of rules. A \emph{rewrite step} $C[l\sigma] \to_R C[r\sigma]$
+replaces an instance of a left-hand side inside any context $C$, and
+$\to_R^{*}$ is its reflexive--transitive closure. A term is a \emph{normal
+form} when no step applies to it, and $\mathrm{NF}(t)$ is its normal form
+when one exists and is unique.
+
+\paragraph{Termination, confluence, critical pairs.}
+A TRS is \emph{terminating} if it admits no infinite rewrite sequence. A
+\emph{reduction order} is a well-founded order $\succ$ on terms, closed
+under contexts and substitutions, with $l \succ r$ for every rule $l \to r$;
+any reduction order proves termination. The order used below is the
+classical \emph{lexicographic path order} (LPO): fix a \emph{precedence} on
+the operation symbols and compare $f(s_1, \ldots, s_m)$ with
+$g(t_1, \ldots, t_n)$ by (i) $s_i \succeq t$ for some $i$, or (ii) $f$
+higher in precedence than $g$ and the left term exceeds every $t_j$, or
+(iii) $f = g$ and the argument tuples compare lexicographically; LPO is a
+reduction order over finite signatures. A TRS is \emph{confluent} if any
+two terms reachable from a common term are \emph{joinable} (both reduce to
+a common term), and \emph{locally confluent} if the same holds for one-step
+reachability. A \emph{critical pair} is a pair of one-step reducts produced
+by overlapping two left-hand sides at a non-variable position and unifying
+at their most general overlap; the classical Knuth--Bendix criterion says a
+TRS is locally confluent iff every critical pair is joinable
+\cite{knuthbendix}. Termination plus local confluence yields confluence by
+Newman's lemma, proved below \cite{newman}.
+
+\paragraph{The three systems.}
+The engine normalizes three theories on disjoint sorts, so rules of
+different theories never overlap. The \emph{ring system} $R$ has the two
+cancellation rules
+\[
+\mathit{push}\bigl(\mathit{pop}(x)\bigr) \to x, \qquad
+\mathit{pop}\bigl(\mathit{push}(x)\bigr) \to x ,
+\]
+which read, in the composition notation of \autoref{nt:9}, as
+$\mathit{push}\circ\mathit{pop} = \mathrm{id}$ and
+$\mathit{pop}\circ\mathit{push} = \mathrm{id}$. The non-emptiness guard on
+the second equation of \autoref{nt:9} is satisfied by the pattern itself:
+$\mathit{pop}(\mathit{push}(x))$ denotes a buffer that has just received
+the element pushed by the inner $\mathit{push}$ and is non-empty by
+construction. The \emph{parser system} $P$ has the single left-factoring
+rule
+\[
+(x \cdot a) \oplus (x \cdot b) \to x \cdot (a \oplus b) ,
+\]
+with $\oplus$ ordered choice and $\cdot$ sequence; the runtime stores every
+alternative as a sequence, so an atom is a sequence of length one and the
+rule factors atom prefixes as well. The \emph{batch system} $B$ has the
+single flattening rule
+\[
+\mathrm{batch}\bigl(\mathrm{batch}(x,y), z\bigr) \to
+\mathrm{batch}\bigl(x, \mathrm{batch}(y,z)\bigr),
+\]
+the binary restriction of the $n$-ary batch of \autoref{nt:46}.
+
+\paragraph{Newman's lemma.}
+A classical result bridges local to global confluence: a terminating and
+locally confluent rewrite relation is confluent \cite{newman}. Since $\to$
+is terminating, its strict transitive closure $\to^{+}$ is well-founded, and
+we argue by well-founded induction on $t$ that any two terms reachable from
+$t$ are joinable. If $t$ is a normal form, the only term reachable from $t$
+is $t$ itself. Otherwise let $t \to^{*} u$ and $t \to^{*} v$; if either
+sequence is empty, $u$ and $v$ are trivially joinable, so assume both begin
+with one step, $t \to t_1 \to^{*} u$ and $t \to t_2 \to^{*} v$. By local
+confluence $t_1$ and $t_2$ are joinable: $t_1 \to^{*} w$ and
+$t_2 \to^{*} w$. The terms $t_1$, $t_2$, and $w$ are proper reducts of $t$,
+so the induction hypothesis applies to each: $u$ and $w$ are joinable and
+$v$ and $w$ are joinable, yielding $u \to^{*} w_1$, $w \to^{*} w_1$,
+$v \to^{*} w_2$, $w \to^{*} w_2$; and since $w_1$ and $w_2$ are reachable
+from $w$, they are joinable, $w_1 \to^{*} z$, $w_2 \to^{*} z$. Then
+$u \to^{*} z$ and $v \to^{*} z$: $u$ and $v$ join, and induction gives
+confluence.
+
+\begin{theorem}[The ring rewrite system is terminating (NT13)]\label{nt:13}
+\textbf{[N].} The ring rewrite system $\mathit{push}(\mathit{pop}(x)) \to x$
+and $\mathit{pop}(\mathit{push}(x)) \to x$ is terminating: in the
+lexicographic path order with precedence
+$\mathit{push} \succ \mathit{pop}$ every rule strictly decreases the term,
+and every rule also strictly decreases the number of operation symbols.
+\end{theorem}
+
+\begin{proof}
+We verify the lexicographic path order directly. For the first rule,
+$\mathit{push}(\mathit{pop}(x)) \succ x$: the immediate subterm
+$\mathit{pop}(x)$ satisfies $\mathit{pop}(x) \succ x$, since
+$\mathit{pop}(x)$ has the immediate subterm $x$ with $x \succeq x$ (clause
+(i)), and clause (i) applied to $\mathit{push}(\mathit{pop}(x))$ gives the
+claim. Symmetrically $\mathit{pop}(\mathit{push}(x)) \succ x$, its
+immediate subterm $\mathit{push}(x)$ dominating $x$ the same way. LPO is a
+reduction order over the finite signature $\{\mathit{push}, \mathit{pop}\}$,
+so every step decreases a well-founded order and the system is terminating.
+The size witness is immediate: each left-hand side has two more operation
+symbols than its right-hand side, so $|\mathit{push}(\mathit{pop}(x))| =
+|x| + 2 > |x|$, and similarly for the second rule.
+\end{proof}
+
+\begin{theorem}[Local confluence of the ring system (NT14)]\label{nt:14}
+\textbf{[N].} The ring rewrite system of \autoref{nt:13} is locally
+confluent: every critical pair is joinable. It is therefore confluent, by
+Newman's lemma, since it is terminating \cite{newman}.
+\end{theorem}
+
+\begin{proof}
+Let $l_1 = \mathit{push}(\mathit{pop}(x))$ and
+$l_2 = \mathit{pop}(\mathit{push}(y))$ (variables renamed apart). The
+non-variable positions of $l_1$ are the root and the argument of
+$\mathit{push}$, holding the subterm $\mathit{pop}(x)$. At the argument
+position, $\mathit{pop}(x)$ unifies with $l_2$ under
+$\theta = \{x \mapsto \mathit{push}(y)\}$, and the two one-step rewrites of
+the overlap term $\mathit{push}(\mathit{pop}(\mathit{push}(y)))$ both
+produce $\mathit{push}(y)$: the root redex substitutes $\theta$ into the
+right-hand side, and the inner redex $\mathit{pop}(\mathit{push}(y))$,
+reduced by $l_2$, leaves $\mathit{push}(y)$ as well. Symmetrically, the
+subterm $\mathit{push}(y)$ at the argument position of $l_2$ unifies with
+$l_1$ under $\{y \mapsto \mathit{pop}(x)\}$, and the two one-step rewrites
+of $\mathit{pop}(\mathit{push}(\mathit{pop}(x)))$ both produce
+$\mathit{pop}(x)$. At the root the left-hand sides do not unify, since
+$\mathit{push} \neq \mathit{pop}$, and the remaining positions hold
+variables, where redexes never occur. Hence the only critical pairs are the
+trivial root self-overlaps and the pairs
+$\langle \mathit{push}(y), \mathit{push}(y) \rangle$ and
+$\langle \mathit{pop}(x), \mathit{pop}(x) \rangle$, each joining in a
+single step, so every critical pair is joinable and the Knuth--Bendix
+criterion gives local confluence \cite{knuthbendix}; with termination
+(\autoref{nt:13}), Newman's lemma gives confluence \cite{newman}. The
+normal forms are the terms $\mathit{push}^{k}(x)$ and $\mathit{pop}^{k}(x)$,
+$k \geq 0$: a term that avoids both patterns
+$\mathit{push}(\mathit{pop}(\cdot))$ and
+$\mathit{pop}(\mathit{push}(\cdot))$ has all its operation symbols equal.
+\end{proof}
+
+\begin{theorem}[Knuth--Bendix completion of the ring theory (NT15)]\label{nt:15}
+\textbf{[N].} Knuth--Bendix completion of the ring theory, with the
+equations of \autoref{nt:9} oriented by the size-lexicographic order,
+terminates in a complete system: it returns exactly the two cancellation
+rules of \autoref{nt:13}, which are terminating and confluent. The
+computational claim is script-verified: the checker
+\texttt{kb\_completion} of \autoref{app:a} executes the completion, and its
+run prints \texttt{PASS} \cite{knuthbendix}.
+\end{theorem}
+
+\begin{proof}
+The completion procedure orients every equation by a well-founded order ---
+here the size-lexicographic order (smaller size first, ties broken
+lexicographically) --- then computes critical pairs and adds a rule for
+every pair that fails to join, until all critical pairs join. The equations
+$\mathit{push}(\mathit{pop}(x)) = x$ and
+$\mathit{pop}(\mathit{push}(x)) = x$ are already oriented: each left-hand
+side has size $2$ and the right-hand side size $0$, so the initial rules are
+exactly $R_1$ and $R_2$ of \autoref{nt:13}. By the critical-pair computation
+of \autoref{nt:14}, the two nontrivial critical pairs join in one step and
+the trivial self-overlaps join in zero steps; no critical pair fails to
+join, so no rule is ever added and the procedure terminates after the first
+pass. The resulting system is terminating (\autoref{nt:13}) and confluent
+(\autoref{nt:14}), hence complete, and because the rules are exactly the
+equations, it presents the same theory and decides it: two terms are equal
+in the ring theory iff they reduce to a common term, iff their normal forms
+coincide. The script \texttt{kb\_completion} implements terms, matching,
+rewriting, normalization, critical-pair computation, and the completion loop
+for these two equations; it asserts that completion terminates, that every
+critical pair joins, that the original rules are present, and that the
+system decides the theory on sample terms, and it prints \texttt{PASS}. The
+run is recorded in \autoref{app:a} \cite{knuthbendix}.
+\end{proof}
+
+\begin{theorem}[Parser left factoring (NT16)]\label{nt:16}
+\textbf{[N].} The parser rewrite system with the single left-factoring rule
+$(x \cdot a) \oplus (x \cdot b) \to x \cdot (a \oplus b)$ is confluent and
+terminating. Consequently every parser term has a unique left-factored
+normal form: a term in which no choice node has two branches sharing a
+common first component.
+\end{theorem}
+
+\begin{proof}
+Termination: for any substitution $\sigma$, the left-hand side
+$(x \cdot a) \oplus (x \cdot b)$ contains $2|x\sigma| + |a\sigma| +
+|b\sigma| + 3$ operation symbols and the right-hand side
+$x \cdot (a \oplus b)$ contains $|x\sigma| + |a\sigma| + |b\sigma| + 2$;
+the difference $|x\sigma| + 1 \geq 1$ is positive, so every step decreases
+the size and no infinite sequence exists. Local confluence: the left-hand
+side $l = (x \cdot a) \oplus (x \cdot b)$ has non-variable positions
+$\varepsilon$, $1$, and $2$; the subterms at positions $1$ and $2$ are
+$\cdot$-terms, and no $\cdot$-term unifies with $l$, whose root is $\oplus$,
+so the only overlap of $l$ with a renaming of itself is the trivial root
+overlap, joining in zero steps. With no other rules, every critical pair is
+joinable, the system is locally confluent, and Newman's lemma gives
+confluence; termination then yields a unique normal form for every term: a
+term with no redex, i.e.\ no choice node $\oplus$ whose two branches are
+sequences with identical first component, which is the left-factored form.
+The rule is sound by \autoref{nt:10} (sequence distributes over choice),
+and since the runtime stores each alternative as a sequence, atom branches
+are sequences of length one and atom prefixes are factored as well.
+\end{proof}
+
+\begin{theorem}[Batch-flattening rewrites (NT17)]\label{nt:17}
+\textbf{[N].} The batch rewrite system with the single rule
+$\mathrm{batch}(\mathrm{batch}(x,y), z) \to
+\mathrm{batch}(x, \mathrm{batch}(y,z))$ is terminating and confluent on
+batch trees. Consequently every batch tree has a unique flattened normal
+form: a right spine $\mathrm{batch}(x_1, \mathrm{batch}(x_2, \ldots,
+\mathrm{batch}(x_{n-1}, x_n) \ldots))$, identified with the single $n$-ary
+batch of \autoref{nt:46}.
+\end{theorem}
+
+\begin{proof}
+Termination: in the lexicographic path order with the single operation
+symbol $\mathrm{batch}$ and lexicographic argument status, the rule
+decreases, since the first arguments compare
+$\mathrm{batch}(x,y) \succ x$ (clause (i): the immediate subterm $x$
+satisfies $x \succeq x$), and the lexicographic comparison is decided by the
+first argument. LPO is a reduction order over the finite signature
+$\{\mathrm{batch}\}$, so the system is terminating. Local confluence: the
+left-hand side $l = \mathrm{batch}(\mathrm{batch}(x,y), z)$ has
+non-variable positions $\varepsilon$ and $1$; the subterm at position $1$,
+$\mathrm{batch}(x,y)$, unifies with a renaming of $l$ under
+$x \mapsto \mathrm{batch}(x',y')$, $y \mapsto z'$, producing the overlap
+term $\mathrm{batch}(\mathrm{batch}(\mathrm{batch}(x',y'),z'), z)$. The
+outer redex rewrites this to $\mathrm{batch}(\mathrm{batch}(x',y'),
+\mathrm{batch}(z',z))$, and one further step brings it to
+$\mathrm{batch}(x', \mathrm{batch}(y', \mathrm{batch}(z',z)))$; the inner
+redex rewrites the overlap term to
+$\mathrm{batch}(\mathrm{batch}(x', \mathrm{batch}(y',z')), z)$, and two
+further steps reach the same term. The critical pair joins, and the root
+self-overlap is trivial; the Knuth--Bendix criterion gives local
+confluence, and Newman's lemma gives confluence. The unique normal form is
+the term with no redex, i.e.\ a right spine of $\mathrm{batch}$
+applications, the flattened batch of \autoref{nt:46}.
+\end{proof}
+
+\begin{theorem}[Normalization soundness (NT18)]\label{nt:18}
+\textbf{[N].} Suppose every rule of the three systems is sound --- the
+equation it encodes holds as behavioral equivalence of molecules --- and
+cost-nonincreasing --- $M \to N$ implies $\mathrm{cost}(N) \leq
+\mathrm{cost}(M)$, componentwise on the cost vector of
+\autoref{ch:enrich}. Then normalization is sound and cost-monotone: for
+every molecule $M$,
+\[
+\mathrm{NF}(M) \approx M
+\qquad\text{and}\qquad
+\mathrm{cost}\bigl(\mathrm{NF}(M)\bigr) \leq \mathrm{cost}(M) .
+\]
+\end{theorem}
+
+\begin{proof}
+By termination and confluence of the three systems (NT13--NT17), every term
+has a unique normal form and $\mathrm{NF}$ is a function: it is the common
+endpoint of all maximal reduction sequences from the input. For soundness,
+each rule is behavior-preserving by hypothesis --- concretely, the ring
+rules are the equations of \autoref{nt:9}, the parser rule is the
+distributive law of \autoref{nt:10}, and the batch rule is the flattening
+identity of \autoref{nt:46} --- so a single step satisfies $M \approx N$;
+behavioral equivalence is an equivalence relation (\autoref{ch:mol}), and an
+induction on the length of the reduction sequence from $M$ to
+$\mathrm{NF}(M)$ gives $\mathrm{NF}(M) \approx M$. For cost, a single step
+satisfies $\mathrm{cost}(N) \leq \mathrm{cost}(M)$ in every component by
+hypothesis, and chaining the inequalities along the sequence, by induction
+on its length, gives $\mathrm{cost}(\mathrm{NF}(M)) \leq \mathrm{cost}(M)$
+componentwise. The two halves are independent; the concrete rules satisfy
+both hypotheses: cancellation removes a redundant pair of operations,
+factoring parses a shared prefix once instead of once per branch, and
+flattening replaces a nested batch by a flat one with the same I/O count.
+\end{proof}
+
+\begin{theorem}[Decidability of the runtime equational theory (NT19)]\label{nt:19}
+\textbf{[N].} Let $E$ be the full runtime equational theory: the union of
+the ring theory (\autoref{nt:13}--\autoref{nt:15}), the parser theory
+(\autoref{nt:16}), and the transport theory, whose rewrite rules are the
+batch-flattening rewrites of \autoref{nt:17}, presented over a finite
+signature in which the three theories occupy disjoint sorts. Then $E$ is
+decidable via normalization: for terms $s$ and $t$ of the same sort,
+\[
+s =_E t \iff \mathrm{NF}(s) = \mathrm{NF}(t),
+\]
+and both normal forms are effectively computable.
+\end{theorem}
+
+\begin{proof}
+Within each sort the theory is presented by the rules that
+\autoref{nt:13}--\autoref{nt:17} prove terminating and confluent, so the
+rewrite relation and the equational theory coincide: $s =_E t$ iff $s$ and
+$t$ rewrite, in both directions, to a common term, iff $\mathrm{NF}(s) =
+\mathrm{NF}(t)$, the last equivalence by confluence. The systems act on
+disjoint sorts, so no rule of one contains a symbol of another and redexes
+never overlap. Termination of the combined engine: each component
+normalizes every term of its sort in finitely many steps, and steps of one
+theory leave the other sorts' terms untouched; any infinite run would
+therefore contain infinitely many steps of a single sort, each strictly
+decreasing that sort's well-founded size measure while the others stay
+constant, a contradiction. Confluence: every maximal reduction sequence
+normalizes each sort component, and each component has a unique normal
+form, so all maximal sequences from the same term end at the same mixed
+normal form: $\mathrm{NF}$ is a function. Decidability: the signature is
+finite, so terms are finite trees over a finite alphabet, every step is an
+effective replacement, and normalization terminates, so $\mathrm{NF}(s)$
+and $\mathrm{NF}(t)$ are computable in finite time, and comparing them
+decides $s =_E t$. Coherence contributes no equations: by Mac Lane's
+coherence theorem and strictification the tensor is strictly associative
+with a strict unit, and the braiding is a morphism rather than a rewrite,
+so the coherence laws hold in every model without entering $E$
+\cite{maclane}.
+\end{proof}
+
+\paragraph{Typed composition trees and multicategories.}
+The expressions the engine rewrites are embedded in molecules: a molecule
+over an atom signature $\Sigma$ is a typed composition tree whose leaves
+are atoms and whose internal nodes are applications of composition $\circ$
+and tensor $\otimes$, each node carrying the types of its domain and
+codomain. Such trees, with the grafting substitution that plugs the output
+of one tree into an input position of another, form a \emph{multicategory}:
+objects are the types, and a multimorphism is a tree with a list of typed
+inputs and one typed output \cite{leinster}. The rewrite rules are exactly
+the identities this substitution structure respects --- batch flattening is
+the associativity of substitution, parser factoring the distributivity of
+sequence over choice, ring cancellation the mutual inverseness of the ring
+operations --- and Kelly's \emph{clubs} axiomatize the general situation: a
+club is a category of typed trees whose substitution structure presents the
+free algebras of a 2-monad, and the free symmetric monoidal category
+$F(\Sigma)$ of \autoref{ch:free} is presented by the club of permutations
+acting on the atoms \cite{kelly, leinster}. The engine is therefore not an
+ad-hoc optimizer but the computational reflection of the multicategorical
+structure of Mol, and the normal forms of NT13--NT19 are the canonical
+forms of typed composition trees, whose equality NT19 makes decidable.

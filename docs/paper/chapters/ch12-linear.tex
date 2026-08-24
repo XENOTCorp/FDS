@@ -1,0 +1,55 @@
+\chapter{Linear Logic, Cut Elimination, and Zero Allocation}\label{ch:linear}
+
+Linear logic is the logic of resources used exactly once \citep{girard}: its formulas cannot be duplicated or discarded freely, and its cut rule composes proofs exactly as Mol composes molecules. The reason FDS can promise zero allocation on the hot path is that a dataplane is a linear program --- every datum is produced once and consumed once --- and the intermediate structures a classical program would materialize are eliminated by fusion. That elimination is cut elimination, known in programming as deforestation \citep{wadler}. This chapter proves that cut elimination fuses every pure pipeline into a single molecule (NT49), that linear atoms force zero allocation (NT50), and records the geometry-of-interaction and Curry--Howard readings of these results.
+
+\paragraph{Pipelines and cuts.}
+A pure pipeline is a composite $p = g_n \circ \cdots \circ g_1 : A_0 \to A_n$ of molecules $g_i : A_{i-1} \to A_i$. In the categorical semantics of linear logic, each composition point $g_{i+1} \circ g_i$ is a \emph{cut}: a proof of $A_{i-1} \to A_i$ glued to a proof of $A_i \to A_{i+1}$ across the intermediate formula $A_i$. Cut elimination rewrites a proof until no cut remains; its semantic content is that the composite morphism is computed directly, without ever constructing the intermediate object of type $A_i$ \citep{girard}. In a dataplane the intermediate object is a materialized buffer, and cut elimination is deforestation: the buffer is fused away \citep{wadler}.
+
+\begin{theorem}[Cut elimination as deforestation (NT49)]\label{nt:49}
+Every pure pipeline $p = g_n \circ \cdots \circ g_1 : A_0 \to A_n$ in Mol is equal to a single molecule $h : A_0 \to A_n$, the \emph{fused pipeline}, with the following properties:
+\begin{enumerate}
+\item $h \simeq p$: fusion preserves behavior;
+\item the intermediate types $A_1, \ldots, A_{n-1}$ never materialize as buffers during the execution of $h$: no datum of type $A_i$ is stored between stages;
+\item $h$ is constructed from the presentations of the $g_i$ by an explicit finite procedure of worst-case complexity $O\bigl(|S_1| \cdots |S_n| \cdot (|A_0| + \cdots + |A_{n-1}|)\bigr)$, where $|S_i|$ is the size of the state space of $g_i$.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+First fuse two molecules. Let $f : A \to B$ and $g : B \to C$ be presented by $(S_f, s_f, \delta_f)$ and $(S_g, s_g, \delta_g)$. Define $h : A \to C$ with state space $S_f \times S_g$, initial state $(s_f, s_g)$, and transition
+\[
+\delta_h\bigl((u, v), a\bigr) = \bigl(c, (u', v')\bigr),
+\qquad \text{where } (b, u') = \delta_f(u, a), \quad (c, v') = \delta_g(v, b) .
+\]
+This is a valid Mealy machine, and by the definition of composition in Mol (\autoref{ch:mol}) it is exactly the composite $g \circ f$: on every input word, $h$ follows the same state trajectory $(u, v) \mapsto (u', v')$ and emits the same output word as the two-stage machine, so $h \simeq g \circ f$. In a single transition of $h$, the value $b$ is produced by $\delta_f$ and consumed by $\delta_g$ within that same transition; it is held in a register and never stored, so no buffer of type $B$ exists in this realization.
+
+Now iterate. By induction on $n$, the pipeline $g_{n-1} \circ \cdots \circ g_1$ is equal to a single molecule $h' : A_0 \to A_{n-1}$ with state space $S_1 \times \cdots \times S_{n-1}$ and no intermediate buffers; fusing $h'$ with $g_n$ by the two-molecule construction gives the single molecule $h$ with state space $S_1 \times \cdots \times S_n$, behavior equal to $p$, and no buffer of any type $A_i$ ($1 \leq i \leq n-1$). The transition table of $h$ has $|S_1| \cdots |S_n| \cdot |A_0|$ entries, each computed by one step of every $g_i$ (work $O(|A_0| + \cdots + |A_{n-1}|)$), giving the stated construction cost. This is the cut-elimination theorem of linear logic \citep{girard} realized concretely in Mol; in programming terms it is deforestation, the elimination of the intermediate data structure \citep{wadler}.
+\end{proof}
+
+\paragraph{Remark (fusion cost).}
+The fused machine is a morphism of Mol, so by the additivity of the cost model (\autoref{nt:25}) its cost is at most the sum of the component costs; because the intermediate value is transient, the buffer copy that a two-stage realization pays is absent, which is the content of the fusion bound (\autoref{nt:27}): $c(g \circ f) \leq c(f) + c(g)$, strict when the intermediate type never materializes. NT49 supplies the mechanism behind that bound.
+
+\paragraph{Linearity and ownership.}
+Call an atom $f : A \to B$ \emph{linear} if for every state $s$ and every input $a$ in its domain, the transition $(b, s') = \delta(s, a)$ reads $a$ exactly once and produces exactly one output $b$. A linear atom never copies its input, never drops it, and never holds it past the transition that consumes it; at every instant each datum is \emph{owned} by exactly one atom. This is the ownership discipline of Rust restated as a property of molecules.
+
+\begin{theorem}[Linearity forces zero allocation (NT50)]\label{nt:50}
+Let $M$ be a molecule built from linear atoms by the operations $\circ$, $\otimes$, and the batch construction of \autoref{ch:operad}. Then:
+\begin{enumerate}
+\item $M$ is linear: it consumes every input datum exactly once;
+\item along every execution of $M$ the number of live data tokens is invariant --- each transition consumes exactly one token and produces exactly one token;
+\item consequently, if the buffers of $M$ are preallocated to their maximum occupancy (bounded by the ring invariant, \autoref{nt:48}), the hot path performs no allocation and no deallocation.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+(i) By induction on the construction of $M$. An atom is linear by hypothesis. Composite: in $g \circ f$, an input token $a$ is read exactly once by $f$ (linearity), producing exactly one token $b$; $b$ is read exactly once by $g$ (linearity), producing exactly one token $c$; so the composite reads $a$ exactly once and emits exactly one output. Tensor: $f \otimes g$ on a pair $(a, a')$ reads $a$ exactly once in $f$ and $a'$ exactly once in $g$ and emits exactly one pair. Batch: $f^{(n)}$ reads each of its $n$ inputs exactly once by the definition of the batch transition and emits exactly $n$ outputs. Every molecule is obtained by finitely many such steps, so (i) holds.
+
+(ii) Fix an execution and let $L(t)$ be the number of data tokens in the buffers and in flight at time $t$. By (i) every transition consumes exactly one token and produces exactly one token, so $L$ is unchanged by every transition: $L(t) = L(0)$ for all $t$.
+
+(iii) By (ii) occupancy never exceeds $L(0)$. If each stage buffer is preallocated with capacity at least its share of $L(0)$ --- in FDS, a ring of capacity $2^k \geq L(0) + 1$ per stage, so that the in-flight bound $w - r \leq 2^k - 1$ of \autoref{nt:48} holds --- then every write fits in preallocated storage and every read empties a slot in place. No token is copied, created, or destroyed, so the execution acquires and releases no heap memory: zero allocations and zero deallocations on the hot path.
+\end{proof}
+
+\paragraph{Geometry of interaction.}
+In Girard's geometry of interaction a proof is interpreted as an operator, and cut elimination is the \emph{execution} of that operator: a token travels through the proof, and cuts are crossed by iterating the operator until the token exits \citep{girard, arxiv-linear-logic-goi}. The reading in Mol is literal: a datum is a token, an atom is a transition $\delta$ that carries the token from its input port to its output port, and a molecule is the composition of these port-to-port maps. The fusion theorem (\autoref{nt:49}) is the execution --- it computes in one pass the effect of the whole pipeline on any token, without materializing the cut formulas. The token interpretation is also the performance claim: the working set is the set of live tokens, invariant by \autoref{nt:50}, which bounds the cache-miss component of the cost vector of \autoref{ch:enrich}.
+
+\paragraph{Curry--Howard for molecules.}
+Read propositions as types and proofs as molecules: the linear implication $A \multimap B$ is the type of molecules $A \to B$, and composition is the cut rule; a well-typed dataplane element is a proof of its interface type. The theorems of this chapter upgrade this typing discipline to a resource guarantee: if the type system records that every atom is linear (the hypothesis of \autoref{nt:50}) and that fusion removes intermediate structure (\autoref{nt:49}), then a well-typed hot path is allocation-free by construction. This is the categorical content of ownership in Rust: a discipline of exact-once consumption is precisely the data that parts (ii)--(iii) of \autoref{nt:50} require, so the guarantee is enforced at compile time rather than by runtime measurement \citep{wadler}.

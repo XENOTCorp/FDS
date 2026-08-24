@@ -1,0 +1,69 @@
+\chapter{Operadic Composition and Batching}\label{ch:operad}
+
+The dominant cost of moving data through a network stack is not the data itself but the boundary crossings: each system call traps into the kernel with a fixed overhead that is largely independent of how many bytes are moved \citep{arxiv-dataplane}. The standard remedy is batching --- collect several items, cross the boundary once, process them together. In Mol this is not an implementation trick but an algebraic structure: batches are $n$-ary operations, the family of all batch operations forms an \emph{operad} in the sense of \citet{leinster}, and the composition law of that operad is precisely the reassociation of batches, whose associativity is a theorem about Mol. This chapter proves the three batch theorems: flattening (\autoref{nt:46}), syscall amortization (\autoref{nt:47}), and the ring capacity invariant (\autoref{nt:48}).
+
+\paragraph{The batch construction.}
+Let $f : A \to B$ be a molecule with a fixed Mealy presentation $(S, s_0, \delta)$, $\delta : S \times A \to B \times S$ \citep{mealy}. For $n \geq 1$ the \emph{$n$-batch} of $f$ is the molecule $f^{(n)} : A^{n} \to B^{n}$ with the same state space $S$, the same initial state $s_0$, and the transition function
+\[
+\delta^{(n)}\bigl(s, (a_1, \ldots, a_n)\bigr) = \bigl((b_1, \ldots, b_n), s_n\bigr),
+\qquad (b_i, s_i) = \delta(s_{i-1}, a_i), \quad s_0 = s .
+\]
+Thus $f^{(n)}$ reads its inputs in order, threading the state of $f$ through the $n$ positions, and emits its outputs in order; a batched dataplane stage is exactly such a machine, one I/O operation delivering the tuple $(a_1, \ldots, a_n)$ and collecting $(b_1, \ldots, b_n)$. For $n = 2$ we write $\mathrm{batch}(x, y)$ for the element-level reading of $f^{(2)}(x, y)$.
+
+\paragraph{Batching is an operad.}
+An operad is a family of $n$-ary operations with a composition law that plugs a $k_j$-ary operation into the $j$-th slot of an $m$-ary operation to obtain a $(k_1 + \cdots + k_m)$-ary operation, subject to associativity and unit laws \citep{leinster}. For batching the composition is \emph{flattening}: a batch of $m$ batches, the $j$-th of size $k_j$, is reassociated to a single batch of size $k_1 + \cdots + k_m$, with unit $f^{(1)} = f$. The associativity of this composition is exactly the flattening theorem, NT46.
+
+\begin{theorem}[Batch flattening (NT46)]\label{nt:46}
+Let $f : A \to B$ be a molecule and let $m, k \geq 1$. Under the canonical coherence isomorphisms $\alpha : (A^{k})^{m} \cong A^{km}$ and $\beta : (B^{k})^{m} \cong B^{km}$ of the symmetric monoidal structure of Mol (the reassociation of tuples), the square
+\[
+\begin{array}{ccc}
+(A^{k})^{m} & \xrightarrow{\ \alpha\ } & A^{km} \\
+\big\downarrow & & \big\downarrow \\
+(B^{k})^{m} & \xrightarrow[\ \beta\ ]{} & B^{km}
+\end{array}
+\]
+whose vertical arrows are $(f^{(k)})^{(m)}$ and $f^{(km)}$ commutes in Mol; equivalently $(f^{(k)})^{(m)} = \beta^{-1} \circ f^{(km)} \circ \alpha$. At the level of elements with $m = k = 2$ this is the identity
+\[
+\mathrm{batch}\bigl(\mathrm{batch}(a, b), \mathrm{batch}(c, d)\bigr) = \mathrm{batch}(a, b, c, d) .
+\]
+\end{theorem}
+
+\begin{proof}
+Both morphisms are presented by machines with the same state space $S$ and the same initial state $s_0$. Unwinding the batch construction, $(f^{(k)})^{(m)}$ is the machine whose transition on a block-structured input in $(A^{k})^{m}$ applies $\delta$ exactly once to each element in the flattened order $a_{1,1}, a_{1,2}, \ldots, a_{m,k}$ and emits the outputs in the same order; the outer and the inner batches only group these applications, and the state threads across blocks because $f^{(k)}$ returns the state after each block. The machine $f^{(km)}$ applies $\delta$ once to each element of $\alpha(a_{1,1}, \ldots, a_{m,k})$ in the same order with the same state threading, so on corresponding inputs the two machines traverse identical state sequences and emit identical outputs: they are the same machine up to the renaming of the input and output objects by $\alpha$ and $\beta$, and Mol identifies machines up to state-space isomorphism (\autoref{nt:2}). The element-level identity for $m = k = 2$ is the special case $a_{1,1} = a$, $a_{1,2} = b$, $a_{2,1} = c$, $a_{2,2} = d$.
+\end{proof}
+
+\paragraph{Remark.}
+This associativity makes batched pipelines reassociable without behavioral change --- the rewrite engine of \autoref{ch:rewrite} uses the batch-flattening rule (NT17) --- and it makes the operad of batches the terminal operad: each $O(n)$ is a single operation, so no further laws are needed \citep{leinster, kelly}.
+
+\paragraph{Cost accounting.}
+The cost model of \autoref{ch:enrich} assigns each molecule a vector (time, memory, cache misses), additive under composition (\autoref{nt:25}); here only the time component is needed. Let $t_s$ be the fixed cost of one system call --- trap, dispatch, return --- and $t_p$ the per-item cost of processing one element once the batch has crossed the boundary. These are constants of the platform and of the atom $f$, independent of the batch size as long as the batch fits in a preallocated buffer; the exact bound is fixed by \autoref{nt:48}.
+
+\begin{theorem}[Syscall amortization (NT47)]\label{nt:47}
+Let a single I/O item cost $\mathrm{cost}(\mathrm{single}) = t_s + t_p$ (one system call plus per-item processing). Then the $n$-batch satisfies
+\[
+\mathrm{cost}\bigl(f^{(n)}\bigr) = t_s + n \cdot t_p \;\leq\; n \cdot (t_s + t_p) = n \cdot \mathrm{cost}(\mathrm{single}) ,
+\]
+and with $\mathrm{fixed}(n) = t_s$ the catalog form $\mathrm{cost}\bigl(f^{(n)}\bigr) \leq n \cdot \mathrm{cost}(\mathrm{single}) + \mathrm{fixed}(n)$ holds, where $\mathrm{fixed}(n)/n = t_s/n \to 0$. Equivalently, the amortized per-item cost of a batch tends to the bare processing cost:
+\[
+\frac{\mathrm{cost}(f^{(n)})}{n} = t_p + \frac{t_s}{n} \;\longrightarrow\; t_p .
+\]
+\end{theorem}
+
+\begin{proof}
+By construction $f^{(n)}$ crosses the boundary exactly once, with the whole tuple $(a_1, \ldots, a_n)$, so it pays the syscall cost $t_s$ once; each of the $n$ items costs $t_p$, and the per-item costs are additive in the number of items, giving $\mathrm{cost}(f^{(n)}) = t_s + n t_p$. The single operation is the case $n = 1$, so $\mathrm{cost}(\mathrm{single}) = t_s + t_p$. Since $t_s \geq 0$, $t_s + n t_p \leq n(t_s + t_p)$ for every $n \geq 1$, which is the first inequality and implies the catalog form with $\mathrm{fixed}(n) = t_s$. The identities for the amortized cost and the limits $t_s/n \to 0$ are immediate. The constants are valid exactly for $n \leq 2^k - 1$ by the capacity invariant (\autoref{nt:48}); the limit is over growing configurations, with $k$ chosen so that $2^k \geq n + 1$.
+\end{proof}
+
+\paragraph{Rings.}
+Batches move through preallocated ring buffers. A ring of capacity $N = 2^k$ is an array of $N$ slots addressed by a read pointer $r$ and a write pointer $w$, kept as unbounded monotone counters and mapped into the array by the mask $i \mapsto i \bmod N$; because $N$ is a power of two the mask is a single bitwise-and instruction $i \mathbin{\&} (N-1)$, which is why FDS ring capacities are powers of two. With $w - r \geq 0$ items in flight, a read removes one item at $r$ and a write inserts one item at $w$, refusing accesses that would exceed the occupancy bound. The only bookkeeping question is whether the masked pointers alone distinguish \emph{empty} from \emph{full}.
+
+\begin{theorem}[Ring capacity invariant (NT48)]\label{nt:48}
+Let a ring have $N = 2^k$ slots, $k \geq 1$, indexed by the bitmask $i \mapsto i \bmod N$. Bitmask indexing is correct --- the predicate $\mathrm{empty} \iff r \bmod N = w \bmod N$ is sound, and the full state is distinguishable from the empty state --- if and only if the number of items in flight satisfies $w - r \leq N - 1 = 2^k - 1$ at all times.
+\end{theorem}
+
+\begin{proof}
+The masked pointers determine the pointer difference only modulo $N$: $r \bmod N = w \bmod N$ iff $w - r \equiv 0 \pmod N$, which for $w \geq r$ means $w - r \in \{0, N, 2N, \ldots\}$. If $w - r \leq N - 1$ at all times, then $w - r \equiv 0 \pmod N$ forces $w - r = 0$, so masked pointer equality is exactly emptiness, and the full state ($w - r = N - 1$, write refused) has mask difference $N - 1 \neq 0$ and is distinguishable: indexing is correct.
+Conversely, if $w - r = N$ is ever reached, the ring is full, yet $r \bmod N = w \bmod N$ reproduces the mask pattern of the empty state, so no test on masked pointers can separate full from empty: correctness fails. Hence correctness forces $w - r \leq N - 1$ at all times.
+\end{proof}
+
+\paragraph{Remark.}
+The invariant is the mathematical content of policy [R] of the software standard --- power-of-two capacity, bitmask indexing, bounded in-flight count --- and it bounds the batches to which \autoref{nt:47} applies: a batch must fit in the ring, $n \leq 2^k - 1$, or the fixed cost $t_s$ is no longer constant.

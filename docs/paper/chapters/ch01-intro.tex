@@ -1,0 +1,141 @@
+\chapter{Introduction}\label{ch:intro}
+
+\section{Motivation}
+\label{sec:motivation}
+
+A network dataplane is the part of a protocol stack that moves bytes on the hot path: parsing, validating, filtering, routing, buffering, and exchanging data with the transport. In FDS (\emph{Fast Data Transmission}), a Rust project for TCP, UDP, and SCTP communication, construction is organized around two notions. An \emph{atom} is the smallest useful component: a pure or effectful transformation with no hidden state, total on its declared domain. A \emph{molecule} is a composition of atoms --- sequential or tensorial --- with bounded internal state; a ring buffer, a parser, and the whole receive path are molecules. The engineering target is concrete: \emph{zero allocation on the hot path} --- no heap traffic, no per-packet allocation, no copy that can be fused away.
+
+The target is hard because the requirement is global --- an allocation anywhere in a composed pipeline defeats the guarantee everywhere --- and because the usual answers to compositionality, abstraction layers, dynamic dispatch, managed containers, are themselves the most common sources of allocation. A dataplane that must be allocation-free by construction must therefore be \emph{optimized by composition}: the object of study is a family of stateful transformations together with the rules for joining them, and the performance of a pipeline is a property of how its parts are wired.
+
+Sequential machines are the natural model: Mealy machines \citep{mealy} compute deterministically from a fixed state space, and Moore's analysis \citep{moore} established the basic shape of minimization. What is missing is a compositional, algebraic treatment: a category whose objects are types and whose morphisms are machines, closed under the two composition schemes a dataplane uses --- sequential ($\circ$) and parallel ($\otimes$) --- and in which engineering questions have theorem-shaped answers. Does normalization preserve behavior and cost? Is the minimal state space computable? When does a loop provably converge? When is a pipeline provably allocation-free? This thesis answers them by developing the category \textbf{Mol} of stateful transformations and proving the structure theorems that make it a foundation.
+
+\section{Thesis statement}
+\label{sec:thesis-statement}
+
+\textbf{Thesis.} The category \textbf{Mol} of stateful transformations --- deterministic Mealy machines $(S, \mathit{step})$ with $\mathit{step} : S \times A \to B \times S$, quotiented by the state-space bijection condition --- is a complete algebraic foundation for the construction of zero-allocation network dataplanes: every dataplane artifact is a molecule, molecules compose sequentially and in parallel within a symmetric monoidal category, and the engineering properties of dataplanes --- normalization, minimization, loop convergence, batching, zero allocation, solvability of design problems --- are theorems of Mol.
+
+The claim rests on three supports. \emph{Compositionality:} Mol is symmetric monoidal \citep{maclane}, with tensor the tuple product, unit $()$, and coherence from Mac Lane's theorem; results about pipelines are results about morphisms. \emph{Completeness:} the catalog NT1--NT52 covers the category structure (NT1--NT8), equational theories and rewrite systems (NT9--NT19), free molecules and normal forms (NT20--NT24), cost enrichment and optimality (NT25--NT32), pure/effectful decomposition (NT33--NT37), minimal state spaces (NT38--NT41), loops and feedback (NT42--NT45), batching (NT46--NT48), zero allocation (NT49--NT50), and design decision problems (NT51--NT52). \emph{Honesty:} every theorem carries a complete proof; [N] statements are original and proved with elementary means, [C] statements restate classical results with provenance cited; computational claims are verified by executable Rust tools whose logs appear in \autoref{app:a}; no conjecture is presented as a theorem.
+
+\section{Contributions and theorem catalog}
+\label{sec:contributions}
+
+The central contribution is the theorem catalog NT1--NT52, grouped below by the chapter that states and proves each theorem; [N] marks a statement original to this thesis, [C] a classical result restated and proved inside Mol, with the source cited. Around it stand the framework (\autoref{ch:mol}), which recasts Mealy-style sequential machines \citep{mealy,moore} as morphisms, the verification of computational claims by executable Rust tools (logs in \autoref{app:a}), and a companion software standard that turns the theorems into enforceable engineering policy.
+
+\renewcommand{\arraystretch}{0.85}
+{\footnotesize
+\begin{tabular}{@{}p{15.0cm}@{}}
+\toprule
+\textbf{Mol foundations} (\autoref{ch:mol}). \\
+\midrule
+\textbf{NT1 [N].} Composition of $(S,\mathit{step})$ classes is associative, with identity: Mol is a category. \\
+\textbf{NT2 [N].} The bijection quotient is well-defined: equivalent machines compose to equivalent machines. \\
+\textbf{NT3 [C].} Mol is symmetric monoidal: tensor is the tuple product, unit $()$, braiding coherent \citep{maclane}. \\
+\textbf{NT4 [N].} PureMol is equivalent to the category of types and total functions. \\
+\textbf{NT5 [N].} EffMol$(\mathit{Ctx})$ is isomorphic to the Kleisli category of the state monad on $\mathit{Ctx}$. \\
+\textbf{NT6 [N].} Bisimulation is a congruence for $\circ$ and $\otimes$; Mol/$\simeq$ is symmetric monoidal. \\
+\textbf{NT7 [N].} Tensor closure: PureMol is closed under $\otimes$; EffMol is closed under $\otimes$ with pure molecules; $\mathrm{EffMol}(Ctx)\otimes\mathrm{EffMol}(Ctx) \subseteq \mathrm{EffMol}(Ctx\times Ctx) \subseteq \mathrm{HybridMol}$. \\
+\textbf{NT8 [N].} Pure molecules and their tensor products are deterministic; equivalence preserves determinism. \\
+\textbf{Lawvere theories for dataplane components} (\autoref{ch:lawvere}). \\
+\midrule
+\textbf{NT9 [N].} Ring equations $\mathit{push}\circ\mathit{pop} = \mathit{id}$ and $\mathit{pop}\circ\mathit{push} = \mathit{id}$ (non-empty) are complete for the free ring model. \\
+\textbf{NT10 [N].} Parser theory: sequence distributes over choice; choice associative; identity laws; left factoring sound. \\
+\textbf{NT11 [N].} $\mathit{batch\_recv} = \mathit{recv}\otimes\cdots\otimes\mathit{recv}$; interchange law $(f\otimes g);(h\otimes k) = (f;h)\otimes(g;k)$. \\
+\textbf{NT12 [N].} Ring cancellation: adjacent $\mathit{push}\circ\mathit{pop}$ is removable with behavior preserved. \\
+\textbf{The rewrite engine} (\autoref{ch:rewrite}). \\
+\midrule
+\textbf{NT13 [N].} The ring rewrite system is terminating (lexicographic path measure). \\
+\textbf{NT14 [N].} It is locally confluent; all critical pairs join, hence confluent \citep{newman}. \\
+\textbf{NT15 [N].} Knuth--Bendix completion of the ring theory terminates in a complete system \citep{knuthbendix} (script-verified). \\
+\textbf{NT16 [N].} Parser left-factoring rewrites are confluent and terminating; unique left-factored normal forms. \\
+\textbf{NT17 [N].} Batch-flattening rewrites are confluent on batch trees; unique flattened normal form. \\
+\textbf{NT18 [N].} Normalization soundness: $\mathit{NF}(M) \simeq M$ and $\mathrm{cost}(\mathit{NF}(M)) \leq \mathrm{cost}(M)$ when rules are cost-nonincreasing. \\
+\textbf{NT19 [N].} The full runtime equational theory is decidable for finite signatures via normalization. \\
+\textbf{Free molecules and normal forms} (\autoref{ch:free}). \\
+\midrule
+\textbf{NT20 [C].} The free symmetric monoidal category $F(\Sigma)$ on an atom signature $\Sigma$ exists \citep{adamek}. \\
+\textbf{NT21 [C].} Every molecule over $\Sigma$ factors uniquely through $F(\Sigma)$, up to coherent isomorphism. \\
+\textbf{NT22 [N].} Finiteness: for finite $\Sigma$ and a bound $n$ on atom occurrences, the hom-sets of $F(\Sigma)$ of depth $\leq n$ are finite. \\
+\textbf{NT23 [N].} Every molecule has a unique normal form in $F(\Sigma)$ up to coherence. \\
+\textbf{NT24 [N].} Completeness: $M \simeq M'$ iff $\mathit{NF}(M) = \mathit{NF}(M')$; normal forms form a precomputable lookup table. \\
+\bottomrule
+\end{tabular}}
+
+{\footnotesize
+\begin{tabular}{@{}p{15.0cm}@{}}
+\toprule
+\textbf{Enrichments and quantitative semantics} (\autoref{ch:enrich}). \\
+\midrule
+\textbf{NT25 [N].} Cost enrichment is well-defined: additive costs, triangle inequality, tensor subadditivity. \\
+\textbf{NT26 [N].} Nonnegative additive costs $\Rightarrow$ min-cost molecules are shortest paths in the finite type graph. \\
+\textbf{NT27 [N].} Fusion bound: $\mathrm{cost}(g\circ f) \leq \mathrm{cost}(f)+\mathrm{cost}(g)$, strict when the intermediate type never materializes. \\
+\textbf{NT28 [N].} $f \sqsubseteq f'$, $g \sqsubseteq g'$ $\Rightarrow$ $g\circ f \sqsubseteq g'\circ f'$; behavior preserved, cost monotone. \\
+\textbf{NT29 [N].} Finite refinement lattices have a unique maximal element per behavior class; most-refined dispatcher sound. \\
+\textbf{NT30 [N].} Complexity closure: atoms in a class $C$ closed under $\circ$ and $\otimes$ yield molecules in $C$. \\
+\textbf{NT31 [C].} Finite-state molecules realize exactly the regular behaviors; minimal-state molecules realize minimal DFAs \citep{brzozowski}. \\
+\textbf{NT32 [N].} Projection reduction: if $\mathit{step}$ depends on state only through $\pi$, then $S_{\min} \cong \pi(S)$. \\
+\textbf{Kleisli decomposition} (\autoref{ch:kleisli}). \\
+\midrule
+\textbf{NT33 [N].} Every hybrid molecule decomposes as $M = q\circ e\circ p$ ($p,q$ pure, $e$ effectful), unique up to isomorphism. \\
+\textbf{NT34 [C].} Sliding: $\mathrm{Tr}(f;M) = f;\mathrm{Tr}(M)$ for pure $f$ \citep{joyalsv}. \\
+\textbf{NT35 [C].} Vanishing and yanking: $\mathrm{Tr}(\mathrm{Tr}(M)) = \mathrm{Tr}(M)$; $\mathrm{Tr}(\sigma) = \mathit{id}$ \citep{joyalsv}. \\
+\textbf{NT36 [C].} Superposing: $\mathrm{Tr}(M)\otimes N = \mathrm{Tr}(M\otimes N)$ \citep{joyalsv}. \\
+\textbf{NT37 [N].} Hoisting shrinks the loop-state footprint; cache footprint of loop state is monotone in state size. \\
+\bottomrule
+\end{tabular}}
+
+{\footnotesize
+\begin{tabular}{@{}p{15.0cm}@{}}
+\toprule
+\textbf{Coalgebraic minimization} (\autoref{ch:coalgebra}). \\
+\midrule
+\textbf{NT38 [C].} Every finite-state molecule has a minimal state space, unique up to isomorphism \citep{nerode,hopcroft}. \\
+\textbf{NT39 [C].} Minimization preserves behavior (Nerode quotient equivalence) \citep{nerode}. \\
+\textbf{NT40 [N].} Compositional bounds: $|S_{\min}(g\circ f)| \leq |S_f|\cdot|S_g|$ and $|S_{\min}(f\otimes g)| \leq |S_f|\cdot|S_g|$. \\
+\textbf{NT41 [N].} Minimization is compatible with equivalence: $M \simeq M'$ $\Rightarrow$ $S_{\min}(M) \cong S_{\min}(M')$. \\
+\textbf{Fixed-iteration loops and feedback} (\autoref{ch:trace}). \\
+\midrule
+\textbf{NT42 [C].} A contraction state update (rate $\alpha < 1$) converges to a unique fixed point \citep{banach}. \\
+\textbf{NT43 [N].} $k(\alpha,\varepsilon,d_0) = \lceil \ln(\varepsilon(1-\alpha)/d_0)/\ln\alpha \rceil$ iterations suffice; unrolled loop within $\varepsilon$. \\
+\textbf{NT44 [N].} Contraction rates combine: $\max(\alpha_1,\alpha_2)$ under tensor, $\alpha_1+\alpha_2$ sequentially. \\
+\textbf{NT45 [C].} Markov updates: total-variation distance contracts by the Dobrushin coefficient \citep{dobroushin}. \\
+\textbf{Operadic composition and batching} (\autoref{ch:operad}). \\
+\midrule
+\textbf{NT46 [N].} Batch flattening: $\mathit{batch}(\mathit{batch}(a,b),\mathit{batch}(c,d)) = \mathit{batch}(a,b,c,d)$. \\
+\textbf{NT47 [N].} Syscall amortization: $\mathrm{cost}(\mathit{batch}_n) \leq n\cdot\mathrm{cost}(\mathit{single}) + \mathit{fixed}(n)$, $\mathit{fixed}(n)/n \to 0$. \\
+\textbf{NT48 [N].} Ring capacity invariant: capacity $2^k$ with bitmask indexing is correct iff in-flight $\leq 2^k - 1$. \\
+\textbf{Linear logic and zero allocation} (\autoref{ch:linear}). \\
+\midrule
+\textbf{NT49 [C].} Cut elimination is deforestation: every pure pipeline fuses to a single morphism \citep{girard}. \\
+\textbf{NT50 [N].} Linearity: atoms consume input exactly once $\Rightarrow$ the well-typed hot path never allocates. \\
+\bottomrule
+\end{tabular}}
+
+{\footnotesize
+\begin{tabular}{@{}p{15.0cm}@{}}
+\toprule
+\textbf{Situations} (\autoref{ch:situations}). \\
+\midrule
+\textbf{NT51 [N].} Bounded types and additive costs $\Rightarrow$ the feasible set of $(A\to B, \Phi, \bar{c})$ is finite and decidable; decision-matrix computation terminates. \\
+\textbf{NT52 [N].} Zero-copy roundtrip: parse/serialize inverse on the well-formed domain $\Rightarrow$ $\mathit{parse};\mathit{serialize} \simeq \mathit{id}$. \\
+\bottomrule
+\end{tabular}}
+
+\section{Scope}
+\label{sec:scope}
+
+This thesis is a synthesis-and-application thesis with deliberately bounded scope; the boundaries are part of the argument.
+
+\textbf{In scope.} Mol and its structure theorems NT1--NT52, each with a complete proof; the application of the theory to dataplane engineering --- normalization, dispatch, batching, minimization, loop analysis, zero-copy reasoning, and design decision problems; and the verification of every computational claim by executable Rust tools, with PASS logs in \autoref{app:a} and catalogs in \autoref{app:b}.
+
+\textbf{Out of scope.} The transport engine (TCP/UDP/SCTP), the Atom/Molecule framework templates, and the build tooling are later sub-projects of the FDS roadmap, not constructed here. Machine-specific performance techniques --- socket options, polling strategies, SIMD, syscall catalogs --- appear only in the companion standard's non-normative appendix, not as theorems. Machine-checked formalization in a proof assistant is explicitly future work and is not claimed.
+
+\textbf{Methodological filter.} No conjecture is presented as a theorem; any item that cannot be proved as stated is weakened, stated precisely, or moved to future work. [C] statements restate classical results proved inside Mol, with the original cited; [N] statements are original and proved with elementary machinery. Every computational claim is discharged by an executable Rust tool; no argument relies on unverified computation.
+
+\section{Roadmap}
+\label{sec:roadmap}
+
+\textbf{Part I --- Foundations} (\autoref{ch:prelim}--\autoref{ch:kleisli}). \autoref{ch:prelim} fixes the categorical machinery: monoidal, symmetric monoidal, and traced monoidal categories \citep{maclane,joyalsv}; monads and Kleisli; coalgebras; Lawvere theories \citep{lawvere}; operads and clubs \citep{leinster,kelly}; effectus theory; linear logic \citep{girard}; locally presentable categories \citep{adamek}. \autoref{ch:mol} defines Mol and its subcategories (NT1--NT8); \autoref{ch:lawvere} models rings, parsers, and transports as Lawvere theories (NT9--NT12); \autoref{ch:rewrite} develops the rewrite engine, with Knuth--Bendix completion \citep{knuthbendix} and Newman confluence \citep{newman} (NT13--NT19); \autoref{ch:free} constructs free molecules and normal forms (NT20--NT24); \autoref{ch:enrich} proves cost optimality and refinement (NT25--NT32); \autoref{ch:kleisli} proves the decomposition $M = q\circ e\circ p$ (NT33--NT37).
+
+\textbf{Part II --- Structure theorems} (\autoref{ch:coalgebra}--\autoref{ch:linear}). \autoref{ch:coalgebra}: minimal realization and compositional bounds \citep{nerode,hopcroft} (NT38--NT41). \autoref{ch:trace}: feedback and fixed-iteration loops, with Banach--Dobrushin contraction bounds \citep{banach,dobroushin} (NT42--NT45). \autoref{ch:operad}: operadic composition and batching (NT46--NT48). \autoref{ch:linear}: cut elimination as fusion, linearity as zero allocation (NT49--NT50).
+
+\textbf{Part III --- Applications} (\autoref{ch:situations}--\autoref{ch:conclusion}). \autoref{ch:situations}: a situation is a triple $(A\to B, \Phi, \bar{c})$, a solution a molecule $M$ with $M \vdash \Phi$ and $\mathrm{cost}(M) \leq \bar{c}$ (NT51--NT52). \autoref{ch:testing}: law tests, bisimulation \citep{park}, model-based testing, fuzzing, cost regression. \autoref{ch:related}: related work. \autoref{ch:conclusion}: summary, limitations, future work. \autoref{app:a}: proof-checking scripts and PASS logs; \autoref{app:b}: optimization and testing catalogs.

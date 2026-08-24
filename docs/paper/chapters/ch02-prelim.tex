@@ -1,0 +1,479 @@
+\chapter{Preliminaries}\label{ch:prelim}
+
+This chapter fixes the categorical and algebraic vocabulary used throughout
+the thesis. Everything stated here is standard: definitions are given, the
+sources of record are cited, and no proofs are included. The presentation is
+self-contained in the sense that every notion appealed to in later chapters
+is defined here or directly cited.
+
+\section{Categories}\label{sec:prelim-cat}
+
+\begin{definition}[Category]
+A \emph{category} $\mathcal{C}$ consists of
+\begin{itemize}
+  \item a collection $\mathrm{Ob}(\mathcal{C})$ of \emph{objects};
+  \item for every pair of objects $A, B$, a set $\mathcal{C}(A,B)$ of
+        \emph{morphisms}, the \emph{hom-set}, with $f \in \mathcal{C}(A,B)$
+        written $f \colon A \to B$;
+  \item for every object $A$, an \emph{identity} morphism
+        $1_A \in \mathcal{C}(A,A)$;
+  \item for every triple of objects $A, B, C$, a \emph{composition} function
+        \[ \circ \colon \mathcal{C}(B,C) \times \mathcal{C}(A,B)
+           \to \mathcal{C}(A,C), \qquad (g, f) \mapsto g \circ f, \]
+\end{itemize}
+such that composition is \emph{associative}, $(h \circ g) \circ f
+= h \circ (g \circ f)$, and the \emph{identity laws} hold,
+$1_B \circ f = f = f \circ 1_A$~\cite{maclane}.
+\end{definition}
+
+\begin{definition}[Isomorphism]
+A morphism $f \colon A \to B$ in a category is an \emph{isomorphism} if
+there exists a morphism $g \colon B \to A$ with $g \circ f = 1_A$ and
+$f \circ g = 1_B$; the objects $A$ and $B$ are then \emph{isomorphic},
+written $A \cong B$~\cite{maclane}.
+\end{definition}
+
+\begin{remark}
+A category is \emph{small} if its objects and morphisms form sets and
+\emph{locally small} if every hom-set $\mathcal{C}(A,B)$ is a set; all
+categories in this thesis are locally small, and the distinction matters only
+for \S\ref{sec:prelim-acc}~\cite{maclane}.
+\end{remark}
+
+\begin{example}
+The category $\mathbf{Set}$ of sets and total functions is the running
+example. Reading the objects of a typed language as types, the total
+functions between them form a category; this is the discrete approximation of
+the category $\mathbf{PureMol}$ of \autoref{ch:mol}.
+\end{example}
+
+\section{Functors}\label{sec:prelim-func}
+
+\begin{definition}[Functor]
+A \emph{functor} $F \colon \mathcal{C} \to \mathcal{D}$ assigns to each
+object $A$ of $\mathcal{C}$ an object $F A$ of $\mathcal{D}$ and to each
+morphism $f \colon A \to B$ a morphism $F f \colon F A \to F B$, preserving
+identities and composition:
+$F 1_A = 1_{F A}$ and $F(g \circ f) = F g \circ F f$~\cite{maclane}.
+\end{definition}
+
+\begin{definition}[Full, faithful, essentially surjective]
+A functor $F \colon \mathcal{C} \to \mathcal{D}$ is \emph{full} if
+$\mathcal{C}(A,B) \to \mathcal{D}(F A, F B)$ is surjective for all $A, B$,
+\emph{faithful} if it is injective for all $A, B$, and \emph{essentially
+surjective on objects} if every object of $\mathcal{D}$ is isomorphic to
+$F A$ for some object $A$ of $\mathcal{C}$~\cite{maclane}.
+\end{definition}
+
+\begin{definition}[Equivalence of categories]
+An \emph{equivalence} of categories is a functor that is full, faithful, and
+essentially surjective on objects; we write $\mathcal{C} \simeq
+\mathcal{D}$~\cite{maclane}.
+\end{definition}
+
+\section{Natural Transformations}\label{sec:prelim-nat}
+
+\begin{definition}[Natural transformation]
+Let $F, G \colon \mathcal{C} \to \mathcal{D}$ be functors. A \emph{natural
+transformation} $\alpha \colon F \Rightarrow G$ is a family of morphisms
+$\alpha_A \colon F A \to G A$, one for each object $A$ of $\mathcal{C}$, such
+that for every morphism $f \colon A \to B$ the \emph{naturality condition}
+\[ G f \circ \alpha_A = \alpha_B \circ F f \]
+holds, i.e.\ the square built from $\alpha_A$, $\alpha_B$, $F f$, and $G f$
+commutes~\cite{maclane}.
+\end{definition}
+
+\begin{definition}[Natural isomorphism]
+A natural transformation $\alpha \colon F \Rightarrow G$ is a \emph{natural
+isomorphism} if every component $\alpha_A$ is an isomorphism; the functors
+are then \emph{naturally isomorphic}, $F \cong G$~\cite{maclane}.
+\end{definition}
+
+\begin{remark}
+Functors and natural transformations organize (small) categories into a
+category $\mathbf{Cat}$. Its isomorphisms are the invertible functors, while
+the more useful notion of sameness is the equivalence of categories: a
+functor $F$ is an equivalence exactly when there is a functor $G$ with
+$G \circ F \cong 1_{\mathcal{C}}$ and $F \circ G \cong 1_{\mathcal{D}}$
+(natural isomorphisms). This is the relation asserted between
+$\mathbf{PureMol}$ and the category of types and total functions in
+\autoref{ch:mol}.
+\end{remark}
+
+\section{Monoidal and Symmetric Monoidal Categories}\label{sec:prelim-mon}
+
+\begin{definition}[Monoidal category]
+A \emph{monoidal category} is a category $\mathcal{C}$ equipped with
+\begin{itemize}
+  \item a \emph{tensor product} bifunctor
+        $\otimes \colon \mathcal{C} \times \mathcal{C} \to \mathcal{C}$,
+        written $(A,B) \mapsto A \otimes B$;
+  \item a \emph{unit object} $I$;
+  \item natural isomorphisms $\alpha_{A,B,C} \colon (A \otimes B) \otimes C
+        \to A \otimes (B \otimes C)$ (the \emph{associator}) and
+        $\lambda_A \colon I \otimes A \to A$, $\rho_A \colon A \otimes I \to A$
+        (the \emph{left} and \emph{right unitors}),
+\end{itemize}
+such that the \emph{pentagon} and \emph{triangle} coherence diagrams commute;
+e.g.\ the pentagon states the equality of the two morphisms
+$((A \otimes B) \otimes C) \otimes D \to A \otimes (B \otimes (C \otimes D))$
+built from $\alpha$ and the tensor of $\alpha$ with identities~\cite{maclane}.
+\end{definition}
+
+\begin{definition}[Strict monoidal category]
+A monoidal category is \emph{strict} if $\alpha$, $\lambda$, and $\rho$ are
+identity natural transformations, so that $(A \otimes B) \otimes C
+= A \otimes (B \otimes C)$ and $I \otimes A = A = A \otimes I$ on the nose.
+\end{definition}
+
+\begin{definition}[Symmetric monoidal category]
+A \emph{symmetric monoidal category} is a monoidal category with a natural
+isomorphism $\sigma_{A,B} \colon A \otimes B \to B \otimes A$ (the
+\emph{symmetry}) such that $\sigma_{B,A} \circ \sigma_{A,B} = 1_{A \otimes B}$
+and $\sigma$ is coherent with the associator and the unitors~\cite{maclane}.
+\end{definition}
+
+\begin{remark}[Coherence]
+Mac Lane's coherence theorem states that every diagram whose edges are built
+from $\alpha$, $\lambda$, $\rho$, and $\sigma$ commutes; hence no information
+is lost in treating $A \otimes (B \otimes C)$ and $(A \otimes B) \otimes C$
+as interchangeable. Consequently every monoidal category is monoidally
+equivalent to a strict one (Mac Lane's strictification), a fact used
+implicitly throughout~\cite{maclane}. The tensor product of \autoref{ch:mol}
+is tuple formation with unit $()$, which is strict and symmetric.
+\end{remark}
+
+\section{Traced Monoidal Categories}\label{sec:prelim-trace}
+
+\begin{definition}[Traced monoidal category]
+Let $\mathcal{C}$ be a symmetric monoidal category. A \emph{trace} is a
+family of operations
+\[ \mathrm{Tr}^{U}_{A,B} \colon \mathcal{C}(A \otimes U,\, B \otimes U)
+   \to \mathcal{C}(A,B), \]
+natural in $A$ and $B$ and dinatural in the \emph{feedback object} $U$,
+satisfying the following axioms~\cite{joyalsv, arxiv-traced-monoidal}:
+\begin{itemize}
+  \item \emph{Vanishing}: $\mathrm{Tr}^{I}_{A,B}(f) = f$ for
+        $f \colon A \otimes I \to B \otimes I$, and
+        $\mathrm{Tr}^{U \otimes V}_{A,B}
+        = \mathrm{Tr}^{U}_{A,B} \circ
+          \mathrm{Tr}^{V}_{A \otimes U, B \otimes U}$;
+  \item \emph{Superposing}: for $f \colon A \otimes U \to B \otimes U$ and
+        $g \colon C \to D$,
+        \[ \mathrm{Tr}^{U}_{A \otimes C, B \otimes D}(f \otimes g)
+           = \mathrm{Tr}^{U}_{A,B}(f) \otimes g; \]
+  \item \emph{Yanking}: $\mathrm{Tr}^{U}_{U,U}(\sigma_{U,U}) = 1_U$.
+\end{itemize}
+A \emph{traced monoidal category} is a symmetric monoidal category equipped
+with a trace. The trace internalizes feedback: a morphism
+$f \colon A \otimes U \to B \otimes U$ computes a transformation $A \to B$
+while threading the feedback object $U$ through the loop. This is the
+structure underlying the fixed-iteration loops of \autoref{ch:trace}.
+\end{definition}
+
+\section{Monads, Algebras over Monads, and Kleisli Categories}\label{sec:prelim-monads}
+
+\begin{definition}[Monad]
+A \emph{monad} on a category $\mathcal{C}$ is a triple $(T, \eta, \mu)$ where
+$T \colon \mathcal{C} \to \mathcal{C}$ is a functor and
+$\eta \colon 1_{\mathcal{C}} \Rightarrow T$ (the \emph{unit}) and
+$\mu \colon T^2 \Rightarrow T$ (the \emph{multiplication}) are natural
+transformations satisfying the \emph{unit laws}
+$\mu \circ T\eta = 1_T = \mu \circ \eta T$ and the \emph{associativity law}
+$\mu \circ T\mu = \mu \circ \mu T$~\cite{maclane, arxiv-monads-kleisli}.
+\end{definition}
+
+\begin{definition}[Algebra over a monad]
+Let $(T, \eta, \mu)$ be a monad on $\mathcal{C}$. A \emph{$T$-algebra}
+(an \emph{Eilenberg--Moore algebra}) is a pair $(A, a)$ consisting of an
+object $A$ and a morphism $a \colon T A \to A$ such that
+$a \circ \eta_A = 1_A$ and $a \circ \mu_A = a \circ T a$. A \emph{homomorphism}
+of $T$-algebras $(A,a) \to (B,b)$ is a morphism $f \colon A \to B$ with
+$f \circ a = b \circ T f$. $T$-algebras and their homomorphisms form the
+category $\mathcal{C}^T$~\cite{maclane}.
+\end{definition}
+
+\begin{definition}[Kleisli category]
+The \emph{Kleisli category} $\mathcal{C}_T$ of a monad $(T, \eta, \mu)$ on
+$\mathcal{C}$ has the same objects as $\mathcal{C}$; a morphism $A \to B$ in
+$\mathcal{C}_T$ is a morphism $f \colon A \to T B$ in $\mathcal{C}$. The
+identity on $A$ is $\eta_A$, and the composition of $f \colon A \to T B$ with
+$g \colon B \to T C$ is
+\[ g \circ_T f = \mu_C \circ T g \circ f \colon A \to T C, \]
+the \emph{bind} operation of the monad~\cite{maclane, arxiv-monads-kleisli}.
+\end{definition}
+
+\begin{example}[State monad]
+Let $\mathcal{C}$ have finite products and fix an object $S$ of
+\emph{states}. The \emph{state monad} is the monad with
+$T X = (X \times S)^S$, unit $\eta_X \colon x \mapsto \lambda s.\,(x, s)$,
+and multiplication given by threading the state through two successive
+computations. A Kleisli morphism $A \to B$ is then a morphism
+$A \times S \to B \times S$, exactly the transition function of a
+deterministic Mealy machine with state space $S$
+~\cite{maclane, arxiv-monads-kleisli, mealy, moore, arxiv-mealy}. The
+Kleisli category of this monad models $\mathbf{EffMol}(\mathrm{Ctx})$ in
+\autoref{ch:mol}, and the pure/effectful decomposition of
+\autoref{ch:kleisli} is phrased in this language.
+\end{example}
+
+\begin{remark}
+Every monad arises from an adjunction; the Kleisli category is the initial
+and $\mathcal{C}^T$ the terminal resolution of the monad as a pair of
+adjoint functors~\cite{maclane, arxiv-monads-kleisli}.
+\end{remark}
+
+\section{Coalgebras}\label{sec:prelim-coalg}
+
+\begin{definition}[Coalgebra for an endofunctor]
+Let $F \colon \mathcal{C} \to \mathcal{C}$ be an endofunctor. An
+\emph{$F$-coalgebra} is a pair $(S, s)$ consisting of an object $S$ and a
+morphism $s \colon S \to F S$. A \emph{homomorphism} of $F$-coalgebras
+$(S,s) \to (T,t)$ is a morphism $f \colon S \to T$ with
+$t \circ f = F f \circ s$. Coalgebras and their homomorphisms form the
+category $\mathbf{Coalg}(F)$~\cite{arxiv-coalgebra-min}.
+\end{definition}
+
+\begin{definition}[Final coalgebra]
+A \emph{final} (terminal) coalgebra is a terminal object of
+$\mathbf{Coalg}(F)$: a coalgebra $(Z, \zeta)$ such that for every coalgebra
+$(S,s)$ there is a unique homomorphism $(S,s) \to (Z,\zeta)$~\cite{arxiv-coalgebra-min}.
+\end{definition}
+
+\begin{definition}[Behavioral equivalence]
+Two states $s_1 \in S_1$, $s_2 \in S_2$ of $F$-coalgebras are
+\emph{behaviorally equivalent} if there is a coalgebra $(T,t)$ and
+homomorphisms from $(S_1,s_1)$ and $(S_2,s_2)$ into it identifying them; when
+$F$ preserves weak pullbacks this coincides with \emph{bisimilarity} in the
+sense of~\cite{park, arxiv-coalgebra-min}.
+\end{definition}
+
+\begin{example}[Mealy machines as coalgebras]
+Fix sets $A$ and $B$ of inputs and outputs. A deterministic Mealy machine
+$(S, \mathrm{step})$ with $\mathrm{step} \colon S \times A \to B \times S$
+is exactly a coalgebra for the functor $F X = (B \times X)^A$
+~\cite{mealy, moore, arxiv-mealy}. Behavioral equivalence is then language
+equivalence, and the quotient constructions of \autoref{ch:coalgebra}
+refine the classical Nerode and Hopcroft minimization
+algorithms~\cite{nerode, hopcroft, arxiv-coalgebra-min}.
+\end{example}
+
+\section{Lawvere Theories}\label{sec:prelim-lawvere}
+
+\begin{definition}[Lawvere theory]
+Let $\mathbf{Fin}^{\mathrm{op}}$ be the category whose objects are the
+natural numbers and whose morphisms $m \to n$ are the functions $n \to m$.
+A \emph{Lawvere theory} is a category $\mathcal{L}$ with finite products
+together with an identity-on-objects, strict, finite-product-preserving
+functor $\mathbf{Fin}^{\mathrm{op}} \to \mathcal{L}$. The object $1$ is the
+\emph{generic object}: every object of $\mathcal{L}$ is a finite product of
+copies of $1$~\cite{lawvere, arxiv-lawvere}.
+\end{definition}
+
+\begin{definition}[Model of a Lawvere theory]
+A \emph{model} of a Lawvere theory $\mathcal{L}$ in a category $\mathcal{C}$
+with finite products is a finite-product-preserving functor
+$\mathcal{L} \to \mathcal{C}$. Models for $\mathcal{C} = \mathbf{Set}$ are
+the \emph{algebras} of the theory, and models and natural transformations
+form a category $\mathbf{Mod}(\mathcal{L}, \mathcal{C})$~\cite{lawvere,
+arxiv-lawvere}.
+\end{definition}
+
+\begin{remark}
+The \emph{free algebra} on $n$ generators is the model represented by object
+$n$: the finite-product-preserving functor $\mathcal{L}(n,-)$ with values in
+$\mathbf{Set}$, whose underlying set is the set of terms in $n$ variables
+modulo the equations of the theory~\cite{lawvere}. A finitary equational
+theory in the sense of universal algebra (Section~\ref{sec:prelim-univ}) is
+the same data as a Lawvere theory, and its variety of algebras is
+$\mathbf{Mod}(\mathcal{L}, \mathbf{Set})$. The equations of the dataplane
+component theories of \autoref{ch:lawvere} (ring, parser, transport) are
+Lawvere theories whose models are the corresponding molecules.
+\end{remark}
+
+\section{Operads, Multicategories, and Clubs}\label{sec:prelim-operads}
+
+\begin{definition}[Symmetric operad]
+A \emph{symmetric operad} $P$ (in $\mathbf{Set}$) consists of a set $P(n)$
+of \emph{$n$-ary operations} for each $n \geq 0$, an action of the symmetric
+group $\Sigma_n$ on $P(n)$, a distinguished element $1 \in P(1)$ (the
+\emph{identity operation}), and composition maps
+\[ P(k) \times P(n_1) \times \cdots \times P(n_k)
+   \to P(n_1 + \cdots + n_k), \]
+that are associative, unital with respect to $1$, and equivariant with
+respect to the symmetric group actions~\cite{leinster, arxiv-operads}.
+\end{definition}
+
+\begin{definition}[Algebra over an operad]
+An \emph{algebra} over a symmetric operad $P$ is a set $A$ together with, for
+each $p \in P(n)$, an operation $A^n \to A$, respecting the identity, the
+composition maps, and the symmetric group action~\cite{leinster,
+arxiv-operads}.
+\end{definition}
+
+\begin{definition}[Multicategory]
+A \emph{multicategory} is a category-like structure in which a morphism has a
+finite \emph{sequence} of objects as domain: a morphism
+$(A_1, \dots, A_n) \to B$, with identity morphisms $1_A \colon (A) \to A$ and
+an associative \emph{substitution} composition that is unital. A
+\emph{symmetric} multicategory carries a compatible action of $\Sigma_n$ on
+morphisms with $n$-ary domain~\cite{leinster, arxiv-operads}.
+\end{definition}
+
+\begin{remark}
+An operad is precisely a one-object symmetric multicategory: its morphisms
+whose domain is a list of copies of the single object are the operations, and
+substitution is operadic composition. Kelly's \emph{clubs} generalize both: a
+club is a category over the category of finite sets (or of permutations)
+whose substitution structure presents the free algebras of a 2-monad,
+covering many doctrines of categories with structure, including the symmetric
+monoidal ones at work in \autoref{ch:operad} and
+\autoref{ch:rewrite}~\cite{kelly, leinster}.
+\end{remark}
+
+\section{Effectus Theory}\label{sec:prelim-effectus}
+
+Effectus theory formalizes partiality, probabilistic choice, and measurement
+in one categorical framework, axiomatically oriented around the
+\emph{effects} (observables) of a system.
+
+\begin{definition}[Effect algebra]
+An \emph{effect algebra} is a set $E$ with a partial binary operation
+$\oplus$ and distinguished elements $0 \neq 1$, such that $\oplus$ is
+commutative and associative wherever defined, $a \oplus 0 = a$ for all $a$,
+every element $a$ has a unique \emph{orthosupplement} $a^{\perp}$ with
+$a \oplus a^{\perp} = 1$, and $a \oplus 1$ is defined only for
+$a = 0$~\cite{arxiv-effectus}.
+\end{definition}
+
+\begin{definition}[Effectus]
+An \emph{effectus} is a category with finite coproducts and a terminal object
+$1$, admitting the pushouts of coproduct injections that are needed to
+compose \emph{states} and \emph{effects}, such that for every object $X$ the
+hom-set of \emph{effects} $X \to 1$ carries an effect algebra structure and
+composition induces effect-algebra homomorphisms
+~\cite{arxiv-effectus}.
+\end{definition}
+
+\begin{remark}
+Effects generalize predicates: on a measurable space the effects are the
+$[0,1]$-valued measurable functions with $\oplus$ truncated addition. The
+framework supplies one axiomatics for partiality and probabilistic choice,
+relevant to the error and context channels of the effectful molecules of
+\autoref{ch:mol}; a closely related categorical treatment of probability is
+developed in the theory of Markov categories
+~\cite{arxiv-effectus, arxiv-markov-categories}.
+\end{remark}
+
+\section{Linear Logic and Geometry of Interaction}\label{sec:prelim-linear}
+
+\begin{definition}[Linear logic]
+\emph{Linear logic} is a substructural logic in which every hypothesis is
+used exactly once. It is presented by sequent rules for the multiplicative
+connectives $\otimes$ (tensor) and $\multimap$ (linear implication), the
+additive connectives $\&$ and $\oplus$, and the \emph{exponentials} $!$ and
+$?$ that govern contraction and weakening, i.e.\ unlimited use of a
+hypothesis~\cite{girard}.
+\end{definition}
+
+\begin{remark}[Cut elimination and geometry of interaction]
+The \emph{cut rule} composes proofs, and \emph{cut elimination} rewrites a
+proof to a cut-free normal form, which is deterministic and is the
+computational content of the proof. The \emph{geometry of interaction} (GoI)
+interprets proofs as morphisms of a traced monoidal category and cut
+elimination as the trace: the \emph{Int} construction embeds every traced
+monoidal category into a compact closed one, where the trace becomes genuine
+composition~\cite{girard, joyalsv, arxiv-linear-logic-goi}. Deforestation
+and the zero-allocation fusion of \autoref{ch:linear} are the thesis's
+instance of this correspondence.
+\end{remark}
+
+\section{Accessible and Locally Presentable Categories}\label{sec:prelim-acc}
+
+\begin{definition}[Presentable objects, accessible categories]
+Let $\kappa$ be a regular cardinal. An object $A$ of a category
+$\mathcal{C}$ is \emph{$\kappa$-presentable} if the hom-functor
+$\mathcal{C}(A, -)$ preserves $\kappa$-filtered colimits. The category
+$\mathcal{C}$ is \emph{$\kappa$-accessible} if it has $\kappa$-filtered
+colimits and there is a set of $\kappa$-presentable objects such that every
+object of $\mathcal{C}$ is a $\kappa$-filtered colimit of objects from that
+set; $\mathcal{C}$ is \emph{accessible} if it is $\kappa$-accessible for some
+regular cardinal $\kappa$~\cite{adamek}.
+\end{definition}
+
+\begin{definition}[Locally presentable categories]
+A category is \emph{locally $\kappa$-presentable} if it is
+$\kappa$-accessible and cocomplete, and \emph{locally presentable} if it is
+locally $\kappa$-presentable for some regular cardinal $\kappa$~\cite{adamek}.
+\end{definition}
+
+\begin{remark}
+Every locally presentable category is complete and cocomplete, and the
+categories of models of Lawvere theories (Section~\ref{sec:prelim-lawvere})
+and the categories of algebras of many signatures are locally presentable.
+Local presentability is the standard tool for proving the existence of free
+structures, such as the free symmetric monoidal category $F(\Sigma)$ whose
+existence \autoref{ch:free} invokes~\cite{adamek, lawvere}.
+\end{remark}
+
+\section{Universal Algebra and Clones}\label{sec:prelim-univ}
+
+\begin{definition}[Signature and algebra]
+A \emph{signature} is a set $\Sigma$ of operation symbols together with an
+assignment of a finite \emph{arity} to each symbol. A \emph{$\Sigma$-algebra}
+is a set $A$ together with, for each $n$-ary symbol $\sigma \in \Sigma$, an
+operation $\sigma_A \colon A^n \to A$~\cite{knuthbendix}.
+\end{definition}
+
+\begin{definition}[Terms, equations, varieties]
+Given a signature $\Sigma$ and a set $X$ of variables, the \emph{terms} over
+$X$ are formed from variables and operation symbols. An \emph{equation} is a
+pair of terms $s \approx t$; a $\Sigma$-algebra \emph{satisfies} the equation
+if the two terms denote equal operations under every assignment of values to
+variables. A class of algebras closed under satisfaction of a set of
+equations is a \emph{variety}~\cite{lawvere, knuthbendix}.
+\end{definition}
+
+\begin{definition}[Clone]
+A \emph{clone} on a set $A$ is a set $C$ of finitary operations on $A$ that
+contains all projections and is closed under composition. The clone of a
+$\Sigma$-algebra is the set of its \emph{term operations}~\cite{lawvere}.
+\end{definition}
+
+\begin{remark}
+A clone on $A$ is the concrete shadow of a Lawvere theory: it is exactly the
+data of a model of an algebraic theory with carrier $A$
+(Section~\ref{sec:prelim-lawvere}). The \emph{word problem} for a variety
+asks whether two terms denote the same operation in the free algebra; the
+Knuth--Bendix completion procedure decides it whenever it terminates, by
+producing a terminating and confluent rewriting system, and Newman's lemma
+reduces confluence to local confluence~\cite{knuthbendix, newman,
+arxiv-rewriting-kb}. By the classical theorem of Birkhoff \citep{birkhoff}, the varieties are
+precisely the classes of algebras closed under homomorphic images,
+subalgebras, and products. The equational theory of the runtime is treated by
+these means in \autoref{ch:rewrite}.
+\end{remark}
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Notion & Defined in & Applied in \\
+\midrule
+Categories, functors, natural transformations & \S\ref{sec:prelim-cat} & \autoref{ch:mol} \\
+Monoidal and symmetric monoidal categories & \S\ref{sec:prelim-mon} & \autoref{ch:mol}, \autoref{ch:free} \\
+Traced monoidal categories & \S\ref{sec:prelim-trace} & \autoref{ch:trace} \\
+Monads, algebras, Kleisli categories & \S\ref{sec:prelim-monads} & \autoref{ch:kleisli}, \autoref{ch:mol} \\
+Coalgebras & \S\ref{sec:prelim-coalg} & \autoref{ch:coalgebra} \\
+Lawvere theories & \S\ref{sec:prelim-lawvere} & \autoref{ch:lawvere} \\
+Operads, multicategories, clubs & \S\ref{sec:prelim-operads} & \autoref{ch:operad}, \autoref{ch:rewrite} \\
+Effectus theory & \S\ref{sec:prelim-effectus} & \autoref{ch:mol} \\
+Linear logic and geometry of interaction & \S\ref{sec:prelim-linear} & \autoref{ch:linear} \\
+Accessible and locally presentable categories & \S\ref{sec:prelim-acc} & \autoref{ch:free} \\
+Universal algebra and clones & \S\ref{sec:prelim-univ} & \autoref{ch:rewrite} \\
+\bottomrule
+\end{tabular}
+\caption{The categorical tools of this chapter and where the thesis applies them.}
+\end{table}
+

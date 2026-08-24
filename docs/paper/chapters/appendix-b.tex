@@ -1,0 +1,60 @@
+\chapter{Optimization and Testing Catalogs}\label{app:b}
+
+This appendix consolidates the framework's engineering content into two reference tables. Table \ref{tab:opt-catalog} maps each algebraic mechanism of the theory to the optimization it licenses, with the governing theorem. Table \ref{tab:test-catalog} maps each feature of the framework to the testing strategy it generates, as developed in \autoref{ch:testing}. Both tables are intended to be used directly by implementers: a molecule description is inspected against the left-hand column, and the corresponding row names the optimization that is provably sound and the tests that must discharge it.
+
+\section{Theorem-to-Optimization Catalog}
+Each row states an algebraic law of Mol, the optimization it licenses, and the theorem that makes the optimization sound. An optimization listed here is not a heuristic: it is a rewriting of the molecule that preserves behavior (or provably improves cost) in every context where the governing theorem applies.
+
+\begin{table}[!htbp]
+\centering
+\caption{The optimization catalog: algebraic mechanism to licensed optimization.}
+\label{tab:opt-catalog}
+\small
+\begin{tabular}{@{}p{3.9cm}p{4.6cm}l@{}}
+\toprule
+Algebraic mechanism & Licensed optimization & Governing result\\
+\midrule
+Associativity of $\circ$ & Pipeline fusion: reassociate adjacent stages to eliminate intermediate materialization. & \ref{nt:1}, \ref{nt:49}\\
+Interchange law & Parallelize independent branches: $(f\otimes g);(h\otimes k) = (f;h)\otimes(g;k)$ splits work across cores. & \ref{nt:11}\\
+Trace sliding & Hoist pure atoms out of loops: Tr$(f;M) = f;\mathrm{Tr}(M)$ moves $f$ across the feedback boundary. & \ref{nt:34}\\
+Trace vanishing & Flatten nested state machines: Tr(Tr$(M)) = \mathrm{Tr}(M)$ collapses nested loops. & \ref{nt:35}\\
+Cut elimination & Deforestation, zero allocation: every pure pipeline fuses to a single morphism. & \ref{nt:49}\\
+Monad laws & Combine state updates: Kleisli composition groups state reads and writes into one transition. & \ref{nt:5}\\
+Isomorphisms & Eliminate parse--serialize roundtrips: parse;serialize $\approx$ id on the well-formed domain. & \ref{nt:52}\\
+Optics fusion & Single-offset field access: compose accessors into one offset computation instead of a chain. & ---\\
+Parametricity & Data-parallel SIMD: polymorphic pipelines are natural, so vectorization is behavior-preserving. & \cite{wadler}\\
+Automata minimization & Fewer branches: minimal state space gives the minimal dispatch structure. & \ref{nt:38}, \ref{nt:39}\\
+Linear logic & Zero-copy by construction: linear atoms cannot allocate in a well-typed hot path. & \ref{nt:50}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Testing-Strategy Catalog}
+Each row names a structural feature of the framework, the optimization class it enables, and the testing strategy that certifies the optimized artifact. The strategies are those of \autoref{ch:testing}; the governing results column cites the theorem the tests operationalize.
+
+\begin{table}[!htbp]
+\centering
+\caption{The testing catalog: framework feature to derived testing strategy.}
+\label{tab:test-catalog}
+\small
+\begin{tabular}{@{}p{3.6cm}p{4.4cm}p{3.6cm}l@{}}
+\toprule
+Feature & Optimization class & Testing strategy & Governing results\\
+\midrule
+Category laws & Algebraic rewrites, fusion & Equational testing: assert both sides of every law on generated traces. & \ref{nt:1}--\ref{nt:6}\\
+Monoidal structure & Reordering, batching, SIMD & Interchange tests: assert $(f\otimes g);(h\otimes k) = (f;h)\otimes(g;k)$. & \ref{nt:3}, \ref{nt:11}\\
+Trace & Hoist, flatten & Sliding/vanishing tests: assert Tr$(f;M) = f;\mathrm{Tr}(M)$ and Tr(Tr$(M)) = \mathrm{Tr}(M)$. & \ref{nt:34}--\ref{nt:36}\\
+Lawvere theories & Cancel ring ops & Conformance tests: components must satisfy the theory axioms. & \ref{nt:9}--\ref{nt:12}\\
+Cost enrichment & Shortest-path synthesis & Cost regression: assert additive costs, triangle inequality, fusion bound. & \ref{nt:25}--\ref{nt:27}\\
+Poset refinement & Specialization & Refinement tests: assert $f \sqsubseteq f' \wedge g \sqsubseteq g' \Rightarrow g\circ f \sqsubseteq g'\circ f'$. & \ref{nt:28}--\ref{nt:29}\\
+Metric enrichment & Fixed-iteration loops & Convergence validation: assert $\lVert x_{k+1}-x^*\rVert \le \varepsilon$ within the iteration bound. & \ref{nt:42}--\ref{nt:44}\\
+Coalgebraic minimization & Merge states & Language equivalence: minimized artifact must bisimulate the original. & \ref{nt:38}--\ref{nt:41}\\
+Operads & Batch consolidation & Associativity of batching: assert the flattening identity of \ref{nt:46}. & \ref{nt:46}--\ref{nt:47}\\
+Parametricity & Vectorization & Naturality tests: polymorphic behavior is uniform across concrete types. & \cite{wadler}\\
+Linear logic & Zero-copy & Ownership/borrow checks: allocation counter and borrow checker enforce linearity. & \ref{nt:49}--\ref{nt:50}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{How to Read the Catalogs}
+The two tables are the bridge from the theory to the standard that accompanies this thesis: the standard's policies cite the governing theorems, the decision matrices select among the optimizations above, and the testing policies instantiate the testing column. Together they close the loop that the thesis opened --- a networking dataplane is a Mol diagram, its optimizations are provable rewrites of that diagram, and its certification is the mechanical discharge of the diagram's laws.

@@ -1,0 +1,27 @@
+[package]
+name = "fds-verify"
+version = "0.1.0"
+edition = "2021"
+
+# Proof-verification tools for the FDS thesis Appendix A.
+# Std-only by design: must build offline, no crates.io dependencies.
+
+[[bin]]
+name = "kb_completion"
+path = "src/bin/kb_completion.rs"
+
+[[bin]]
+name = "normal_forms"
+path = "src/bin/normal_forms.rs"
+
+[[bin]]
+name = "contraction"
+path = "src/bin/contraction.rs"
+
+[[bin]]
+name = "bisim"
+path = "src/bin/bisim.rs"
+
+[[bin]]
+name = "batch_amort"
+path = "src/bin/batch_amort.rs"

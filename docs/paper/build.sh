@@ -16,8 +16,12 @@ echo "PASS: no \\includegraphics in sources"
 # --- Gate 1: compile ---
 command -v latexmk >/dev/null 2>&1 || { echo "FAIL: latexmk not found" >&2; exit 1; }
 latexmk -pdf -interaction=nonstopmode -halt-on-error thesis.tex >/dev/null
-if ! grep -q 'no errors' thesis.log 2>/dev/null; then
+if grep -qE '^!|Emergency stop|Fatal error' thesis.log 2>/dev/null; then
     echo "FAIL: LaTeX reported errors — see thesis.log" >&2
+    exit 1
+fi
+if ! grep -q 'Output written on' thesis.log 2>/dev/null; then
+    echo "FAIL: no PDF output — see thesis.log" >&2
     exit 1
 fi
 echo "PASS: LaTeX compiled without errors"
