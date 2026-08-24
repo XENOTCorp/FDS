@@ -31,15 +31,14 @@
 //!
 //! The `fds` binary (`src/main.rs`) is a thin CLI over this library.
 
-// The per-core multi-protocol loop has landed (epoll busy-poll with the
-// syscall transports, and the io_uring completion-driven datapath with
-// RECVMSG/SENDMSG/ACCEPT/READ/WRITE through the ring; AF_XDP's
-// process_frame pipeline is wired and unit-tested). What remains unwired
-// — and is intentionally compiled ahead of the wiring, per the standard
-// — is the SCTP engine path, the zero-copy transport ops (MSG_ZEROCOPY,
-// registered buffers, splice_from_fd), the io_uring transport-op
-// helpers (submit_read/submit_write), and the cold-state fields those
-// transports consume. Remove this allow as each path lands.
+// Two deliberate compile-ahead items remain (each has a test, so this
+// list is audited, not a dumping ground):
+//   - io_uring_reactor::IoUringReactor::register_buffers — zero-copy
+//     buffer registration, unwired until the datapath uses registered
+//     buffers (tested: register_buffers_path);
+//   - sctp::SctpSocket::get_opt_i32 — test-only option introspection
+//     (sctp_nodelay_set asserts the option actually took).
+// Remove this allow when either lands or is deleted.
 #![allow(dead_code)]
 
 pub mod benchmarks;

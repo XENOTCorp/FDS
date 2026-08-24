@@ -48,8 +48,6 @@ pub const UDP_GRO: libc::c_int = 104;
 /// `send_batch` never run concurrently on the same socket.
 pub struct UdpSocket {
     fd: OwnedFd,
-    /// Config snapshot (offloads applied in `new`).
-    cfg: UdpConfig,
     rx_hdrs: UnsafeCell<Box<[libc::mmsghdr]>>,
     rx_iovs: UnsafeCell<Box<[libc::iovec]>>,
     rx_names: UnsafeCell<Box<[libc::sockaddr_storage]>>,
@@ -226,7 +224,6 @@ impl UdpSocket {
 
         Ok(UdpSocket {
             fd: owned,
-            cfg: cfg.clone(),
             rx_hdrs: UnsafeCell::new(zeroed_array()),
             rx_iovs: UnsafeCell::new(zeroed_array()),
             rx_names: UnsafeCell::new(zeroed_array()),

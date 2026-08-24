@@ -4,15 +4,10 @@
 //! headers — with every length checked before any indexing. The protocol
 //! parsers are the paper's worked example (thesis Ch. 13/14).
 //!
-//! CONTRACT (implementer): each parser is a bounds-safe pure atom. Inputs
-//! are raw `&[u8]` (never assume NUL termination); every parser returns
-//! `Result<Header, ParseError>` where `ParseError` is a unit-ish enum
-//! (no allocation). Parse exactly the fixed-size fields; reject truncated
-//! inputs. Add unit tests for: valid header, truncated header (every
-//! boundary), oversized length fields, and a deterministic property sweep
-//! (seeded LCG, no external RNG).
-
-use mol::{Atom, PureAtom};
+//! The bare parser functions are the atoms (wrapped by the Mol framework
+//! in `templates/`); the concrete `Atom`/`PureAtom` wrapper structs were
+//! pruned as dead code (nothing constructs them in the lib — `fuzz` and
+//! `af_xdp::process_frame` call the functions directly).
 
 /// Parser failure: an enum of the ways a header can be malformed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,48 +53,6 @@ pub(crate) struct TcpHeader {
     pub window: u16,
     pub checksum: u16,
     pub urgent_ptr: u16,
-}
-
-/// Pure atom: `&[u8]` → [`Ipv4Header`].
-pub(crate) struct ParseIpv4;
-
-impl Atom for ParseIpv4 {
-    type Input = &'static [u8];
-    type Output = Result<Ipv4Header, ParseError>;
-}
-
-impl PureAtom for ParseIpv4 {
-    fn apply(&self, input: &'static [u8]) -> Result<Ipv4Header, ParseError> {
-        parse_ipv4(input)
-    }
-}
-
-/// Pure atom: `&[u8]` → [`UdpHeader`].
-pub(crate) struct ParseUdp;
-
-impl Atom for ParseUdp {
-    type Input = &'static [u8];
-    type Output = Result<UdpHeader, ParseError>;
-}
-
-impl PureAtom for ParseUdp {
-    fn apply(&self, input: &'static [u8]) -> Result<UdpHeader, ParseError> {
-        parse_udp(input)
-    }
-}
-
-/// Pure atom: `&[u8]` → [`TcpHeader`].
-pub(crate) struct ParseTcp;
-
-impl Atom for ParseTcp {
-    type Input = &'static [u8];
-    type Output = Result<TcpHeader, ParseError>;
-}
-
-impl PureAtom for ParseTcp {
-    fn apply(&self, input: &'static [u8]) -> Result<TcpHeader, ParseError> {
-        parse_tcp(input)
-    }
 }
 
 /// Parse an IPv4 header. Requires at least 20 bytes; validates IHL and

@@ -103,46 +103,6 @@ impl IoUringReactor {
         unsafe { self.ring.submitter().register_buffers(&iovs) }
     }
 
-    /// Submit a read on `fd` into `buf`, with `user_data` as the token.
-    ///
-    /// The caller must not touch or drop `buf` until [`Self::drain`]
-    /// reports the completion carrying `user_data`; the kernel may write
-    /// into it at any time up to that point.
-    pub(crate) fn submit_read(&mut self, fd: i32, buf: &mut [u8], user_data: u64) -> std::io::Result<()> {
-        let entry =
-            io_uring::opcode::Read::new(io_uring::types::Fd(fd), buf.as_mut_ptr(), buf.len() as u32)
-                .build()
-                .user_data(user_data);
-        // SAFETY: `push` copies the entry into the ring's SQ memory, so the
-        // entry itself need not outlive this call; `buf` is borrowed for
-        // the caller's lifetime and, per the method contract, must remain
-        // valid until `drain` reports this `user_data`.
-        unsafe { self.ring.submission().push(&entry) }
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::WouldBlock, "io_uring submission queue full"))?;
-        self.pending.push(user_data);
-        Ok(())
-    }
-
-    /// Submit a write of `data` on `fd` with `user_data` as the token.
-    ///
-    /// The caller must not mutate or drop `data` until [`Self::drain`]
-    /// reports the completion carrying `user_data`; the kernel may read
-    /// from it at any time up to that point.
-    pub(crate) fn submit_write(&mut self, fd: i32, data: &[u8], user_data: u64) -> std::io::Result<()> {
-        let entry =
-            io_uring::opcode::Write::new(io_uring::types::Fd(fd), data.as_ptr(), data.len() as u32)
-                .build()
-                .user_data(user_data);
-        // SAFETY: `push` copies the entry into the ring's SQ memory, so the
-        // entry itself need not outlive this call; `data` is borrowed for
-        // the caller's lifetime and, per the method contract, must remain
-        // valid until `drain` reports this `user_data`.
-        unsafe { self.ring.submission().push(&entry) }
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::WouldBlock, "io_uring submission queue full"))?;
-        self.pending.push(user_data);
-        Ok(())
-    }
-
     /// Submit a single-shot poll for `fd`'s readiness (`flags` are
     /// `<poll.h>` bits, e.g. `POLLIN`) with `user_data` as the token.
     /// Completes once; the caller re-arms by submitting again.
@@ -739,7 +699,16 @@ mod tests {
         )?;
         let mut reactor = IoUringReactor::new(8, 0)?;
         let mut buf = [0u8; 64];
-        reactor.submit_read(r.as_raw_fd(), &mut buf, 1)?;
+        // The read op is pushed directly (the submit_read helper was
+        // pruned as dead code); this still exercises the ring read path.
+        let entry =
+            io_uring::opcode::Read::new(io_uring::types::Fd(r.as_raw_fd()), buf.as_mut_ptr(), buf.len() as u32)
+                .build()
+                .user_data(1);
+        // SAFETY: push copies the entry into the SQ; `buf` stays alive
+        // until the completion is drained below.
+        unsafe { reactor.ring.submission().push(&entry) }
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::WouldBlock, "sq full"))?;
 
         let mut wfile = std::fs::File::from(w);
         wfile.write_all(b"hello")?;

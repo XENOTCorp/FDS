@@ -44,10 +44,6 @@ const XDP_UMEM_REG: libc::c_int = 4;
 const XDP_UMEM_FILL_RING: libc::c_int = 5;
 /// `XDP_UMEM_COMPLETION_RING` setsockopt: completion ring entry count.
 const XDP_UMEM_COMPLETION_RING: libc::c_int = 6;
-/// `XDP_STATISTICS` getsockopt (declared; not polled).
-const XDP_STATISTICS: libc::c_int = 7;
-/// `XDP_OPTIONS` getsockopt (declared; not used).
-const XDP_OPTIONS: libc::c_int = 8;
 
 /// mmap offset of the RX ring (byte offset passed to `mmap`; the kernel's
 /// `xsk_mmap` compares these against `XDP_PGOFF_*` directly).
@@ -594,11 +590,6 @@ impl XskSocket {
         self.tx_in_flight = true;
         true
     }
-
-    /// The raw fd.
-    pub(crate) fn as_raw_fd(&self) -> i32 {
-        self.fd
-    }
 }
 
 impl Drop for XskSocket {
@@ -737,8 +728,6 @@ mod tests {
         assert_eq!(XDP_UMEM_REG, 4);
         assert_eq!(XDP_UMEM_FILL_RING, 5);
         assert_eq!(XDP_UMEM_COMPLETION_RING, 6);
-        assert_eq!(XDP_STATISTICS, 7);
-        assert_eq!(XDP_OPTIONS, 8);
         assert_eq!(XDP_PGOFF_RX_RING, 0);
         assert_eq!(XDP_PGOFF_TX_RING, 0x8000_0000);
         assert_eq!(XDP_UMEM_PGOFF_FILL_RING, 0x1_0000_0000);
@@ -783,10 +772,7 @@ mod tests {
                 return;
             }
         };
-        assert!(sock.as_raw_fd() > 0, "bound socket must hold a valid fd");
         // Exercise recv; the ring is normally empty right after bind, but
-        // a frame may have arrived on a busy device — do not assert either
-        // way, only that the path runs without panicking.
         let mut buf = [0u8; 1500];
         let _ = sock.recv_frame(&mut buf);
         assert!(

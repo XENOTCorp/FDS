@@ -23,24 +23,13 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 
 // Socket-option numbers from <linux/sctp.h> (verified against the header).
-const SCTP_RTOINFO: libc::c_int = 0;
-const SCTP_ASSOCINFO: libc::c_int = 1;
 const SCTP_INITMSG: libc::c_int = 2;
 const SCTP_NODELAY: libc::c_int = 3;
 const SCTP_EVENTS: libc::c_int = 11;
 const SCTP_PARTIAL_DELIVERY_POINT: libc::c_int = 19;
 const SCTP_MAX_BURST: libc::c_int = 20;
-/// The header's peeloff sockopt is `SCTP_SOCKOPT_PEELOFF`; <linux/sctp.h>
-/// has no public `SCTP_PEELOFF` macro.
-const SCTP_SOCKOPT_PEELOFF: libc::c_int = 102;
-const SCTP_BINDX_ADD_ADDR: libc::c_int = 0x01;
-/// `enum sctp_sinfo_flags` values (sinfo_flags / sctp_sendmsg flags).
-const SCTP_UNORDERED: libc::c_int = 1 << 0;
-const SCTP_SENDALL: libc::c_int = 1 << 6;
 /// `enum sctp_msg_flags` (also `SCTP_NOTIFICATION`).
 const MSG_NOTIFICATION: libc::c_int = 0x8000;
-/// `SCTP_EOF` = `MSG_FIN` (bits/socket.h).
-const SCTP_EOF: libc::c_int = 0x200;
 // libc 0.2.189 exports neither of these on Linux-gnu; values from the
 // kernel UAPI (AF_SCTP = 30) and <netinet/sctp.h> (SOL_SCTP = 132).
 const AF_SCTP: libc::c_int = 30;
@@ -98,34 +87,10 @@ struct SctpEventSubscribe {
     sctp_send_failure_event_event: u8,
 }
 
-/// `struct sctp_prim` — <linux/sctp.h> also spells it `sctp_setprim`
-/// (`#define sctp_setprim sctp_prim`); `packed, aligned(4)` per the header.
-#[repr(C, packed(4))]
-struct SctpPrim {
-    ssp_assoc_id: SctpAssocT,
-    ssp_addr: libc::sockaddr_storage,
-}
-
 // FFI to libsctp (see contract above). Do NOT edit the signatures
 // without matching `<netinet/sctp.h>` and the installed libsctp ABI.
 #[link(name = "sctp")]
 extern "C" {
-    /// `int sctp_bindx(int sd, struct sockaddr *addrs, int addrcnt, int flags)`
-    fn sctp_bindx(
-        sd: libc::c_int,
-        addrs: *mut libc::sockaddr,
-        addrcnt: libc::c_int,
-        flags: libc::c_int,
-    ) -> libc::c_int;
-    /// `int sctp_connectx(int sd, struct sockaddr *addrs, int addrcnt, sctp_assoc_t *id)`
-    fn sctp_connectx(
-        sd: libc::c_int,
-        addrs: *mut libc::sockaddr,
-        addrcnt: libc::c_int,
-        id: *mut SctpAssocT,
-    ) -> libc::c_int;
-    /// `int sctp_peeloff(int sd, sctp_assoc_t assoc_id)`
-    fn sctp_peeloff(sd: libc::c_int, assoc_id: SctpAssocT) -> libc::c_int;
     /// `ssize_t sctp_sendmsg(...)` — verified `ssize_t` against the
     /// installed libsctp 1.0.21 (errors come back as a 64-bit -1).
     fn sctp_sendmsg(
@@ -157,7 +122,6 @@ extern "C" {
 /// A nonblocking SCTP one-to-one (or one-to-many) socket.
 pub(crate) struct SctpSocket {
     pub(crate) fd: OwnedFd,
-    pub(crate) cfg: SctpConfig,
 }
 
 /// Convert a `SocketAddr` into a `sockaddr_storage` + length for the
@@ -326,10 +290,7 @@ impl SctpSocket {
         }
         // SAFETY: `raw` is a fresh fd owned by us.
         let fd = unsafe { OwnedFd::from_raw_fd(raw) };
-        let sock = SctpSocket {
-            fd,
-            cfg: cfg.clone(),
-        };
+        let sock = SctpSocket { fd };
 
         sock.set_opt(libc::SOL_SOCKET, libc::SO_REUSEADDR, &1i32)?;
         if cfg.reuseport {
@@ -455,43 +416,6 @@ impl SctpSocket {
         Ok((n as usize, addr))
     }
 
-    /// Peel off the association with the given id into its own socket.
-    pub(crate) fn peeloff(&self, assoc_id: u32) -> std::io::Result<Self> {
-        // SAFETY: sctp_peeloff(3) returns a new fd or -1 (errno set).
-        let raw = unsafe { sctp_peeloff(self.fd.as_raw_fd(), assoc_id) };
-        if raw < 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        // SAFETY: `raw` is a fresh fd owned by us; no one else holds it.
-        let fd = unsafe { OwnedFd::from_raw_fd(raw) };
-        // The peeled socket inherits the parent's socket options
-        // (including SOCK_NONBLOCK); keep the config for its lifetime.
-        Ok(SctpSocket {
-            fd,
-            cfg: self.cfg.clone(),
-        })
-    }
-
-    /// Add a local address (multi-homing) via `sctp_bindx`.
-    pub(crate) fn add_local_addr(&self, addr: SocketAddr) -> std::io::Result<()> {
-        let (ss, _) = sockaddr_of(&addr);
-        // SAFETY: sctp_bindx(3) reads `addrs` synchronously; the header
-        // declares it non-const but the function only reads it.
-        let rc = unsafe {
-            sctp_bindx(
-                self.fd.as_raw_fd(),
-                &ss as *const libc::sockaddr_storage as *mut libc::sockaddr,
-                1,
-                SCTP_BINDX_ADD_ADDR,
-            )
-        };
-        if rc < 0 {
-            Err(std::io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
-    }
-
     /// The raw fd.
     pub(crate) fn as_raw_fd(&self) -> i32 {
         self.fd.as_raw_fd()
@@ -558,15 +482,6 @@ mod tests {
             .get_opt_i32(SOL_SCTP, SCTP_NODELAY)
             .expect("getsockopt SCTP_NODELAY");
         assert_eq!(v, 1, "SCTP_NODELAY must be on after bind with cfg.nodelay");
-    }
-
-    #[test]
-    fn sctp_peeloff_error_path() {
-        let Some(sock) = bind_or_skip("sctp_peeloff_error_path", &SctpConfig::default()) else {
-            return;
-        };
-        // No association exists, so any assoc id is invalid: Err, not panic.
-        assert!(sock.peeloff(u32::MAX).is_err());
     }
 
     #[test]
@@ -654,7 +569,7 @@ mod tests {
         };
 
         // The accepted socket inherits B's options (SCTP_EVENTS, ...).
-        let b_conn = SctpSocket { fd: conn, cfg };
+        let b_conn = SctpSocket { fd: conn };
         let mut buf = [0u8; 64];
         let mut stream = 0u16;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);

@@ -674,7 +674,6 @@ pub fn run_sctp(seconds: u64) -> std::io::Result<()> {
         // SAFETY: `raw` is a fresh fd owned by no other code.
         let sock = SctpSocket {
             fd: unsafe { OwnedFd::from_raw_fd(raw) },
-            cfg,
         };
         let mut buf = [0u8; 65536];
         let mut stream = 0u16;
