@@ -105,7 +105,7 @@ impl<const CAP: usize> ConnTable<CAP> {
     /// A new table; the caller initializes every slot (see
     /// [`ConnTable::initialize`]) before sharing it.
     pub fn new() -> Self {
-        const FLAGS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+        static FLAGS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
         ConnTable {
             pool: Pool::new(),
             flags: [FLAGS; CAP],
@@ -231,7 +231,7 @@ mod tests {
         let cold = &conn.cold as *const _ as usize;
         // Each is 64 bytes; nothing shares a line (assert they are at
         // least 64 bytes apart in either order).
-        let gap = if hot < cold { cold - hot } else { hot - cold };
+        let gap = cold.abs_diff(hot);
         assert!(gap >= 64);
     }
 }

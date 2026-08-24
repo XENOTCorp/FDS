@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 /// Full engine configuration. Every field has a default; `config.json`
 /// fields are optional and override the defaults.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub core: CoreConfig,
@@ -20,20 +20,6 @@ pub struct Config {
     pub sctp: SctpConfig,
     pub metrics: MetricsConfig,
     pub zero_copy: ZeroCopyConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            core: CoreConfig::default(),
-            reactor: ReactorConfig::default(),
-            udp: UdpConfig::default(),
-            tcp: TcpConfig::default(),
-            sctp: SctpConfig::default(),
-            metrics: MetricsConfig::default(),
-            zero_copy: ZeroCopyConfig::default(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -58,19 +44,14 @@ impl Default for CoreConfig {
 }
 
 /// Polling strategy (spec decision matrix D-5).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ReactorStrategy {
     /// epoll edge-triggered, busy-poll (timeout 0) — default.
+    #[default]
     EpollBusyPoll,
     /// io_uring SQPOLL (experimental, feature `io-uring`).
     IoUring,
-}
-
-impl Default for ReactorStrategy {
-    fn default() -> Self {
-        ReactorStrategy::EpollBusyPoll
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
