@@ -105,10 +105,9 @@ impl<const CAP: usize> ConnTable<CAP> {
     /// A new table; the caller initializes every slot (see
     /// [`ConnTable::initialize`]) before sharing it.
     pub fn new() -> Self {
-        static FLAGS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
         ConnTable {
             pool: Pool::new(),
-            flags: [FLAGS; CAP],
+            flags: std::array::from_fn(|_| std::sync::atomic::AtomicU8::new(0)),
         }
     }
 
