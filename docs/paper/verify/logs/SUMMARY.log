@@ -1,0 +1,5 @@
+PASS: kb_completion
+PASS: normal_forms
+PASS: contraction
+PASS: bisim
+PASS: batch_amort

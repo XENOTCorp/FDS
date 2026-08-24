@@ -1,0 +1,62 @@
+   Compiling fds-verify v0.1.0 (/home/xenot/Projects/FDS/docs/paper/verify)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.67s
+     Running `target/debug/kb_completion`
+Theorem NT15 - the ring-buffer equational theory admits a complete rewrite
+system, verified by Knuth-Bendix completion (std-only Rust).
+
+Signature: single sort; unary operations {push, pop}; variables x, y, ...
+Initial rules (equations oriented left->right):
+  push(pop(x)) -> x
+  pop(push(x)) -> x
+
+Completion pass 1: 4 critical pair(s) considered
+  overlap push(pop(x)): joins (normal form x)
+  overlap pop(push(pop(x))): joins (normal form pop(x))
+  overlap push(pop(push(x))): joins (normal form push(x))
+  overlap pop(push(x)): joins (normal form x)
+Completion converged: all critical pairs join, no new rules needed.
+
+Final rule set (2 rule(s)):
+  push(pop(x)) -> x
+  pop(push(x)) -> x
+
+Check (a) - termination: every rule strictly decreases the size-lex order
+  push(pop(x)) -> x (size 2 -> size 0): decreases
+  pop(push(x)) -> x (size 2 -> size 0): decreases
+  (a) terminating: PASS
+
+Check (b) - local confluence: every critical pair joins
+  overlap push(pop(x)): nf(inner) = x == x = nf(outer): join
+  overlap pop(push(pop(x))): nf(inner) = pop(x) == pop(x) = nf(outer): join
+  overlap push(pop(push(x))): nf(inner) = push(x) == push(x) = nf(outer): join
+  overlap pop(push(x)): nf(inner) = x == x = nf(outer): join
+  (b) all 4 critical pair(s) join: PASS
+
+Check (c) - the original two rules are present
+  push(pop(x)) -> x : present
+  pop(push(x)) -> x : present
+  (c) original rules present: PASS
+
+Check (d) - the system decides the theory on samples
+  normalize(push(pop(push(x)))) == normalize(push(x)): push(x) == push(x): PASS
+  normalize(pop(push(pop(x)))) == normalize(pop(x)): pop(x) == pop(x): PASS
+  normalize(push(push(pop(pop(x))))) == normalize(x): x == x: PASS
+  normalize(push(pop(pop(push(x))))) == normalize(pop(push(x))): x == x: PASS
+  normalize(push(pop(push(pop(x))))) == normalize(x): x == x: PASS
+  normalize(push(x)) != normalize(pop(x)): push(x) != pop(x): PASS
+  (d) samples decided correctly: PASS
+
+Overall: PASS
+
+Explanation:
+  The rules push(pop(x)) -> x and pop(push(x)) -> x say that push and pop are
+  mutual inverses. The only overlaps of the two LHSs are the unary terms
+  push(pop(push(x))) and pop(push(pop(x))): in both cases the two ways of
+  rewriting coincide (both sides normalize to push(x) resp. pop(x)), so every
+  critical pair joins and completion adds no new rule. Each rule strictly
+  decreases the size-lexicographic order (size 2 -> size 0), so the system is
+  terminating; by Newman's lemma termination + local confluence = confluence,
+  i.e. the system is complete. Normal forms are the alternating-free stacks
+  x, push(x), push(push(x)), ..., pop(x), pop(pop(x)), ..., and two terms are
+  equal in the theory iff their normal forms coincide, so the system decides
+  the ring-buffer equational theory.

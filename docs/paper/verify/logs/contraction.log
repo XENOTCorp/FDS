@@ -1,0 +1,80 @@
+   Compiling fds-verify v0.1.0 (/home/xenot/Projects/FDS/docs/paper/verify)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.29s
+     Running `target/debug/contraction`
+Theorem NT43: k(alpha, eps, d0) = ceil(ln(eps*(1-alpha)/d0) / ln(alpha))
+Samples: alpha in 0.1..=0.9 (step 0.1), eps in {1e-3, 1e-6, 1e-9}, d0 in {1.0, 10.0}
+
+(a)(b) per sample:
+  alpha=0.1 eps=1e-3 d0= 1.0  k=  4  |x_k|=1.000e-4  (a) PASS  (b) PASS
+  alpha=0.2 eps=1e-3 d0= 1.0  k=  5  |x_k|=3.200e-4  (a) PASS  (b) PASS
+  alpha=0.3 eps=1e-3 d0= 1.0  k=  7  |x_k|=2.187e-4  (a) PASS  (b) PASS
+  alpha=0.4 eps=1e-3 d0= 1.0  k=  9  |x_k|=2.621e-4  (a) PASS  (b) PASS
+  alpha=0.5 eps=1e-3 d0= 1.0  k= 11  |x_k|=4.883e-4  (a) PASS  (b) PASS
+  alpha=0.6 eps=1e-3 d0= 1.0  k= 16  |x_k|=2.821e-4  (a) PASS  (b) PASS
+  alpha=0.7 eps=1e-3 d0= 1.0  k= 23  |x_k|=2.737e-4  (a) PASS  (b) PASS
+  alpha=0.8 eps=1e-3 d0= 1.0  k= 39  |x_k|=1.662e-4  (a) PASS  (b) PASS
+  alpha=0.9 eps=1e-3 d0= 1.0  k= 88  |x_k|=9.405e-5  (a) PASS  (b) PASS
+  alpha=0.1 eps=1e-6 d0= 1.0  k=  7  |x_k|=1.000e-7  (a) PASS  (b) PASS
+  alpha=0.2 eps=1e-6 d0= 1.0  k=  9  |x_k|=5.120e-7  (a) PASS  (b) PASS
+  alpha=0.3 eps=1e-6 d0= 1.0  k= 12  |x_k|=5.314e-7  (a) PASS  (b) PASS
+  alpha=0.4 eps=1e-6 d0= 1.0  k= 16  |x_k|=4.295e-7  (a) PASS  (b) PASS
+  alpha=0.5 eps=1e-6 d0= 1.0  k= 21  |x_k|=4.768e-7  (a) PASS  (b) PASS
+  alpha=0.6 eps=1e-6 d0= 1.0  k= 29  |x_k|=3.685e-7  (a) PASS  (b) PASS
+  alpha=0.7 eps=1e-6 d0= 1.0  k= 43  |x_k|=2.184e-7  (a) PASS  (b) PASS
+  alpha=0.8 eps=1e-6 d0= 1.0  k= 70  |x_k|=1.646e-7  (a) PASS  (b) PASS
+  alpha=0.9 eps=1e-6 d0= 1.0  k=153  |x_k|=9.979e-8  (a) PASS  (b) PASS
+  alpha=0.1 eps=1e-9 d0= 1.0  k= 10  |x_k|=1.000e-10  (a) PASS  (b) PASS
+  alpha=0.2 eps=1e-9 d0= 1.0  k= 14  |x_k|=1.638e-10  (a) PASS  (b) PASS
+  alpha=0.3 eps=1e-9 d0= 1.0  k= 18  |x_k|=3.874e-10  (a) PASS  (b) PASS
+  alpha=0.4 eps=1e-9 d0= 1.0  k= 24  |x_k|=2.815e-10  (a) PASS  (b) PASS
+  alpha=0.5 eps=1e-9 d0= 1.0  k= 31  |x_k|=4.657e-10  (a) PASS  (b) PASS
+  alpha=0.6 eps=1e-9 d0= 1.0  k= 43  |x_k|=2.887e-10  (a) PASS  (b) PASS
+  alpha=0.7 eps=1e-9 d0= 1.0  k= 62  |x_k|=2.489e-10  (a) PASS  (b) PASS
+  alpha=0.8 eps=1e-9 d0= 1.0  k=101  |x_k|=1.630e-10  (a) PASS  (b) PASS
+  alpha=0.9 eps=1e-9 d0= 1.0  k=219  |x_k|=9.530e-11  (a) PASS  (b) PASS
+  alpha=0.1 eps=1e-3 d0=10.0  k=  5  |x_k|=1.000e-4  (a) PASS  (b) PASS
+  alpha=0.2 eps=1e-3 d0=10.0  k=  6  |x_k|=6.400e-4  (a) PASS  (b) PASS
+  alpha=0.3 eps=1e-3 d0=10.0  k=  8  |x_k|=6.561e-4  (a) PASS  (b) PASS
+  alpha=0.4 eps=1e-3 d0=10.0  k= 11  |x_k|=4.194e-4  (a) PASS  (b) PASS
+  alpha=0.5 eps=1e-3 d0=10.0  k= 15  |x_k|=3.052e-4  (a) PASS  (b) PASS
+  alpha=0.6 eps=1e-3 d0=10.0  k= 20  |x_k|=3.656e-4  (a) PASS  (b) PASS
+  alpha=0.7 eps=1e-3 d0=10.0  k= 30  |x_k|=2.254e-4  (a) PASS  (b) PASS
+  alpha=0.8 eps=1e-3 d0=10.0  k= 49  |x_k|=1.784e-4  (a) PASS  (b) PASS
+  alpha=0.9 eps=1e-3 d0=10.0  k=110  |x_k|=9.261e-5  (a) PASS  (b) PASS
+  alpha=0.1 eps=1e-6 d0=10.0  k=  8  |x_k|=1.000e-7  (a) PASS  (b) PASS
+  alpha=0.2 eps=1e-6 d0=10.0  k= 11  |x_k|=2.048e-7  (a) PASS  (b) PASS
+  alpha=0.3 eps=1e-6 d0=10.0  k= 14  |x_k|=4.783e-7  (a) PASS  (b) PASS
+  alpha=0.4 eps=1e-6 d0=10.0  k= 19  |x_k|=2.749e-7  (a) PASS  (b) PASS
+  alpha=0.5 eps=1e-6 d0=10.0  k= 25  |x_k|=2.980e-7  (a) PASS  (b) PASS
+  alpha=0.6 eps=1e-6 d0=10.0  k= 34  |x_k|=2.865e-7  (a) PASS  (b) PASS
+  alpha=0.7 eps=1e-6 d0=10.0  k= 49  |x_k|=2.569e-7  (a) PASS  (b) PASS
+  alpha=0.8 eps=1e-6 d0=10.0  k= 80  |x_k|=1.767e-7  (a) PASS  (b) PASS
+  alpha=0.9 eps=1e-6 d0=10.0  k=175  |x_k|=9.827e-8  (a) PASS  (b) PASS
+  alpha=0.1 eps=1e-9 d0=10.0  k= 11  |x_k|=1.000e-10  (a) PASS  (b) PASS
+  alpha=0.2 eps=1e-9 d0=10.0  k= 15  |x_k|=3.277e-10  (a) PASS  (b) PASS
+  alpha=0.3 eps=1e-9 d0=10.0  k= 20  |x_k|=3.487e-10  (a) PASS  (b) PASS
+  alpha=0.4 eps=1e-9 d0=10.0  k= 26  |x_k|=4.504e-10  (a) PASS  (b) PASS
+  alpha=0.5 eps=1e-9 d0=10.0  k= 35  |x_k|=2.910e-10  (a) PASS  (b) PASS
+  alpha=0.6 eps=1e-9 d0=10.0  k= 47  |x_k|=3.742e-10  (a) PASS  (b) PASS
+  alpha=0.7 eps=1e-9 d0=10.0  k= 68  |x_k|=2.929e-10  (a) PASS  (b) PASS
+  alpha=0.8 eps=1e-9 d0=10.0  k=111  |x_k|=1.750e-10  (a) PASS  (b) PASS
+  alpha=0.9 eps=1e-9 d0=10.0  k=241  |x_k|=9.385e-11  (a) PASS  (b) PASS
+
+Representative k values (d0 = 1.0):
+alpha \ eps      1e-3      1e-6      1e-9
+        0.1         4         7        10
+        0.2         5         9        14
+        0.3         7        12        18
+        0.4         9        16        24
+        0.5        11        21        31
+        0.6        16        29        43
+        0.7        23        43        62
+        0.8        39        70       101
+        0.9        88       153       219
+
+SUMMARY (54 samples):
+  (a) bound finite and >= 1 for every sample  : PASS
+  (b) simulation |x_k| <= eps (rel. tol. 1e-12): PASS
+  (c) k never decreases as alpha increases    : PASS
+  (d) k non-decreasing as eps decreases      : PASS
+NT43: ALL CHECKS PASS

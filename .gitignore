@@ -9,12 +9,12 @@ target/
 # Subagent-driven development scratch (git-ignored)
 .superpowers/
 
-# LaTeX artifacts
-*.aux
-*.log
-*.out
-*.toc
-*.bbl
-*.blg
-*.fls
-*.fdb_latexmk
+# LaTeX artifacts (scoped to docs/paper root; verify logs are committed)
+docs/paper/*.aux
+docs/paper/*.log
+docs/paper/*.out
+docs/paper/*.toc
+docs/paper/*.bbl
+docs/paper/*.blg
+docs/paper/*.fls
+docs/paper/*.fdb_latexmk

@@ -1,0 +1,31 @@
+   Compiling fds-verify v0.1.0 (/home/xenot/Projects/FDS/docs/paper/verify)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.38s
+     Running `target/debug/batch_amort`
+Theorem NT47 — syscall amortization
+
+Cost model: per-datagram cost d, per-syscall overhead h.
+  individual: n datagrams in n syscalls => n * (h + d)
+  batched:    n datagrams in 1 syscall  => h + n * d
+Bound (a): h + n*d <= n*(h+d)  <=>  h <= n*h, which holds for all n >= 1
+  (equality at n = 1; strict for n > 1).
+Bound (b): (h + n*d)/n = d + h/n, and h/n decreases as n grows.
+Bound (c): as n grows, h/n -> 0, so amortized cost tends to d.
+
+  h = 100.0, d = 1.0
+    (a) batch_cost(n) <= n*(h+d) for all n in 1..=1024: PASS
+    (b) batch_cost(n)/n non-increasing in n: PASS
+    (c) amortized cost at n=1024: 1.097656 (d = 1.0, excess h/n = 0.097656, limit as n->inf = 1.0)
+  h = 100.0, d = 10.0
+    (a) batch_cost(n) <= n*(h+d) for all n in 1..=1024: PASS
+    (b) batch_cost(n)/n non-increasing in n: PASS
+    (c) amortized cost at n=1024: 10.097656 (d = 10.0, excess h/n = 0.097656, limit as n->inf = 10.0)
+  h = 1000.0, d = 1.0
+    (a) batch_cost(n) <= n*(h+d) for all n in 1..=1024: PASS
+    (b) batch_cost(n)/n non-increasing in n: PASS
+    (c) amortized cost at n=1024: 1.976562 (d = 1.0, excess h/n = 0.976562, limit as n->inf = 1.0)
+  h = 1000.0, d = 10.0
+    (a) batch_cost(n) <= n*(h+d) for all n in 1..=1024: PASS
+    (b) batch_cost(n)/n non-increasing in n: PASS
+    (c) amortized cost at n=1024: 10.976562 (d = 10.0, excess h/n = 0.976562, limit as n->inf = 10.0)
+
+Overall: PASS

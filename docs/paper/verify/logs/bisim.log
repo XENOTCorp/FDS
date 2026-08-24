@@ -1,0 +1,11 @@
+   Compiling fds-verify v0.1.0 (/home/xenot/Projects/FDS/docs/paper/verify)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.31s
+     Running `target/debug/bisim`
+PASS: NT6(a) reflexive — M ≈ M for all 2260 machines
+PASS: NT6(a) symmetric — equivalent(a,b) == equivalent(b,a) on 10,000 sampled ordered pairs
+PASS: NT6(a) transitive — same-class membership consistent on 596 sampled triples
+PASS: NT6(b) M∘N ≈ M'∘N — 486360 congruence checks
+PASS: NT6(c) N∘M ≈ N∘M' — 486360 congruence checks
+PASS: NT6(d) M⊗N ≈ M'⊗N — 486360 congruence checks
+SUMMARY: universe=2260 (exhaustive 260 + 2000 sampled 3-state), classes=1674, pairs_checked=2702, checks=486360
+OVERALL: PASS
