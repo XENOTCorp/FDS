@@ -39,9 +39,9 @@ const SEED: u64 = 0x9E37_79B9_7F4A_7C15;
 
 /// Run `iters` fuzz iterations. A panic is the harness's signal (like a
 /// libFuzzer crash): every iteration either exercises the atoms or aborts.
-/// Prints progress every [`PROGRESS_EVERY`] iterations and one final
+/// Prints progress every `PROGRESS_EVERY` iterations and one final
 /// summary line.
-pub(crate) fn run(iters: u64) {
+pub fn run(iters: u64) {
     let mut rng = XorShift64(SEED);
     // Stack buffer only; no allocation in the loop.
     let mut buf = [0u8; MAX_LEN];

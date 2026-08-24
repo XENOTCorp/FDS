@@ -23,6 +23,7 @@ use crate::conn::{ConnTable, Connection, ConnectionId, CONN_CAP};
 use crate::metrics::Metrics;
 use crate::reactor::{Interest, Reactor};
 use crate::signals;
+use crate::util::{now_ticks, pin_to_core};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -35,7 +36,7 @@ const TOKEN_TCP_LISTENER: u64 = u64::MAX;
 const TOKEN_METRICS: u64 = u64::MAX - 2;
 
 /// Run the engine until SIGINT.
-pub(crate) fn run(cfg: &Config) -> std::io::Result<()> {
+pub fn run(cfg: &Config) -> std::io::Result<()> {
     signals::install();
     startup_probes(cfg);
     run_until(cfg, Arc::new(signals::interrupted))
@@ -129,7 +130,7 @@ fn worker_main(
     // SO_REUSEPORT (config default) lets every worker bind the same
     // address; the kernel steers datagrams/connections across workers.
     let udp_sock = crate::udp::UdpSocket::new(udp_addr, &cfg.udp)?;
-    let tcp_listener = crate::tcp::TcpListener::bind(tcp_addr, &cfg.tcp)?;
+    let tcp_listener = crate::tcp::TcpListener::bind(tcp_addr, &cfg.tcp, libc::SOMAXCONN)?;
 
     // The metrics pull endpoint lives on worker 0 only; it aggregates
     // the per-core counters of every worker.
@@ -317,24 +318,6 @@ fn parse_addr(s: &str, fallback: &str) -> SocketAddr {
         eprintln!("fds: bad bind address {s:?} — using {fallback}");
         fallback.parse().unwrap()
     })
-}
-
-/// Pin the calling thread to logical CPU `core` (sched_setaffinity).
-fn pin_to_core(core: usize) -> std::io::Result<()> {
-    let mut set = rustix::thread::CpuSet::new();
-    set.set(core);
-    rustix::thread::sched_setaffinity(None, &set).map_err(std::io::Error::from)
-}
-
-/// Coarse monotonic ticks (seconds since first call) for hot-state
-/// activity stamps — no clock syscall per packet (Instant::elapsed reads
-/// a vDSO time). Shared by the epoll and io_uring datapaths.
-pub(crate) fn now_ticks() -> u64 {
-    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    START
-        .get_or_init(std::time::Instant::now)
-        .elapsed()
-        .as_secs()
 }
 
 /// Presence probes for the optional transports (feature-gated; absence is

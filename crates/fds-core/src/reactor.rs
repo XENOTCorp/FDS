@@ -14,7 +14,7 @@ use std::os::fd::AsRawFd;
 
 /// The events a registration is interested in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Interest {
+pub enum Interest {
     Readable,
     Writable,
     ReadableWritable,
@@ -37,7 +37,7 @@ impl Interest {
 /// [`crate::conn::ConnectionId`] or a reserved `TOKEN_*`) and the ready
 /// flags.
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct EpollEvent {
+pub struct EpollEvent {
     pub token: u64,
     pub readable: bool,
     pub writable: bool,
@@ -60,7 +60,7 @@ impl EpollEvent {
 
 /// One epoll instance with a preallocated event array (allocated once at
 /// startup; the hot path never allocates).
-pub(crate) struct Reactor {
+pub struct Reactor {
     ep: OwnedFd,
     events: Vec<epoll::Event>,
 }
@@ -68,7 +68,7 @@ pub(crate) struct Reactor {
 impl Reactor {
     /// Create a reactor with a preallocated event array of `max_events`
     /// entries (clamped to at least 1).
-    pub(crate) fn new(max_events: usize) -> std::io::Result<Self> {
+    pub fn new(max_events: usize) -> std::io::Result<Self> {
         let ep = epoll::create(epoll::CreateFlags::CLOEXEC)?;
         // Preallocated: only the first `n` written by epoll_wait are read.
         let events = vec![
@@ -82,7 +82,7 @@ impl Reactor {
     }
 
     /// Register `fd` for `interest` with token `token` (EPOLL_CTL_ADD).
-    pub(crate) fn register(&self, fd: i32, token: u64, interest: Interest) -> std::io::Result<()> {
+    pub fn register(&self, fd: i32, token: u64, interest: Interest) -> std::io::Result<()> {
         let data = epoll::EventData::new_u64(token);
         // SAFETY: `fd` is a live descriptor owned by the caller for the
         // duration of the call; epoll_ctl installs the interest into the
@@ -92,7 +92,7 @@ impl Reactor {
     }
 
     /// Change the interest for an already-registered fd (EPOLL_CTL_MOD).
-    pub(crate) fn modify(&self, fd: i32, token: u64, interest: Interest) -> std::io::Result<()> {
+    pub fn modify(&self, fd: i32, token: u64, interest: Interest) -> std::io::Result<()> {
         let data = epoll::EventData::new_u64(token);
         // SAFETY: as in [`Reactor::register`].
         let borrowed = unsafe { rustix::fd::BorrowedFd::borrow_raw(fd) };
@@ -100,7 +100,7 @@ impl Reactor {
     }
 
     /// Remove a registration (EPOLL_CTL_DEL).
-    pub(crate) fn unregister(&self, fd: i32) -> std::io::Result<()> {
+    pub fn unregister(&self, fd: i32) -> std::io::Result<()> {
         // SAFETY: as in [`Reactor::register`].
         let borrowed = unsafe { rustix::fd::BorrowedFd::borrow_raw(fd) };
         epoll::delete(&self.ep, borrowed).map_err(std::io::Error::from)
@@ -108,14 +108,14 @@ impl Reactor {
 
     /// Poll once with the given timeout: `None` blocks, `Some(0)` is a
     /// non-blocking busy poll. Returns the number of events delivered.
-    pub(crate) fn poll_timeout(&mut self, timeout: Option<&Timespec>) -> std::io::Result<usize> {
+    pub fn poll_timeout(&mut self, timeout: Option<&Timespec>) -> std::io::Result<usize> {
         let n = epoll::wait(&self.ep, &mut self.events, timeout)?;
         Ok(n)
     }
 
     /// Busy-poll: drain the ready list with timeout 0 until empty, then
     /// return the total number of events delivered.
-    pub(crate) fn poll_busy(&mut self) -> std::io::Result<usize> {
+    pub fn poll_busy(&mut self) -> std::io::Result<usize> {
         let zero = Timespec { tv_sec: 0, tv_nsec: 0 };
         let mut total = 0;
         loop {
@@ -132,14 +132,14 @@ impl Reactor {
     }
 
     /// The events from the most recent poll, converted.
-    pub(crate) fn delivered(&self, n: usize) -> impl Iterator<Item = EpollEvent> + '_ {
+    pub fn delivered(&self, n: usize) -> impl Iterator<Item = EpollEvent> + '_ {
         self.events.iter().take(n).map(EpollEvent::from_raw)
     }
 
     /// Copy the first `n` delivered events into `out` (converted), so the
     /// caller can process them without holding a borrow on the reactor.
     /// Returns the number copied.
-    pub(crate) fn copy_events(&self, n: usize, out: &mut [EpollEvent]) -> usize {
+    pub fn copy_events(&self, n: usize, out: &mut [EpollEvent]) -> usize {
         let m = n.min(self.events.len()).min(out.len());
         for (dst, src) in out.iter_mut().zip(self.events.iter()).take(m) {
             *dst = EpollEvent::from_raw(src);
@@ -148,7 +148,7 @@ impl Reactor {
     }
 
     /// The raw epoll fd (for tests / io_uring handoff).
-    pub(crate) fn as_raw_fd(&self) -> i32 {
+    pub fn as_raw_fd(&self) -> i32 {
         self.ep.as_raw_fd()
     }
 }

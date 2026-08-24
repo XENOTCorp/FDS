@@ -471,7 +471,7 @@ impl IoUringDatapath {
                         let slot = ConnectionId::from_u64(token).slot() as usize;
                         let hot = &mut self.conn_table.conn_mut(slot).hot;
                         hot.seq = hot.seq.wrapping_add(n as u32);
-                        hot.last_activity = crate::engine::now_ticks();
+                        hot.last_activity = crate::util::now_ticks();
                         self.submit_tcp_write(token, n)?;
                     }
                     Ok(_) => {

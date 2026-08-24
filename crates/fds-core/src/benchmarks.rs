@@ -7,7 +7,7 @@
 //! `--bench-large <datagram> <seconds>` (arg dispatch wired at the
 //! integration milestone).
 //!
-//! Datapath: [`BATCH`] fixed-size datagrams are sent to a peer socket
+//! Datapath: `BATCH` fixed-size datagrams are sent to a peer socket
 //! bound on 127.0.0.1 and echoed back; packets and bytes are counted and
 //! per-second pps / MB/s are printed to stdout. Sending and receiving go
 //! through [`crate::udp::UdpSocket`]'s documented API (`send_batch` /
@@ -187,7 +187,7 @@ fn recv_chunk(
 }
 
 /// Run the benchmark for `seconds` seconds and print the summary line.
-pub(crate) fn run(seconds: u64) -> std::io::Result<()> {
+pub fn run(seconds: u64) -> std::io::Result<()> {
     let stats = run_inner(seconds)?;
     let secs = stats.seconds as f64;
     println!(
@@ -205,7 +205,7 @@ pub(crate) fn run(seconds: u64) -> std::io::Result<()> {
 /// in-flight datagram): samples the RTT for `seconds` seconds and reports
 /// the p50/p99/p999 percentiles plus max. p99 is the tail-latency budget
 /// the engine targets (standard \[OBS\]; thesis NT25 cost model).
-pub(crate) fn run_latency(seconds: u64) -> std::io::Result<()> {
+pub fn run_latency(seconds: u64) -> std::io::Result<()> {
     let seconds = seconds.max(1);
     let sock = try_io(|| {
         UdpSocket::new(
@@ -269,7 +269,7 @@ pub(crate) fn run_latency(seconds: u64) -> std::io::Result<()> {
 /// UDP echo on its configured bind): single-flight datagrams to `addr`,
 /// RTT percentiles over `seconds`. This is the end-to-end number the
 /// engine's busy-poll loop targets.
-pub(crate) fn run_engine_latency(addr: SocketAddr, seconds: u64) -> std::io::Result<()> {
+pub fn run_engine_latency(addr: SocketAddr, seconds: u64) -> std::io::Result<()> {
     let seconds = seconds.max(1);
     let sock = try_io(|| {
         UdpSocket::new(
@@ -393,7 +393,7 @@ fn run_inner(seconds: u64) -> std::io::Result<Stats> {
 /// quoted "10-40+ Gbps loopback": at 60 KiB datagrams the loopback is
 /// memory-bound, at 1400 B it is packet-rate-bound (~200k syscalls/s per
 /// core on the dev machine).
-pub(crate) fn run_large(datagram: usize, seconds: u64) -> std::io::Result<()> {
+pub fn run_large(datagram: usize, seconds: u64) -> std::io::Result<()> {
     let seconds = seconds.max(1);
     let asked = datagram;
     let datagram = datagram.clamp(64, 65_507);

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// fields are optional and override the defaults.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub(crate) struct Config {
+pub struct Config {
     pub core: CoreConfig,
     pub reactor: ReactorConfig,
     pub udp: UdpConfig,
@@ -34,7 +34,7 @@ pub(crate) struct Config {
 /// their own handlers around the same reactor/transport primitives.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
-pub(crate) struct EngineConfig {
+pub struct EngineConfig {
     /// UDP echo bind address ("ip:port").
     pub udp_bind: String,
     /// TCP echo bind address ("ip:port").
@@ -52,7 +52,7 @@ impl Default for EngineConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
-pub(crate) struct CoreConfig {
+pub struct CoreConfig {
     /// Pin each worker thread to its own logical CPU.
     pub pin_cores: bool,
     /// Worker thread count; 0 = one per logical CPU (on hyperthreaded
@@ -75,7 +75,7 @@ impl Default for CoreConfig {
 /// Polling strategy (spec decision matrix D-5).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub(crate) enum ReactorStrategy {
+pub enum ReactorStrategy {
     /// epoll edge-triggered, busy-poll (timeout 0) — default.
     #[default]
     EpollBusyPoll,
@@ -85,7 +85,7 @@ pub(crate) enum ReactorStrategy {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
-pub(crate) struct ReactorConfig {
+pub struct ReactorConfig {
     pub strategy: ReactorStrategy,
     /// Preallocated event array capacity per reactor.
     pub max_events: usize,
@@ -115,7 +115,7 @@ impl Default for ReactorConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
-pub(crate) struct UdpConfig {
+pub struct UdpConfig {
     pub rcvbuf: usize,
     pub sndbuf: usize,
     /// UDP_SEGMENT (GSO) max segment size; 0 = off.
@@ -151,7 +151,7 @@ impl Default for UdpConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
-pub(crate) struct TcpConfig {
+pub struct TcpConfig {
     pub nodelay: bool,
     pub quickack: bool,
     pub defer_accept: bool,
@@ -180,7 +180,7 @@ impl Default for TcpConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
-pub(crate) struct SctpConfig {
+pub struct SctpConfig {
     pub nodelay: bool,
     /// SCTP_INITMSG max streams (in/out).
     pub init_max_streams: u16,
@@ -205,7 +205,7 @@ impl Default for SctpConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
-pub(crate) struct MetricsConfig {
+pub struct MetricsConfig {
     /// Unix socket path for the pull endpoint; empty = disabled.
     pub socket_path: String,
 }
@@ -220,7 +220,7 @@ impl Default for MetricsConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
-pub(crate) struct ZeroCopyConfig {
+pub struct ZeroCopyConfig {
     /// sendfile/splice for file-backed TCP responses.
     pub splice: bool,
     /// io_uring registered buffers (feature `io-uring`).
@@ -245,7 +245,7 @@ impl Default for ZeroCopyConfig {
 /// CAP_NET_RAW) the engine logs and continues on the kernel datapath.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub(crate) struct AfXdpConfig {
+pub struct AfXdpConfig {
     /// Device name (e.g. "eth0"); empty = disabled.
     pub device: String,
     /// Queue id on the device.
@@ -255,20 +255,20 @@ pub(crate) struct AfXdpConfig {
 impl Config {
     /// Parse a `config.json` document; missing fields fall back to
     /// defaults.
-    pub(crate) fn from_json(s: &str) -> Result<Self, serde_json::Error> {
+    pub fn from_json(s: &str) -> Result<Self, serde_json::Error> {
         let mut cfg: Config = serde_json::from_str(s)?;
         cfg.apply_env();
         Ok(cfg)
     }
 
     /// Load from a file path.
-    pub(crate) fn from_file(path: &std::path::Path) -> Result<Self, ConfigError> {
+    pub fn from_file(path: &std::path::Path) -> Result<Self, ConfigError> {
         let s = std::fs::read_to_string(path).map_err(ConfigError::Io)?;
         Self::from_json(&s).map_err(ConfigError::Json)
     }
 
     /// Override fields from `FDS_<SECTION>_<KEY>` environment variables.
-    pub(crate) fn apply_env(&mut self) {
+    pub fn apply_env(&mut self) {
         if let Some(v) = env_flag("FDS_CORE_PIN_CORES") {
             self.core.pin_cores = v;
         }
@@ -329,7 +329,7 @@ impl Config {
 
 /// Error loading the configuration.
 #[derive(Debug)]
-pub(crate) enum ConfigError {
+pub enum ConfigError {
     Io(std::io::Error),
     Json(serde_json::Error),
 }

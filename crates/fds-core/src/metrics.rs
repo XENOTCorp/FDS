@@ -15,7 +15,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 
 /// A fixed set of named counters (per-core, lock-free).
-pub(crate) struct CounterSet {
+pub struct CounterSet {
     /// One padded atomic per counter name.
     counters: Box<[mol::PaddedCounter]>,
     /// The counter names, in the same order as `counters`.
@@ -24,7 +24,7 @@ pub(crate) struct CounterSet {
 
 impl CounterSet {
     /// A fresh set with the given names (all counters zeroed).
-    pub(crate) fn new(names: &[&'static str]) -> Self {
+    pub fn new(names: &[&'static str]) -> Self {
         let mut counters = Vec::with_capacity(names.len());
         for _ in names {
             counters.push(mol::PaddedCounter::new(std::sync::atomic::AtomicU64::new(0)));
@@ -36,17 +36,17 @@ impl CounterSet {
     }
 
     /// Add `v` to counter `i` (relaxed, lock-free).
-    pub(crate) fn add(&self, i: usize, v: u64) {
+    pub fn add(&self, i: usize, v: u64) {
         self.counters[i].fetch_add(v, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Store a value into counter `i` (relaxed; replaces, does not add).
-    pub(crate) fn set(&self, i: usize, v: u64) {
+    pub fn set(&self, i: usize, v: u64) {
         self.counters[i].store(v, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Snapshot all counters into `out` (len == names.len()).
-    pub(crate) fn snapshot(&self, out: &mut [u64]) {
+    pub fn snapshot(&self, out: &mut [u64]) {
         assert_eq!(
             out.len(),
             self.counters.len(),
@@ -58,12 +58,12 @@ impl CounterSet {
     }
 
     /// Load counter `i` alone (used by the report formatter).
-    pub(crate) fn load(&self, i: usize) -> u64 {
+    pub fn load(&self, i: usize) -> u64 {
         self.counters[i].load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The counter names, in index order.
-    pub(crate) fn names(&self) -> &[&'static str] {
+    pub fn names(&self) -> &[&'static str] {
         &self.names
     }
 }
@@ -92,7 +92,7 @@ fn push_num(out: &mut String, mut v: u64) {
 
 /// The engine-wide metrics bundle: per-core [`CounterSet`]s for packets,
 /// bytes and drops, plus the totals across cores.
-pub(crate) struct Metrics {
+pub struct Metrics {
     /// Per-core packet counters.
     packets: Vec<CounterSet>,
     /// Per-core byte counters.
@@ -102,7 +102,7 @@ pub(crate) struct Metrics {
 }
 
 impl Metrics {
-    pub(crate) fn new(cores: usize) -> Self {
+    pub fn new(cores: usize) -> Self {
         Metrics {
             packets: (0..cores).map(|_| CounterSet::new(&["packets"])).collect(),
             bytes: (0..cores).map(|_| CounterSet::new(&["bytes"])).collect(),
@@ -113,26 +113,26 @@ impl Metrics {
     /// Add to worker `core`'s packet counter (relaxed, lock-free; each
     /// worker only touches its own slot, so the padded counters never
     /// contend).
-    pub(crate) fn add_packets(&self, core: usize, v: u64) {
+    pub fn add_packets(&self, core: usize, v: u64) {
         self.packets[core].add(0, v);
     }
 
-    pub(crate) fn add_bytes(&self, core: usize, v: u64) {
+    pub fn add_bytes(&self, core: usize, v: u64) {
         self.bytes[core].add(0, v);
     }
 
-    pub(crate) fn add_drops(&self, core: usize, v: u64) {
+    pub fn add_drops(&self, core: usize, v: u64) {
         self.drops[core].add(0, v);
     }
 
     /// Total packets/bytes/drops summed across all cores.
-    pub(crate) fn totals(&self) -> (u64, u64, u64) {
+    pub fn totals(&self) -> (u64, u64, u64) {
         let sum = |sets: &[CounterSet]| -> u64 { sets.iter().map(|s| s.load(0)).sum() };
         (sum(&self.packets), sum(&self.bytes), sum(&self.drops))
     }
 
     /// Format the full metrics text into `out` (no allocation).
-    pub(crate) fn write_into(&self, out: &mut String) {
+    pub fn write_into(&self, out: &mut String) {
         out.push_str("# fds metrics (pull endpoint)\n");
         out.push_str("# cores: ");
         push_num(out, self.packets.len() as u64);
@@ -186,7 +186,7 @@ fn write_kind(out: &mut String, sets: &[CounterSet]) {
 }
 
 /// Pull endpoint: a Unix socket that serves [`Metrics::write_into`] text.
-pub(crate) struct MetricsServer {
+pub struct MetricsServer {
     /// The bound listener (nonblocking at the kernel level).
     listener: std::os::unix::net::UnixListener,
     /// The socket path, unlinked on drop.
@@ -201,7 +201,7 @@ impl rustix::fd::AsFd for MetricsServer {
 
 impl MetricsServer {
     /// Bind the Unix socket at `path` (unlinks a stale file first).
-    pub(crate) fn bind(path: &Path) -> std::io::Result<Self> {
+    pub fn bind(path: &Path) -> std::io::Result<Self> {
         // A stale socket file from a previous run must not fail the bind.
         match std::fs::remove_file(path) {
             Ok(()) => {}
@@ -220,14 +220,14 @@ impl MetricsServer {
     }
 
     /// The raw fd (for epoll reactor registration).
-    pub(crate) fn as_raw_fd(&self) -> i32 {
+    pub fn as_raw_fd(&self) -> i32 {
         use std::os::fd::AsRawFd as _;
         self.listener.as_raw_fd()
     }
 
     /// Serve one request: accept, write metrics text, close. Returns
     /// `false` when no connection was pending.
-    pub(crate) fn poll_once(&mut self, metrics: &Metrics) -> std::io::Result<bool> {
+    pub fn poll_once(&mut self, metrics: &Metrics) -> std::io::Result<bool> {
         let (mut stream, _addr) = match self.listener.accept() {
             Ok(conn) => conn,
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(false),

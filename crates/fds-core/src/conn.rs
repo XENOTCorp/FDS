@@ -9,32 +9,32 @@ use std::net::SocketAddr;
 /// A packed connection id: core in the high 32 bits, slot index in the
 /// low 32 bits. Cheap to encode/decode, safe to use as an epoll token.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct ConnectionId(u64);
+pub struct ConnectionId(u64);
 
 impl ConnectionId {
     #[inline]
-    pub(crate) const fn new(core: u32, slot: u32) -> Self {
+    pub const fn new(core: u32, slot: u32) -> Self {
         ConnectionId(((core as u64) << 32) | slot as u64)
     }
 
     #[inline]
-    pub(crate) const fn core(&self) -> u32 {
+    pub const fn core(&self) -> u32 {
         (self.0 >> 32) as u32
     }
 
     #[inline]
-    pub(crate) const fn slot(&self) -> u32 {
+    pub const fn slot(&self) -> u32 {
         self.0 as u32
     }
 
     #[inline]
-    pub(crate) const fn as_u64(&self) -> u64 {
+    pub const fn as_u64(&self) -> u64 {
         self.0
     }
 
     /// Rebuild from an epoll token (the u64 the reactor stores).
     #[inline]
-    pub(crate) const fn from_u64(token: u64) -> Self {
+    pub const fn from_u64(token: u64) -> Self {
         ConnectionId(token)
     }
 }
@@ -42,7 +42,7 @@ impl ConnectionId {
 /// HOT connection fields: read/written on every step. Own cache line.
 #[repr(align(64))]
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct HotState {
+pub struct HotState {
     /// Protocol sequence number / stream offset (TCP seq, SCTP TSN, ...).
     pub seq: u32,
     /// Last activity in coarse monotonic ticks (seconds since start).
@@ -55,7 +55,7 @@ pub(crate) struct HotState {
 /// Own cache line.
 #[repr(align(64))]
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct ColdState {
+pub struct ColdState {
     pub peer: SocketAddr,
     pub established_at: u64,
     /// Protocol-specific cold flags (e.g. TCP_MD5 enabled).
@@ -63,7 +63,7 @@ pub(crate) struct ColdState {
 }
 
 /// A connection: hot and cold halves, each alone on a cache line.
-pub(crate) struct Connection {
+pub struct Connection {
     pub hot: CachePadded<HotState>,
     pub cold: CachePadded<ColdState>,
     /// The fd for this connection (transport-owned; -1 when unbound).
@@ -72,10 +72,10 @@ pub(crate) struct Connection {
 
 /// Connection table capacity per worker (preallocated slots). Shared by
 /// the epoll and io_uring datapaths.
-pub(crate) const CONN_CAP: usize = 1024;
+pub const CONN_CAP: usize = 1024;
 
 impl Connection {
-    pub(crate) fn new(peer: SocketAddr, established_at: u64) -> Self {
+    pub fn new(peer: SocketAddr, established_at: u64) -> Self {
         Connection {
             hot: CachePadded::new(HotState {
                 seq: 0,
@@ -96,7 +96,7 @@ impl Connection {
 /// in a lock-free MPMC ring, so acquire/release are non-blocking and
 /// allocation-free in the hot path. `Sync` when `T: Send` (slot access is
 /// mediated by the free ring; each slot is owned by exactly one guard).
-pub(crate) struct ConnTable<const CAP: usize> {
+pub struct ConnTable<const CAP: usize> {
     pool: Pool<Connection, CAP>,
     /// Per-slot flags used by transports (e.g. closed/ready bits).
     /// Rarely touched, so plain relaxed atomics are fine.
@@ -108,7 +108,7 @@ unsafe impl<const CAP: usize> Sync for ConnTable<CAP> {}
 impl<const CAP: usize> ConnTable<CAP> {
     /// A new table; the caller initializes every slot (see
     /// [`ConnTable::initialize`]) before sharing it.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         ConnTable {
             pool: Pool::new(),
             flags: std::array::from_fn(|_| std::sync::atomic::AtomicU8::new(0)),
@@ -116,12 +116,12 @@ impl<const CAP: usize> ConnTable<CAP> {
     }
 
     /// Initialize slot `i` (call once per slot before sharing).
-    pub(crate) fn initialize(&self, i: usize, conn: Connection) {
+    pub fn initialize(&self, i: usize, conn: Connection) {
         self.pool.initialize(i, conn);
     }
 
     /// Acquire a free slot, or `None` when the table is full.
-    pub(crate) fn try_acquire(&self) -> Option<ConnectionSlot<'_, CAP>> {
+    pub fn try_acquire(&self) -> Option<ConnectionSlot<'_, CAP>> {
         let guard = self.pool.try_alloc()?;
         Some(ConnectionSlot { guard })
     }
@@ -130,35 +130,35 @@ impl<const CAP: usize> ConnTable<CAP> {
     /// and MUST call [`ConnTable::release_slot`] exactly once (used by
     /// completion-driven datapaths where the slot outlives the accept
     /// frame and a guard would release it early).
-    pub(crate) fn acquire_index(&self) -> Option<usize> {
+    pub fn acquire_index(&self) -> Option<usize> {
         self.pool.try_alloc_index()
     }
 
     /// Number of slots in use.
-    pub(crate) fn in_use(&self) -> usize {
+    pub fn in_use(&self) -> usize {
         self.pool.in_use()
     }
 
     /// Release a slot back to the free list (the caller must own it —
     /// e.g. after closing a connection). The slot's data stays in place
     /// for the next owner.
-    pub(crate) fn release_slot(&self, slot: usize) {
+    pub fn release_slot(&self, slot: usize) {
         self.pool.release_index(slot);
     }
 
     /// Mutable access to an owned slot's connection (the caller must own
     /// the slot — e.g. the reactor holds it for a live connection).
-    pub(crate) fn conn_mut(&self, slot: usize) -> &mut Connection {
+    pub fn conn_mut(&self, slot: usize) -> &mut Connection {
         self.pool.get_mut(slot)
     }
 
     /// Capacity.
-    pub(crate) const fn capacity() -> usize {
+    pub const fn capacity() -> usize {
         CAP
     }
 
     /// Set a transport flag on a slot (relaxed; call from the owning core).
-    pub(crate) fn set_flag(&self, slot: usize, bit: u8, on: bool) {
+    pub fn set_flag(&self, slot: usize, bit: u8, on: bool) {
         use std::sync::atomic::Ordering;
         let f = &self.flags[slot];
         if on {
@@ -169,7 +169,7 @@ impl<const CAP: usize> ConnTable<CAP> {
     }
 
     /// Read a transport flag.
-    pub(crate) fn flag(&self, slot: usize, bit: u8) -> bool {
+    pub fn flag(&self, slot: usize, bit: u8) -> bool {
         use std::sync::atomic::Ordering;
         self.flags[slot].load(Ordering::Relaxed) & bit != 0
     }
@@ -182,21 +182,21 @@ impl<const CAP: usize> Default for ConnTable<CAP> {
 }
 
 /// An acquired table slot; returns the slot to the free list on drop.
-pub(crate) struct ConnectionSlot<'a, const CAP: usize> {
+pub struct ConnectionSlot<'a, const CAP: usize> {
     guard: PoolGuard<'a, Connection, CAP>,
 }
 
 impl<'a, const CAP: usize> ConnectionSlot<'a, CAP> {
     /// The slot index (low 32 bits of the [`ConnectionId`]).
-    pub(crate) fn index(&self) -> usize {
+    pub fn index(&self) -> usize {
         self.guard.index()
     }
 
-    pub(crate) fn conn(&self) -> &Connection {
+    pub fn conn(&self) -> &Connection {
         &self.guard
     }
 
-    pub(crate) fn conn_mut(&mut self) -> &mut Connection {
+    pub fn conn_mut(&mut self) -> &mut Connection {
         &mut self.guard
     }
 }

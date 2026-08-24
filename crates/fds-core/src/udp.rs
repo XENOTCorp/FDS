@@ -8,7 +8,7 @@
 //! with the exact signatures below (the crate compiles with these stubs;
 //! replace `todo!()` bodies). Batches reuse preallocated arrays of
 //! [`mol::Buffer`]; the hot path must not allocate. Wire the offloads
-//! from [`crate::Config`]. Tests: loopback send/recv roundtrip, batch of
+//! from [`crate::config::Config`]. Tests: loopback send/recv roundtrip, batch of
 //! N datagrams preserves order and content, GSO send when enabled,
 //! MSG_TRUNC oversized-datagram detection, truncated/short buffer
 //! handling. Mark tests that need offload support with graceful skips
@@ -29,15 +29,15 @@ const MAX_BATCH: usize = 64;
 /// never truncates, not even for loopback GSO/GRO jumbo datagrams. The
 /// engine and the large-datagram bench allocate [`mol::Buffer`]s of this
 /// size; small buffers are only used by tests exercising MSG_TRUNC.
-pub(crate) const MAX_DATAGRAM: usize = 65536;
+pub const MAX_DATAGRAM: usize = 65536;
 
 /// `UDP_SEGMENT` (GSO) socket option, `<linux/udp.h>`. libc 0.2 does not
 /// export it for glibc targets, so define it here (103, verified against
 /// /usr/include/linux/udp.h).
-pub(crate) const UDP_SEGMENT: libc::c_int = 103;
+pub const UDP_SEGMENT: libc::c_int = 103;
 
 /// `UDP_GRO` socket option, `<linux/udp.h>` (104); see [`UDP_SEGMENT`].
-pub(crate) const UDP_GRO: libc::c_int = 104;
+pub const UDP_GRO: libc::c_int = 104;
 
 /// A nonblocking UDP socket with batch I/O.
 ///
@@ -46,7 +46,7 @@ pub(crate) const UDP_GRO: libc::c_int = 104;
 /// `UnsafeCell` because the batch methods take `&self`; a socket is
 /// owned by exactly one reactor thread at a time, so `recv_batch` and
 /// `send_batch` never run concurrently on the same socket.
-pub(crate) struct UdpSocket {
+pub struct UdpSocket {
     fd: OwnedFd,
     /// Config snapshot (offloads applied in `new`).
     cfg: UdpConfig,
@@ -59,7 +59,7 @@ pub(crate) struct UdpSocket {
 }
 
 /// One receive slot: buffer + sender address + metadata.
-pub(crate) struct RecvResult {
+pub struct RecvResult {
     pub len: usize,
     pub src: SocketAddr,
     /// True when MSG_TRUNC reported the datagram larger than the buffer.
@@ -84,7 +84,7 @@ fn zeroed_array<T>() -> Box<[T]> {
 }
 
 /// `setsockopt` with a single `int` value.
-pub(crate) fn set_int(fd: i32, level: libc::c_int, opt: libc::c_int, val: libc::c_int) -> io::Result<()> {
+pub fn set_int(fd: i32, level: libc::c_int, opt: libc::c_int, val: libc::c_int) -> io::Result<()> {
     // SAFETY: `val` is valid for the duration of the call; the kernel
     // copies the option value before `setsockopt` returns.
     let ret = unsafe {
@@ -145,7 +145,7 @@ fn addr_from_storage(ss: &libc::sockaddr_storage) -> SocketAddr {
 
 impl UdpSocket {
     /// Bind a nonblocking UDP socket (IPv4) to `addr`, applying `cfg`.
-    pub(crate) fn new(addr: SocketAddr, cfg: &UdpConfig) -> std::io::Result<Self> {
+    pub fn new(addr: SocketAddr, cfg: &UdpConfig) -> std::io::Result<Self> {
         // SAFETY: `socket` returns a fresh descriptor (or -1); the flags
         // are plain bitwise constants.
         let fd = unsafe {
@@ -242,7 +242,7 @@ impl UdpSocket {
     /// Generic over the buffer size so the engine can receive jumbo
     /// datagrams whole ([`MAX_DATAGRAM`]) while tests use small buffers
     /// to exercise MSG_TRUNC.
-    pub(crate) fn recv_batch<const N: usize>(
+    pub fn recv_batch<const N: usize>(
         &self,
         bufs: &mut [mol::Buffer<N>],
         out: &mut [RecvResult],
@@ -317,7 +317,7 @@ impl UdpSocket {
     }
 
     /// Send one datagram (single datagram path).
-    pub(crate) fn send_to(&self, data: &[u8], dst: SocketAddr) -> std::io::Result<usize> {
+    pub fn send_to(&self, data: &[u8], dst: SocketAddr) -> std::io::Result<usize> {
         let sa = sockaddr_in_from(dst)?;
         // SAFETY: `data` is a valid byte slice for the call duration; the
         // kernel copies the payload before `sendto` returns.
@@ -349,7 +349,7 @@ impl UdpSocket {
     /// NIC supports it). Only valid when the socket was created with
     /// `cfg.zerocopy` (SO_ZEROCOPY set); requires CAP_NET_RAW. Returns
     /// `Err(Unsupported)` when the kernel/NIC cannot do zerocopy.
-    pub(crate) fn send_to_zerocopy(&self, data: &[u8], dst: SocketAddr) -> std::io::Result<usize> {
+    pub fn send_to_zerocopy(&self, data: &[u8], dst: SocketAddr) -> std::io::Result<usize> {
         const MSG_ZEROCOPY: libc::c_int = 0x4000000;
         let sa = sockaddr_in_from(dst)?;
         let mut iov = libc::iovec {
@@ -389,7 +389,7 @@ impl UdpSocket {
 
     /// Send a batch of datagrams (sendmmsg path). Returns the number
     /// sent (0 = would block on the first message).
-    pub(crate) fn send_batch(&self, msgs: &[(&[u8], SocketAddr)]) -> std::io::Result<usize> {
+    pub fn send_batch(&self, msgs: &[(&[u8], SocketAddr)]) -> std::io::Result<usize> {
         let n = msgs.len().min(MAX_BATCH);
         if n == 0 {
             return Ok(0);
@@ -447,7 +447,7 @@ impl UdpSocket {
     }
 
     /// The local address.
-    pub(crate) fn local_addr(&self) -> std::io::Result<SocketAddr> {
+    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
         // SAFETY: a zeroed `sockaddr_storage` is a valid destination;
         // the kernel fills it before `getsockname` returns.
         let mut ss: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
@@ -468,7 +468,7 @@ impl UdpSocket {
     }
 
     /// The raw fd (for reactor registration).
-    pub(crate) fn as_raw_fd(&self) -> i32 {
+    pub fn as_raw_fd(&self) -> i32 {
         self.fd.as_raw_fd()
     }
 }

@@ -2,7 +2,7 @@
 //! nonblocking `accept4` listeners, `readv`/`writev` scatter-gather for
 //! partial reads/writes, `sendfile`/`splice` zero-copy for file-backed
 //! responses (valid-fd discipline — no double-close), and the option set
-//! from [`crate::Config`] (NODELAY default on, QUICKACK, DEFER_ACCEPT,
+//! from [`crate::config::Config`] (NODELAY default on, QUICKACK, DEFER_ACCEPT,
 //! FASTOPEN config-gated with the spoofing caveat documented, CORK
 //! opt-in). Connection state uses [`crate::conn`] hot/cold halves.
 //!
@@ -18,13 +18,13 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
 
 /// A nonblocking TCP listener with `accept4(..., SOCK_NONBLOCK)`.
-pub(crate) struct TcpListener {
+pub struct TcpListener {
     fd: OwnedFd,
     cfg: TcpConfig,
 }
 
 /// A nonblocking TCP connection.
-pub(crate) struct TcpStream {
+pub struct TcpStream {
     fd: OwnedFd,
 }
 
@@ -52,12 +52,31 @@ impl AsRawFd for TcpStream {
     }
 }
 
-/// Convert a `sockaddr_in` (accept4/getpeername/getsockname output) to a
-/// `SocketAddr`. `s_addr` is stored in network byte order, so reading it
-/// as native-endian bytes recovers the octets on any host.
-fn sockaddr_to_socket_addr(sin: &libc::sockaddr_in) -> SocketAddr {
-    let ip = Ipv4Addr::from(sin.sin_addr.s_addr.to_ne_bytes());
-    SocketAddr::new(std::net::IpAddr::V4(ip), u16::from_be(sin.sin_port))
+/// Convert a `sockaddr_storage` (accept4/getpeername/getsockname output)
+/// to a `SocketAddr`. Address and port are stored in network byte order,
+/// so reading them as native-endian bytes recovers the octets on any host.
+fn sockaddr_to_socket_addr(ss: &libc::sockaddr_storage) -> SocketAddr {
+    match ss.ss_family as libc::c_int {
+        libc::AF_INET => {
+            // SAFETY: AF_INET guarantees the kernel wrote a `sockaddr_in`
+            // at this address; both structs start with the family field
+            // and `sockaddr_in` is a prefix of `sockaddr_storage`.
+            let sin = unsafe { &*(ss as *const libc::sockaddr_storage).cast::<libc::sockaddr_in>() };
+            SocketAddr::new(
+                std::net::IpAddr::V4(Ipv4Addr::from(sin.sin_addr.s_addr.to_ne_bytes())),
+                u16::from_be(sin.sin_port),
+            )
+        }
+        libc::AF_INET6 => {
+            // SAFETY: as above, with `sockaddr_in6`.
+            let sin6 = unsafe { &*(ss as *const libc::sockaddr_storage).cast::<libc::sockaddr_in6>() };
+            SocketAddr::new(
+                std::net::IpAddr::V6(std::net::Ipv6Addr::from(sin6.sin6_addr.s6_addr)),
+                u16::from_be(sin6.sin6_port),
+            )
+        }
+        _ => panic!("socket reported a non-IP address family"),
+    }
 }
 
 /// True for EAGAIN/EWOULDBLOCK: the nonblocking queue is momentarily empty.
@@ -91,19 +110,18 @@ fn set_int_sockopt(
 }
 
 impl TcpListener {
-    /// Bind + listen on `addr`, applying `cfg`.
-    pub(crate) fn bind(addr: SocketAddr, cfg: &TcpConfig) -> std::io::Result<Self> {
-        if !addr.is_ipv4() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "TcpListener::bind: AF_INET only (IPv4)",
-            ));
-        }
+    /// Bind + listen on `addr` (IPv4 or IPv6), applying `cfg` and the
+    /// given `backlog` (clamped to at least 1; the kernel caps it).
+    pub fn bind(addr: SocketAddr, cfg: &TcpConfig, backlog: i32) -> std::io::Result<Self> {
+        let family = match addr {
+            SocketAddr::V4(_) => libc::AF_INET,
+            SocketAddr::V6(_) => libc::AF_INET6,
+        };
         // SAFETY: socket() returns a fresh fd or -1; ownership of a
         // non-negative result passes to us.
         let raw = unsafe {
             libc::socket(
-                libc::AF_INET,
+                family,
                 libc::SOCK_STREAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC,
                 0,
             )
@@ -116,32 +134,52 @@ impl TcpListener {
         let fd = unsafe { OwnedFd::from_raw_fd(raw) };
         Self::apply_listen_options(&fd, cfg)?;
 
-        // `addr` was checked to be IPv4 above; `SocketAddr::V4` is total.
-        let SocketAddr::V4(v4) = addr else {
-            unreachable!("IPv4 checked above");
-        };
-        let sin = libc::sockaddr_in {
-            sin_family: libc::AF_INET as libc::sa_family_t,
-            sin_port: v4.port().to_be(),
-            sin_addr: libc::in_addr {
-                s_addr: u32::from_ne_bytes(v4.ip().octets()),
-            },
-            sin_zero: [0; 8],
-        };
-        // SAFETY: `sin` is a fully initialized sockaddr_in of the exact
-        // size the kernel expects for AF_INET.
-        let r = unsafe {
-            libc::bind(
-                fd.as_raw_fd(),
-                &sin as *const libc::sockaddr_in as *const libc::sockaddr,
-                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
-            )
+        let r = match addr {
+            SocketAddr::V4(v4) => {
+                let sin = libc::sockaddr_in {
+                    sin_family: libc::AF_INET as libc::sa_family_t,
+                    sin_port: v4.port().to_be(),
+                    sin_addr: libc::in_addr {
+                        s_addr: u32::from_ne_bytes(v4.ip().octets()),
+                    },
+                    sin_zero: [0; 8],
+                };
+                // SAFETY: `sin` is a fully initialized sockaddr_in of the
+                // exact size the kernel expects for AF_INET.
+                unsafe {
+                    libc::bind(
+                        fd.as_raw_fd(),
+                        &sin as *const libc::sockaddr_in as *const libc::sockaddr,
+                        std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+                    )
+                }
+            }
+            SocketAddr::V6(v6) => {
+                let sin6 = libc::sockaddr_in6 {
+                    sin6_family: libc::AF_INET6 as libc::sa_family_t,
+                    sin6_port: v6.port().to_be(),
+                    sin6_flowinfo: 0,
+                    sin6_addr: libc::in6_addr {
+                        s6_addr: v6.ip().octets(),
+                    },
+                    sin6_scope_id: v6.scope_id(),
+                };
+                // SAFETY: `sin6` is a fully initialized sockaddr_in6 of
+                // the exact size the kernel expects for AF_INET6.
+                unsafe {
+                    libc::bind(
+                        fd.as_raw_fd(),
+                        &sin6 as *const libc::sockaddr_in6 as *const libc::sockaddr,
+                        std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+                    )
+                }
+            }
         };
         if r != 0 {
             return Err(std::io::Error::last_os_error());
         }
         // SAFETY: listen on a bound, valid fd; failure returns -1.
-        if unsafe { libc::listen(fd.as_raw_fd(), libc::SOMAXCONN) } != 0 {
+        if unsafe { libc::listen(fd.as_raw_fd(), backlog.max(1)) } != 0 {
             return Err(std::io::Error::last_os_error());
         }
         Ok(TcpListener {
@@ -177,15 +215,15 @@ impl TcpListener {
 
     /// Accept one connection; returns `None` when the accept queue is
     /// empty (EAGAIN).
-    pub(crate) fn accept(&self) -> std::io::Result<Option<(TcpStream, SocketAddr)>> {
-        let mut sin: libc::sockaddr_in = unsafe { std::mem::zeroed() };
-        let mut len = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
-        // SAFETY: accept4 writes a sockaddr_in and its length into `sin`/
-        // `len`; both are valid for the call.
+    pub fn accept(&self) -> std::io::Result<Option<(TcpStream, SocketAddr)>> {
+        let mut ss: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+        let mut len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+        // SAFETY: accept4 writes a sockaddr and its length into `ss`/`len`;
+        // both are valid for the call (sockaddr_storage fits any family).
         let raw = unsafe {
             libc::accept4(
                 self.fd.as_raw_fd(),
-                &mut sin as *mut libc::sockaddr_in as *mut libc::sockaddr,
+                &mut ss as *mut libc::sockaddr_storage as *mut libc::sockaddr,
                 &mut len,
                 libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC,
             )
@@ -203,7 +241,7 @@ impl TcpListener {
             fd: unsafe { OwnedFd::from_raw_fd(raw) },
         };
         Self::apply_conn_options(&stream, &self.cfg)?;
-        let peer = sockaddr_to_socket_addr(&sin);
+        let peer = sockaddr_to_socket_addr(&ss);
         Ok(Some((stream, peer)))
     }
 
@@ -228,8 +266,28 @@ impl TcpListener {
         Ok(())
     }
 
+    /// The bound local address (getsockname) — authoritative after a
+    /// port-0 bind reports the kernel-assigned port.
+    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        let mut ss: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+        let mut len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+        // SAFETY: getsockname writes a sockaddr and its length into
+        // `ss`/`len`; both are valid for the call.
+        let r = unsafe {
+            libc::getsockname(
+                self.fd.as_raw_fd(),
+                &mut ss as *mut libc::sockaddr_storage as *mut libc::sockaddr,
+                &mut len,
+            )
+        };
+        if r != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(sockaddr_to_socket_addr(&ss))
+    }
+
     /// The raw fd (for reactor registration).
-    pub(crate) fn as_raw_fd(&self) -> i32 {
+    pub fn as_raw_fd(&self) -> i32 {
         self.fd.as_raw_fd()
     }
 }
@@ -237,7 +295,7 @@ impl TcpListener {
 impl TcpStream {
     /// Read into the buffer, returning bytes read (0 = EOF, Err WouldBlock
     /// means drained — callers treat WouldBlock as drain-to-EAGAIN).
-    pub(crate) fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+    pub fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         // SAFETY: read writes at most buf.len() bytes into `buf`, which is
         // a valid mutable slice for the duration of the call.
         let n = unsafe {
@@ -261,7 +319,7 @@ impl TcpStream {
     }
 
     /// Scatter-gather read into `bufs`, chunked over a stack `[iovec; 16]`.
-    pub(crate) fn readv(&mut self, bufs: &mut [&mut [u8]]) -> std::io::Result<usize> {
+    pub fn readv(&mut self, bufs: &mut [&mut [u8]]) -> std::io::Result<usize> {
         let mut total = 0usize;
         let mut off = 0usize;
         while off < bufs.len() {
@@ -301,7 +359,7 @@ impl TcpStream {
     }
 
     /// Write all of `data` (handles partial writes internally).
-    pub(crate) fn write_all(&mut self, mut data: &[u8]) -> std::io::Result<()> {
+    pub fn write_all(&mut self, mut data: &[u8]) -> std::io::Result<()> {
         // MSG_NOSIGNAL: the process does not ignore SIGPIPE, so writes to
         // a reset connection must not raise it.
         while !data.is_empty() {
@@ -333,7 +391,7 @@ impl TcpStream {
     }
 
     /// Gathered write over a stack `[iovec; 16]`.
-    pub(crate) fn writev(&mut self, bufs: &[&[u8]]) -> std::io::Result<usize> {
+    pub fn writev(&mut self, bufs: &[&[u8]]) -> std::io::Result<usize> {
         let mut total = 0usize;
         let mut off = 0usize;
         while off < bufs.len() {
@@ -374,7 +432,7 @@ impl TcpStream {
 
     /// Zero-copy splice: send `len` bytes from the seekable fd `src_fd`
     /// (e.g. an open file) into this socket. Returns bytes spliced.
-    pub(crate) fn splice_from_fd(&mut self, src_fd: i32, len: usize) -> std::io::Result<usize> {
+    pub fn splice_from_fd(&mut self, src_fd: i32, len: usize) -> std::io::Result<usize> {
         // SAFETY: `src_fd` is owned by the caller (valid-fd discipline —
         // we never close it here); SPLICE_F_MOVE is a move hint, not an
         // ownership transfer. At least one end of a splice must be a
@@ -404,26 +462,26 @@ impl TcpStream {
     }
 
     /// The peer address.
-    pub(crate) fn peer_addr(&self) -> std::io::Result<SocketAddr> {
-        let mut sin: libc::sockaddr_in = unsafe { std::mem::zeroed() };
-        let mut len = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
-        // SAFETY: getpeername writes a sockaddr_in and its length into
-        // `sin`/`len`; both are valid for the call.
+    pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
+        let mut ss: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+        let mut len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+        // SAFETY: getpeername writes a sockaddr and its length into
+        // `ss`/`len`; both are valid for the call.
         let r = unsafe {
             libc::getpeername(
                 self.fd.as_raw_fd(),
-                &mut sin as *mut libc::sockaddr_in as *mut libc::sockaddr,
+                &mut ss as *mut libc::sockaddr_storage as *mut libc::sockaddr,
                 &mut len,
             )
         };
         if r != 0 {
             return Err(std::io::Error::last_os_error());
         }
-        Ok(sockaddr_to_socket_addr(&sin))
+        Ok(sockaddr_to_socket_addr(&ss))
     }
 
     /// The raw fd (for reactor registration).
-    pub(crate) fn as_raw_fd(&self) -> i32 {
+    pub fn as_raw_fd(&self) -> i32 {
         self.fd.as_raw_fd()
     }
 }
@@ -439,19 +497,19 @@ mod tests {
 
     /// The bound address of a listener socket (bound to port 0).
     fn bound_addr(fd: i32) -> SocketAddr {
-        let mut sin: libc::sockaddr_in = unsafe { std::mem::zeroed() };
-        let mut len = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
-        // SAFETY: getsockname writes a sockaddr_in and its length into
-        // `sin`/`len`; both are valid for the call.
+        let mut ss: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+        let mut len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+        // SAFETY: getsockname writes a sockaddr and its length into
+        // `ss`/`len`; both are valid for the call.
         let r = unsafe {
             libc::getsockname(
                 fd,
-                &mut sin as *mut libc::sockaddr_in as *mut libc::sockaddr,
+                &mut ss as *mut libc::sockaddr_storage as *mut libc::sockaddr,
                 &mut len,
             )
         };
         assert_eq!(r, 0);
-        sockaddr_to_socket_addr(&sin)
+        sockaddr_to_socket_addr(&ss)
     }
 
     /// Accept with a bounded retry: the kernel completes the handshake
@@ -482,7 +540,7 @@ mod tests {
     #[test]
     fn tcp_loopback_echo() {
         let cfg = TcpConfig::default();
-        let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)), &cfg).unwrap();
+        let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)), &cfg, 128).unwrap();
         let addr = bound_addr(listener.as_raw_fd());
         let mut client = std::net::TcpStream::connect(addr).unwrap();
         let (mut stream, peer) = accept_ready(&listener);
@@ -500,9 +558,36 @@ mod tests {
     }
 
     #[test]
+    fn tcp_ipv6_loopback_echo() {
+        // IPv6 loopback is unavailable in some sandboxes; skip gracefully.
+        let cfg = TcpConfig::default();
+        let listener = match TcpListener::bind(
+            SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 0)),
+            &cfg,
+            128,
+        ) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("skipping: IPv6 loopback unavailable ({e})");
+                return;
+            }
+        };
+        let addr = listener.local_addr().unwrap();
+        assert!(addr.is_ipv6(), "local addr must be IPv6: {addr}");
+        let mut client = std::net::TcpStream::connect(addr).unwrap();
+        let (mut stream, peer) = accept_ready(&listener);
+        assert!(peer.is_ipv6() && peer.ip().is_loopback());
+
+        stream.write_all(b"v6").unwrap();
+        let mut back = [0u8; 2];
+        client.read_exact(&mut back).unwrap();
+        assert_eq!(&back, b"v6");
+    }
+
+    #[test]
     fn tcp_accept_empty() {
         let cfg = TcpConfig::default();
-        let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)), &cfg).unwrap();
+        let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)), &cfg, 128).unwrap();
         // Idle listener: the accept queue is empty, so accept() reports
         // None (EAGAIN) instead of blocking.
         assert!(listener.accept().unwrap().is_none());
@@ -511,7 +596,7 @@ mod tests {
     #[test]
     fn tcp_partial_reads() {
         let cfg = TcpConfig::default();
-        let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)), &cfg).unwrap();
+        let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)), &cfg, 128).unwrap();
         let addr = bound_addr(listener.as_raw_fd());
         let mut client = std::net::TcpStream::connect(addr).unwrap();
         let (mut stream, _peer) = accept_ready(&listener);
@@ -539,7 +624,7 @@ mod tests {
             nodelay: true,
             ..TcpConfig::default()
         };
-        let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)), &cfg).unwrap();
+        let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)), &cfg, 128).unwrap();
         let addr = bound_addr(listener.as_raw_fd());
         let _client = std::net::TcpStream::connect(addr).unwrap();
         let (stream, _peer) = accept_ready(&listener);
@@ -550,7 +635,7 @@ mod tests {
     #[test]
     fn tcp_splice_tempfile() {
         let cfg = TcpConfig::default();
-        let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)), &cfg).unwrap();
+        let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)), &cfg, 128).unwrap();
         let addr = bound_addr(listener.as_raw_fd());
         let mut client = std::net::TcpStream::connect(addr).unwrap();
         let (mut stream, _peer) = accept_ready(&listener);
