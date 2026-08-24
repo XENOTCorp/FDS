@@ -30,20 +30,20 @@ extern "C" {
 }
 
 /// A nonblocking SCTP one-to-one (or one-to-many) socket.
-pub struct SctpSocket {
+pub(crate) struct SctpSocket {
     // CONTRACT: implementer chooses fd storage; public API is binding.
     _private: (),
 }
 
 impl SctpSocket {
     /// Create and bind an SCTP socket on `addr`, applying `cfg`.
-    pub fn bind(addr: SocketAddr, cfg: &SctpConfig) -> std::io::Result<Self> {
+    pub(crate) fn bind(addr: SocketAddr, cfg: &SctpConfig) -> std::io::Result<Self> {
         let _ = (addr, cfg);
         todo!("SctpSocket::bind: implemented by fds-core milestone task")
     }
 
     /// Send `data` on stream `stream_id` to `dst`.
-    pub fn send_msg(
+    pub(crate) fn send_msg(
         &self,
         data: &[u8],
         stream_id: u16,
@@ -55,25 +55,25 @@ impl SctpSocket {
 
     /// Receive one message; returns the payload length, the sender, and
     /// the stream id. `Err(WouldBlock)` = drained.
-    pub fn recv_msg(&self, buf: &mut [u8], out_stream: &mut u16) -> std::io::Result<(usize, SocketAddr)> {
+    pub(crate) fn recv_msg(&self, buf: &mut [u8], out_stream: &mut u16) -> std::io::Result<(usize, SocketAddr)> {
         let _ = (buf, out_stream);
         todo!("SctpSocket::recv_msg: implemented by fds-core milestone task")
     }
 
     /// Peel off the association with the given id into its own socket.
-    pub fn peeloff(&self, assoc_id: u32) -> std::io::Result<Self> {
+    pub(crate) fn peeloff(&self, assoc_id: u32) -> std::io::Result<Self> {
         let _ = assoc_id;
         todo!("SctpSocket::peeloff: implemented by fds-core milestone task")
     }
 
     /// Add a local address (multi-homing) via `sctp_bindx`.
-    pub fn add_local_addr(&self, addr: SocketAddr) -> std::io::Result<()> {
+    pub(crate) fn add_local_addr(&self, addr: SocketAddr) -> std::io::Result<()> {
         let _ = addr;
         todo!("SctpSocket::add_local_addr: implemented by fds-core milestone task")
     }
 
     /// The raw fd.
-    pub fn as_raw_fd(&self) -> i32 {
+    pub(crate) fn as_raw_fd(&self) -> i32 {
         todo!("SctpSocket::as_raw_fd: implemented by fds-core milestone task")
     }
 }

@@ -6,8 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 description = "FDS transport engine: nonblocking edge-triggered busy-polling TCP/UDP/SCTP dataplane on the Mol framework (Linux)."
 
-[lib]
+# The engine is a binary package: no public API surface. All modules are
+# crate-private (pub(crate)); the `fds` binary is the product.
+[[bin]]
 name = "fds"
+path = "src/main.rs"
 
 [dependencies]
 mol-core = { path = "../mol-core" }

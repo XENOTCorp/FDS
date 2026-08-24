@@ -18,7 +18,7 @@ use crate::config::UdpConfig;
 use std::net::SocketAddr;
 
 /// A nonblocking UDP socket with batch I/O.
-pub struct UdpSocket {
+pub(crate) struct UdpSocket {
     // CONTRACT: implementer chooses the fd storage (e.g. rustix OwnedFd
     // or std OwnedFd); fields may differ, but the public API below is
     // binding.
@@ -26,7 +26,7 @@ pub struct UdpSocket {
 }
 
 /// One receive slot: buffer + sender address + metadata.
-pub struct RecvResult {
+pub(crate) struct RecvResult {
     pub len: usize,
     pub src: SocketAddr,
     /// True when MSG_TRUNC reported the datagram larger than the buffer.
@@ -35,7 +35,7 @@ pub struct RecvResult {
 
 impl UdpSocket {
     /// Bind a nonblocking UDP socket (IPv4) to `addr`, applying `cfg`.
-    pub fn new(addr: SocketAddr, cfg: &UdpConfig) -> std::io::Result<Self> {
+    pub(crate) fn new(addr: SocketAddr, cfg: &UdpConfig) -> std::io::Result<Self> {
         let _ = (addr, cfg);
         todo!("UdpSocket::new: implemented by fds-core milestone task")
     }
@@ -43,7 +43,7 @@ impl UdpSocket {
     /// Receive a batch of up to `bufs.len()` datagrams into the given
     /// preallocated buffers. Returns the number of datagrams received
     /// (0 = would block). Callers MUST drain until 0 (drain-to-EAGAIN).
-    pub fn recv_batch(
+    pub(crate) fn recv_batch(
         &self,
         bufs: &mut [mol::Buffer<2048>],
         out: &mut [RecvResult],
@@ -53,25 +53,25 @@ impl UdpSocket {
     }
 
     /// Send one datagram (single datagram path).
-    pub fn send_to(&self, data: &[u8], dst: SocketAddr) -> std::io::Result<usize> {
+    pub(crate) fn send_to(&self, data: &[u8], dst: SocketAddr) -> std::io::Result<usize> {
         let _ = (data, dst);
         todo!("UdpSocket::send_to: implemented by fds-core milestone task")
     }
 
     /// Send a batch of datagrams (sendmmsg path). Returns the number
     /// sent.
-    pub fn send_batch(&self, msgs: &[(&[u8], SocketAddr)]) -> std::io::Result<usize> {
+    pub(crate) fn send_batch(&self, msgs: &[(&[u8], SocketAddr)]) -> std::io::Result<usize> {
         let _ = msgs;
         todo!("UdpSocket::send_batch: implemented by fds-core milestone task")
     }
 
     /// The local address.
-    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+    pub(crate) fn local_addr(&self) -> std::io::Result<SocketAddr> {
         todo!("UdpSocket::local_addr: implemented by fds-core milestone task")
     }
 
     /// The raw fd (for reactor registration).
-    pub fn as_raw_fd(&self) -> i32 {
+    pub(crate) fn as_raw_fd(&self) -> i32 {
         todo!("UdpSocket::as_raw_fd: implemented by fds-core milestone task")
     }
 }

@@ -16,7 +16,7 @@ use mol::{Atom, PureAtom};
 
 /// Parser failure: an enum of the ways a header can be malformed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ParseError {
+pub(crate) enum ParseError {
     /// Fewer bytes than the header requires.
     Truncated,
     /// A length field (IHL, payload length, ...) is inconsistent.
@@ -27,7 +27,7 @@ pub enum ParseError {
 
 /// Parsed IPv4 header (fixed 20-byte form; options are not a fast path).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Ipv4Header {
+pub(crate) struct Ipv4Header {
     pub total_len: u16,
     pub identification: u16,
     pub flags_fragment: u16,
@@ -39,7 +39,7 @@ pub struct Ipv4Header {
 
 /// Parsed UDP header (8 bytes).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct UdpHeader {
+pub(crate) struct UdpHeader {
     pub src_port: u16,
     pub dst_port: u16,
     pub len: u16,
@@ -48,7 +48,7 @@ pub struct UdpHeader {
 /// Parsed TCP header (fixed 20-byte form; options skipped after the
 /// data-offset field).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TcpHeader {
+pub(crate) struct TcpHeader {
     pub src_port: u16,
     pub dst_port: u16,
     pub seq: u32,
@@ -61,7 +61,7 @@ pub struct TcpHeader {
 }
 
 /// Pure atom: `&[u8]` → [`Ipv4Header`].
-pub struct ParseIpv4;
+pub(crate) struct ParseIpv4;
 
 impl Atom for ParseIpv4 {
     type Input = &'static [u8];
@@ -75,7 +75,7 @@ impl PureAtom for ParseIpv4 {
 }
 
 /// Pure atom: `&[u8]` → [`UdpHeader`].
-pub struct ParseUdp;
+pub(crate) struct ParseUdp;
 
 impl Atom for ParseUdp {
     type Input = &'static [u8];
@@ -89,7 +89,7 @@ impl PureAtom for ParseUdp {
 }
 
 /// Pure atom: `&[u8]` → [`TcpHeader`].
-pub struct ParseTcp;
+pub(crate) struct ParseTcp;
 
 impl Atom for ParseTcp {
     type Input = &'static [u8];
@@ -104,21 +104,21 @@ impl PureAtom for ParseTcp {
 
 /// Parse an IPv4 header. Requires at least 20 bytes; validates IHL and
 /// version; never reads past `input.len()`.
-pub fn parse_ipv4(input: &[u8]) -> Result<Ipv4Header, ParseError> {
+pub(crate) fn parse_ipv4(input: &[u8]) -> Result<Ipv4Header, ParseError> {
     // CONTRACT: implement here (todo!() replaced by the implementer).
     let _ = input;
     todo!("parse_ipv4: implemented by fds-core milestone task")
 }
 
 /// Parse a UDP header. Requires at least 8 bytes.
-pub fn parse_udp(input: &[u8]) -> Result<UdpHeader, ParseError> {
+pub(crate) fn parse_udp(input: &[u8]) -> Result<UdpHeader, ParseError> {
     let _ = input;
     todo!("parse_udp: implemented by fds-core milestone task")
 }
 
 /// Parse a TCP header. Requires at least 20 bytes; honors the data
 /// offset field for the options region (never past `input.len()`).
-pub fn parse_tcp(input: &[u8]) -> Result<TcpHeader, ParseError> {
+pub(crate) fn parse_tcp(input: &[u8]) -> Result<TcpHeader, ParseError> {
     let _ = input;
     todo!("parse_tcp: implemented by fds-core milestone task")
 }

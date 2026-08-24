@@ -14,7 +14,7 @@
 use std::path::Path;
 
 /// A fixed set of named counters (per-core, lock-free).
-pub struct CounterSet {
+pub(crate) struct CounterSet {
     // CONTRACT: implementer stores e.g. a small array of
     // mol::PaddedCounter with a static name table.
     _private: (),
@@ -22,60 +22,60 @@ pub struct CounterSet {
 
 impl CounterSet {
     /// A fresh set with the given names.
-    pub fn new(names: &[&'static str]) -> Self {
+    pub(crate) fn new(names: &[&'static str]) -> Self {
         let _ = names;
         todo!("CounterSet::new: implemented by fds-core milestone task")
     }
 
     /// Add `v` to counter `i`.
-    pub fn add(&self, i: usize, v: u64) {
+    pub(crate) fn add(&self, i: usize, v: u64) {
         let _ = (i, v);
         todo!("CounterSet::add: implemented by fds-core milestone task")
     }
 
     /// Snapshot all counters into `out` (len == names.len()).
-    pub fn snapshot(&self, out: &mut [u64]) {
+    pub(crate) fn snapshot(&self, out: &mut [u64]) {
         let _ = out;
         todo!("CounterSet::snapshot: implemented by fds-core milestone task")
     }
 }
 
 /// The engine-wide metrics bundle.
-pub struct Metrics {
+pub(crate) struct Metrics {
     // CONTRACT: implementer bundles CounterSets (packets, bytes, drops
     // per core).
     _private: (),
 }
 
 impl Metrics {
-    pub fn new(cores: usize) -> Self {
+    pub(crate) fn new(cores: usize) -> Self {
         let _ = cores;
         todo!("Metrics::new: implemented by fds-core milestone task")
     }
 
     /// Format the full metrics text into `out` (no allocation).
-    pub fn write_into(&self, out: &mut String) {
+    pub(crate) fn write_into(&self, out: &mut String) {
         let _ = out;
         todo!("Metrics::write_into: implemented by fds-core milestone task")
     }
 }
 
 /// Pull endpoint: a Unix socket that serves [`Metrics::write_into`] text.
-pub struct MetricsServer {
+pub(crate) struct MetricsServer {
     // CONTRACT: implementer owns the listener fd + socket path.
     _private: (),
 }
 
 impl MetricsServer {
     /// Bind the Unix socket at `path` (unlinks a stale file first).
-    pub fn bind(path: &Path) -> std::io::Result<Self> {
+    pub(crate) fn bind(path: &Path) -> std::io::Result<Self> {
         let _ = path;
         todo!("MetricsServer::bind: implemented by fds-core milestone task")
     }
 
     /// Serve one request: accept, write metrics text, close. Returns
     /// `false` when no connection was pending.
-    pub fn poll_once(&mut self, metrics: &Metrics) -> std::io::Result<bool> {
+    pub(crate) fn poll_once(&mut self, metrics: &Metrics) -> std::io::Result<bool> {
         let _ = metrics;
         todo!("MetricsServer::poll_once: implemented by fds-core milestone task")
     }

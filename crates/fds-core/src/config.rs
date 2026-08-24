@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 /// fields are optional and override the defaults.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub struct Config {
+pub(crate) struct Config {
     pub core: CoreConfig,
     pub reactor: ReactorConfig,
     pub udp: UdpConfig,
@@ -24,7 +24,7 @@ pub struct Config {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
-pub struct CoreConfig {
+pub(crate) struct CoreConfig {
     /// Pin each worker thread to a physical core.
     pub pin_cores: bool,
     /// Worker thread count; 0 = one per physical core.
@@ -46,7 +46,7 @@ impl Default for CoreConfig {
 /// Polling strategy (spec decision matrix D-5).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum ReactorStrategy {
+pub(crate) enum ReactorStrategy {
     /// epoll edge-triggered, busy-poll (timeout 0) — default.
     #[default]
     EpollBusyPoll,
@@ -56,7 +56,7 @@ pub enum ReactorStrategy {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
-pub struct ReactorConfig {
+pub(crate) struct ReactorConfig {
     pub strategy: ReactorStrategy,
     /// Preallocated epoll event array capacity per reactor.
     pub max_events: usize,
@@ -79,7 +79,7 @@ impl Default for ReactorConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
-pub struct UdpConfig {
+pub(crate) struct UdpConfig {
     pub rcvbuf: usize,
     pub sndbuf: usize,
     /// UDP_SEGMENT (GSO) max segment size; 0 = off.
@@ -110,7 +110,7 @@ impl Default for UdpConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
-pub struct TcpConfig {
+pub(crate) struct TcpConfig {
     pub nodelay: bool,
     pub quickack: bool,
     pub defer_accept: bool,
@@ -139,7 +139,7 @@ impl Default for TcpConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
-pub struct SctpConfig {
+pub(crate) struct SctpConfig {
     pub nodelay: bool,
     /// SCTP_INITMSG max streams (in/out).
     pub init_max_streams: u16,
@@ -164,7 +164,7 @@ impl Default for SctpConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
-pub struct MetricsConfig {
+pub(crate) struct MetricsConfig {
     /// Unix socket path for the pull endpoint; empty = disabled.
     pub socket_path: String,
 }
@@ -179,7 +179,7 @@ impl Default for MetricsConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
-pub struct ZeroCopyConfig {
+pub(crate) struct ZeroCopyConfig {
     /// sendfile/splice for file-backed TCP responses.
     pub splice: bool,
     /// io_uring registered buffers (feature `io-uring`).
@@ -201,20 +201,20 @@ impl Default for ZeroCopyConfig {
 impl Config {
     /// Parse a `config.json` document; missing fields fall back to
     /// defaults.
-    pub fn from_json(s: &str) -> Result<Self, serde_json::Error> {
+    pub(crate) fn from_json(s: &str) -> Result<Self, serde_json::Error> {
         let mut cfg: Config = serde_json::from_str(s)?;
         cfg.apply_env();
         Ok(cfg)
     }
 
     /// Load from a file path.
-    pub fn from_file(path: &std::path::Path) -> Result<Self, ConfigError> {
+    pub(crate) fn from_file(path: &std::path::Path) -> Result<Self, ConfigError> {
         let s = std::fs::read_to_string(path).map_err(ConfigError::Io)?;
         Self::from_json(&s).map_err(ConfigError::Json)
     }
 
     /// Override fields from `FDS_<SECTION>_<KEY>` environment variables.
-    pub fn apply_env(&mut self) {
+    pub(crate) fn apply_env(&mut self) {
         if let Some(v) = env_flag("FDS_CORE_PIN_CORES") {
             self.core.pin_cores = v;
         }
@@ -247,7 +247,7 @@ impl Config {
 
 /// Error loading the configuration.
 #[derive(Debug)]
-pub enum ConfigError {
+pub(crate) enum ConfigError {
     Io(std::io::Error),
     Json(serde_json::Error),
 }

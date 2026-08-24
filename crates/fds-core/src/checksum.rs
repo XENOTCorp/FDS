@@ -9,14 +9,14 @@ use mol::{checksum_finalize, sum_u16};
 /// IPv4 header checksum (RFC 791): one's-complement sum of the header
 /// with the checksum field zeroed. Bounds-safe by construction (operates
 /// on the slice the caller validated).
-pub fn ip_checksum(header: &[u8]) -> u16 {
+pub(crate) fn ip_checksum(header: &[u8]) -> u16 {
     checksum_finalize(sum_u16(header))
 }
 
 /// TCP checksum including the IPv4 pseudo-header (RFC 793). `src`/`dst`
 /// are the 4-byte addresses, `tcp_len` the TCP segment length in bytes,
 /// `data` the full TCP segment (header + payload).
-pub fn tcp_checksum(src: [u8; 4], dst: [u8; 4], tcp_len: u16, data: &[u8]) -> u16 {
+pub(crate) fn tcp_checksum(src: [u8; 4], dst: [u8; 4], tcp_len: u16, data: &[u8]) -> u16 {
     let mut sum = sum_u16(&src);
     sum = sum.wrapping_add(sum_u16(&dst));
     // Pseudo-header: zeros (1 byte) + protocol 6 + TCP length.
@@ -27,7 +27,7 @@ pub fn tcp_checksum(src: [u8; 4], dst: [u8; 4], tcp_len: u16, data: &[u8]) -> u1
 
 /// UDP checksum including the IPv4 pseudo-header (RFC 768). A zero
 /// checksum means "no checksum" on IPv4; this function always computes.
-pub fn udp_checksum(src: [u8; 4], dst: [u8; 4], udp_len: u16, data: &[u8]) -> u16 {
+pub(crate) fn udp_checksum(src: [u8; 4], dst: [u8; 4], udp_len: u16, data: &[u8]) -> u16 {
     let mut sum = sum_u16(&src);
     sum = sum.wrapping_add(sum_u16(&dst));
     sum = sum.wrapping_add(17);
@@ -37,7 +37,7 @@ pub fn udp_checksum(src: [u8; 4], dst: [u8; 4], udp_len: u16, data: &[u8]) -> u1
 
 /// RFC 3309 / RFC 4960 CRC32c (Castagnoli, poly 0x1EDC6F41 reflected).
 /// Table-driven, byte-at-a-time. Init = all ones, final = complement.
-pub fn sctp_checksum(data: &[u8]) -> u32 {
+pub(crate) fn sctp_checksum(data: &[u8]) -> u32 {
     crc32c_impl(data)
 }
 
