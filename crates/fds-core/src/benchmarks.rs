@@ -249,19 +249,48 @@ pub fn run_latency(seconds: u64) -> std::io::Result<()> {
         count += 1;
     }
     let dur = seconds as f64;
-
-    samples.sort_unstable();
-    let n = samples.len();
-    // Nearest-rank quantile: index = floor(q * n), q in [0, 1).
-    let idx = |q: f64| ((n as f64) * q) as usize;
-    let p50 = samples[idx(0.50)] as f64 / 1000.0;
-    let p99 = samples[idx(0.99)] as f64 / 1000.0;
-    let p999 = samples[idx(0.999)] as f64 / 1000.0;
-    let max = *samples.last().unwrap_or(&0) as f64 / 1000.0;
-    println!(
-        "latency: {count} samples over {dur:.0}s — p50 {p50:.1}µs, p99 {p99:.1}µs, p999 {p999:.1}µs, max {max:.1}µs"
-    );
+    report_latency("latency", &mut samples, count, dur);
     Ok(())
+}
+
+/// Print the full percentile ladder (p10…p99, p999), mean, median,
+/// standard deviation and jitter (stdev/mean) of `samples` (nanosecond
+/// RTTs) as µs — the per-metric detail the cross-tool bench consumes.
+fn report_latency(label: &str, samples: &mut [u64], count: u64, dur: f64) {
+    let n = samples.len();
+    if n == 0 {
+        println!("{label}: no samples over {dur:.0}s");
+        return;
+    }
+    samples.sort_unstable();
+    // Nearest-rank quantile: index = floor(q * n), q in [0, 1).
+    let idx = |q: f64| ((n as f64) * q).min(n as f64 - 1.0) as usize;
+    let us = |i: usize| samples[i] as f64 / 1000.0;
+    print!("{label}: {count} samples over {dur:.0}s —");
+    for &q in &[
+        0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 0.95, 0.99, 0.999,
+    ] {
+        if q == 0.999 {
+            print!(" p999 {:.1}µs", us(idx(q)));
+        } else {
+            print!(" p{:<3} {:.1}µs", (q * 100.0) as u32, us(idx(q)));
+        }
+    }
+    let mean_us = samples.iter().sum::<u64>() as f64 / n as f64 / 1000.0;
+    let median_us = us(idx(0.50));
+    let var_ns = samples
+        .iter()
+        .map(|&s| {
+            let d = s as f64 - mean_us * 1000.0;
+            d * d
+        })
+        .sum::<f64>()
+        / n as f64;
+    let stdev_us = var_ns.sqrt() / 1000.0;
+    println!(
+        " — mean {mean_us:.1}µs, median {median_us:.1}µs, stdev {stdev_us:.1}µs, jitter(stdev/mean) {:.2}",
+        stdev_us / mean_us.max(1e-9)
+    );
 }
 
 /// Round-trip latency against a RUNNING engine (`fds` in default mode,
@@ -301,17 +330,7 @@ pub fn run_engine_latency(addr: SocketAddr, seconds: u64) -> std::io::Result<()>
         count += 1;
     }
     let dur = seconds as f64;
-
-    samples.sort_unstable();
-    let n = samples.len();
-    let idx = |q: f64| ((n as f64) * q) as usize;
-    let p50 = samples[idx(0.50)] as f64 / 1000.0;
-    let p99 = samples[idx(0.99)] as f64 / 1000.0;
-    let p999 = samples[idx(0.999)] as f64 / 1000.0;
-    let max = *samples.last().unwrap_or(&0) as f64 / 1000.0;
-    println!(
-        "engine latency vs {addr}: {count} samples over {dur:.0}s — p50 {p50:.1}µs, p99 {p99:.1}µs, p999 {p999:.1}µs, max {max:.1}µs"
-    );
+    report_latency(&format!("engine latency vs {addr}"), &mut samples, count, dur);
     Ok(())
 }
 
