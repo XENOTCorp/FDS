@@ -14,12 +14,12 @@ Sequential machines are the natural model: Mealy machines \citep{mealy} compute 
 
 \textbf{Thesis.} The category \textbf{Mol} of stateful transformations --- deterministic Mealy machines $(S, \mathit{step})$ with $\mathit{step} : S \times A \to B \times S$, quotiented by the state-space bijection condition --- is a complete algebraic foundation for the construction of zero-allocation network dataplanes: every dataplane artifact is a molecule, molecules compose sequentially and in parallel within a symmetric monoidal category, and the engineering properties of dataplanes --- normalization, minimization, loop convergence, batching, zero allocation, solvability of design problems --- are theorems of Mol.
 
-The claim rests on three supports. \emph{Compositionality:} Mol is symmetric monoidal \citep{maclane}, with tensor the tuple product, unit $()$, and coherence from Mac Lane's theorem; results about pipelines are results about morphisms. \emph{Completeness:} the catalog NT1--NT52 covers the category structure (NT1--NT8), equational theories and rewrite systems (NT9--NT19), free molecules and normal forms (NT20--NT24), cost enrichment and optimality (NT25--NT32), pure/effectful decomposition (NT33--NT37), minimal state spaces (NT38--NT41), loops and feedback (NT42--NT45), batching (NT46--NT48), zero allocation (NT49--NT50), and design decision problems (NT51--NT52). \emph{Honesty:} every theorem carries a complete proof; [N] statements are original and proved with elementary means, [C] statements restate classical results with provenance cited; computational claims are verified by executable Rust tools whose logs appear in \autoref{app:a}; no conjecture is presented as a theorem.
+The claim rests on three supports. \emph{Compositionality:} Mol is symmetric monoidal \citep{maclane}, with tensor the tuple product, unit $()$, and coherence from Mac Lane's theorem; results about pipelines are results about morphisms. \emph{Completeness:} the catalog NT1--NT55 covers the category structure (NT1--NT8), equational theories and rewrite systems (NT9--NT19, NT54), free molecules and normal forms (NT20--NT24), cost enrichment and optimality (NT25--NT32, NT53), pure/effectful decomposition (NT33--NT37), minimal state spaces (NT38--NT41), loops and feedback (NT42--NT45), batching (NT46--NT48), zero allocation (NT49--NT50, NT55), and design decision problems (NT51--NT52). \emph{Honesty:} every theorem carries a complete proof; [N] statements are original and proved with elementary means, [C] statements restate classical results with provenance cited; computational claims are verified by executable Rust tools whose logs appear in \autoref{app:a}; no conjecture is presented as a theorem.
 
 \section{Contributions and theorem catalog}
 \label{sec:contributions}
 
-The central contribution is the theorem catalog NT1--NT52, grouped below by the chapter that states and proves each theorem; [N] marks a statement original to this thesis, [C] a classical result restated and proved inside Mol, with the source cited. Around it stand the framework (\autoref{ch:mol}), which recasts Mealy-style sequential machines \citep{mealy,moore} as morphisms, the verification of computational claims by executable Rust tools (logs in \autoref{app:a}), and a companion software standard that turns the theorems into enforceable engineering policy.
+The central contribution is the theorem catalog NT1--NT55, grouped below by the chapter that states and proves each theorem; [N] marks a statement original to this thesis, [C] a classical result restated and proved inside Mol, with the source cited. Around it stand the framework (\autoref{ch:mol}), which recasts Mealy-style sequential machines \citep{mealy,moore} as morphisms, the verification of computational claims by executable Rust tools (logs in \autoref{app:a}), and a companion software standard that turns the theorems into enforceable engineering policy.
 
 \renewcommand{\arraystretch}{0.85}
 {\footnotesize
@@ -50,6 +50,7 @@ The central contribution is the theorem catalog NT1--NT52, grouped below by the 
 \textbf{NT17 [N].} Batch-flattening rewrites are confluent on batch trees; unique flattened normal form. \\
 \textbf{NT18 [N].} Normalization soundness: $\mathit{NF}(M) \simeq M$ and $\mathrm{cost}(\mathit{NF}(M)) \leq \mathrm{cost}(M)$ when rules are cost-nonincreasing. \\
 \textbf{NT19 [N].} The full runtime equational theory is decidable for finite signatures via normalization. \\
+\textbf{NT54 [N].} Modular completion: adjoining a new equational theory preserves termination and confluence under the disjoint-union or hierarchical conditions. \\
 \textbf{Free molecules and normal forms} (\autoref{ch:free}). \\
 \midrule
 \textbf{NT20 [C].} The free symmetric monoidal category $F(\Sigma)$ on an atom signature $\Sigma$ exists \citep{adamek}. \\
@@ -73,6 +74,7 @@ The central contribution is the theorem catalog NT1--NT52, grouped below by the 
 \textbf{NT30 [N].} Complexity closure: atoms in a class $C$ closed under $\circ$ and $\otimes$ yield molecules in $C$. \\
 \textbf{NT31 [C].} Finite-state molecules realize exactly the regular behaviors; minimal-state molecules realize minimal DFAs \citep{brzozowski}. \\
 \textbf{NT32 [N].} Projection reduction: if $\mathit{step}$ depends on state only through $\pi$, then $S_{\min} \cong \pi(S)$. \\
+\textbf{NT53 [N].} Resource-graded cost enrichment: cache-line, false-sharing, and expected branch-misprediction costs form a graded monoidal enrichment; shortest-path optimality extends. \\
 \textbf{Kleisli decomposition} (\autoref{ch:kleisli}). \\
 \midrule
 \textbf{NT33 [N].} Every hybrid molecule decomposes as $M = q\circ e\circ p$ ($p,q$ pure, $e$ effectful), unique up to isomorphism. \\
@@ -107,6 +109,7 @@ The central contribution is the theorem catalog NT1--NT52, grouped below by the 
 \midrule
 \textbf{NT49 [C].} Cut elimination is deforestation: every pure pipeline fuses to a single morphism \citep{girard}. \\
 \textbf{NT50 [N].} Linearity: atoms consume input exactly once $\Rightarrow$ the well-typed hot path never allocates. \\
+\textbf{NT55 [N].} Affine typing: well-typed molecules consume resources exactly once and evaluate without allocation. \\
 \bottomrule
 \end{tabular}}
 
@@ -125,7 +128,7 @@ The central contribution is the theorem catalog NT1--NT52, grouped below by the 
 
 This thesis is a synthesis-and-application thesis with deliberately bounded scope; the boundaries are part of the argument.
 
-\textbf{In scope.} Mol and its structure theorems NT1--NT52, each with a complete proof; the application of the theory to dataplane engineering --- normalization, dispatch, batching, minimization, loop analysis, zero-copy reasoning, and design decision problems; and the verification of every computational claim by executable Rust tools, with PASS logs in \autoref{app:a} and catalogs in \autoref{app:b}.
+\textbf{In scope.} Mol and its structure theorems NT1--NT55, each with a complete proof; the application of the theory to dataplane engineering --- normalization, dispatch, batching, minimization, loop analysis, zero-copy reasoning, and design decision problems; and the verification of every computational claim by executable Rust tools, with PASS logs in \autoref{app:a} and catalogs in \autoref{app:b}.
 
 \textbf{Out of scope.} The transport engine (TCP/UDP/SCTP), the Atom/Molecule framework templates, and the build tooling are later sub-projects of the FDS roadmap, not constructed here. Machine-specific performance techniques --- socket options, polling strategies, SIMD, syscall catalogs --- appear only in the companion standard's non-normative appendix, not as theorems. Machine-checked formalization in a proof assistant is explicitly future work and is not claimed.
 
@@ -134,8 +137,8 @@ This thesis is a synthesis-and-application thesis with deliberately bounded scop
 \section{Roadmap}
 \label{sec:roadmap}
 
-\textbf{Part I --- Foundations} (\autoref{ch:prelim}--\autoref{ch:kleisli}). \autoref{ch:prelim} fixes the categorical machinery: monoidal, symmetric monoidal, and traced monoidal categories \citep{maclane,joyalsv}; monads and Kleisli; coalgebras; Lawvere theories \citep{lawvere}; operads and clubs \citep{leinster,kelly}; effectus theory; linear logic \citep{girard}; locally presentable categories \citep{adamek}. \autoref{ch:mol} defines Mol and its subcategories (NT1--NT8); \autoref{ch:lawvere} models rings, parsers, and transports as Lawvere theories (NT9--NT12); \autoref{ch:rewrite} develops the rewrite engine, with Knuth--Bendix completion \citep{knuthbendix} and Newman confluence \citep{newman} (NT13--NT19); \autoref{ch:free} constructs free molecules and normal forms (NT20--NT24); \autoref{ch:enrich} proves cost optimality and refinement (NT25--NT32); \autoref{ch:kleisli} proves the decomposition $M = q\circ e\circ p$ (NT33--NT37).
+\textbf{Part I --- Foundations} (\autoref{ch:prelim}--\autoref{ch:kleisli}). \autoref{ch:prelim} fixes the categorical machinery: monoidal, symmetric monoidal, and traced monoidal categories \citep{maclane,joyalsv}; monads and Kleisli; coalgebras; Lawvere theories \citep{lawvere}; operads and clubs \citep{leinster,kelly}; effectus theory; linear logic \citep{girard}; locally presentable categories \citep{adamek}. \autoref{ch:mol} defines Mol and its subcategories (NT1--NT8); \autoref{ch:lawvere} models rings, parsers, and transports as Lawvere theories (NT9--NT12); \autoref{ch:rewrite} develops the rewrite engine, with Knuth--Bendix completion \citep{knuthbendix} and Newman confluence \citep{newman} (NT13--NT19, NT54); \autoref{ch:free} constructs free molecules and normal forms (NT20--NT24); \autoref{ch:enrich} proves cost optimality and refinement (NT25--NT32, NT53); \autoref{ch:kleisli} proves the decomposition $M = q\circ e\circ p$ (NT33--NT37).
 
-\textbf{Part II --- Structure theorems} (\autoref{ch:coalgebra}--\autoref{ch:linear}). \autoref{ch:coalgebra}: minimal realization and compositional bounds \citep{nerode,hopcroft} (NT38--NT41). \autoref{ch:trace}: feedback and fixed-iteration loops, with Banach--Dobrushin contraction bounds \citep{banach,dobroushin} (NT42--NT45). \autoref{ch:operad}: operadic composition and batching (NT46--NT48). \autoref{ch:linear}: cut elimination as fusion, linearity as zero allocation (NT49--NT50).
+\textbf{Part II --- Structure theorems} (\autoref{ch:coalgebra}--\autoref{ch:linear}). \autoref{ch:coalgebra}: minimal realization and compositional bounds \citep{nerode,hopcroft} (NT38--NT41). \autoref{ch:trace}: feedback and fixed-iteration loops, with Banach--Dobrushin contraction bounds \citep{banach,dobroushin} (NT42--NT45). \autoref{ch:operad}: operadic composition and batching (NT46--NT48). \autoref{ch:linear}: cut elimination as fusion, linearity as zero allocation (NT49--NT50, NT55).
 
 \textbf{Part III --- Applications} (\autoref{ch:situations}--\autoref{ch:conclusion}). \autoref{ch:situations}: a situation is a triple $(A\to B, \Phi, \bar{c})$, a solution a molecule $M$ with $M \vdash \Phi$ and $\mathrm{cost}(M) \leq \bar{c}$ (NT51--NT52). \autoref{ch:testing}: law tests, bisimulation \citep{park}, model-based testing, fuzzing, cost regression. \autoref{ch:related}: related work. \autoref{ch:conclusion}: summary, limitations, future work. \autoref{app:a}: proof-checking scripts and PASS logs; \autoref{app:b}: optimization and testing catalogs.

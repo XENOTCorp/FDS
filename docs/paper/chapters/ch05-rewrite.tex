@@ -352,3 +352,104 @@ acting on the atoms \cite{kelly, leinster}. The engine is therefore not an
 ad-hoc optimizer but the computational reflection of the multicategorical
 structure of Mol, and the normal forms of NT13--NT19 are the canonical
 forms of typed composition trees, whose equality NT19 makes decidable.
+\section{Extending the Engine: Modular Completion}\label{sec:rewrite-modular}
+
+A dataplane engine is never closed: new protocols and new atoms adjoin
+new equational theories --- new rewrite rules --- to the systems of
+\autoref{ch:lawvere}. The value of the completed systems
+\ref{nt:13}--\ref{nt:19} is that they are \emph{stable under extension}:
+this section proves the conditions under which adjoining a theory
+preserves termination and confluence, so that the normal forms, the
+decision procedure \ref{nt:19}, and the lookup table of \autoref{ch:free}
+survive the addition. The disjoint-union part is the classical modularity
+theorem of Toyama \citep{toyama}; the hierarchical part restates the
+standard non-interference conditions and makes their content explicit.
+
+\begin{definition}[Disjoint signatures and commuting systems]\label{def:modular}
+Two rewrite systems $(\Sigma_1, E_1, \to_1)$ and $(\Sigma_2, E_2, \to_2)$
+have \emph{disjoint signatures} when $\Sigma_1$ and $\Sigma_2$ share no
+function symbols. They \emph{commute} when, for all terms $t, u, v$ with
+$t \to_1 u$ and $t \to_2 v$, there exists $w$ with $u \to_2^* w$ and
+$v \to_1^* w$. A sufficient condition for commutation is that every
+$\to_2$-rule has a $\to_1$-normal left- and right-hand side and every
+$\to_1$-rule has a $\to_2$-normal left- and right-hand side, in a
+non-deleting signature: no rule discards proper subterms, so redexes of
+the two systems never interfere. The \emph{componentwise normal form}
+of a term under a disjoint union is the term obtained by reducing each
+$\Sigma_i$-colored subterm to its $\to_i$-normal form.
+\end{definition}
+
+\begin{theorem}[Modular completion, NT54 [N]]\label{nt:54}
+Let $(\Sigma_1, E_1, \to_1)$ and $(\Sigma_2, E_2, \to_2)$ be terminating
+rewrite systems, each locally confluent.
+\begin{enumerate}
+\item[(i)] If the signatures are disjoint, the union
+$\to_1 \cup \to_2$ is terminating and confluent, hence complete for
+$E_1 \cup E_2$; the normal form of a term is its componentwise normal
+form, and the union decides $E_1 \cup E_2$.
+\item[(ii)] If the systems commute, the union is terminating and
+confluent, hence complete for $E_1 \cup E_2$.
+\item[(iii)] Under either combination, the equational theory of the
+union is decidable whenever the theories of both components are.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+\emph{(i) Termination.} We first prove the commuting lemma: with
+disjoint signatures, the two systems commute. Let $t \to_1 u$ and
+$t \to_2 v$. A $\to_1$-redex is a term whose root symbol lies in
+$\Sigma_1$; by disjointness it contains no $\to_2$-redex at its root,
+and symmetrically a $\to_2$-redex contains no $\to_1$-redex at its
+root. If the two redexes are disjoint, contract both, obtaining the
+common reduct $w$ directly. If they are nested, the outer redex has the
+inner redex strictly below its root: contracting the outer first, then
+the inner inside the result, or the inner first and then the outer,
+yields the same term $w$, because the two contractions act on disjoint
+positions of the term tree. Hence the systems commute. Now let $t_0 \to
+t_1 \to \cdots$ be a $\to_1 \cup \to_2$-reduction. By commutation, the
+steps can be rearranged into a $\to_1$-reduction followed by a
+$\to_2$-reduction: every $\to_2$-step can be commuted leftward past
+every subsequent $\to_1$-step without changing the final term of any
+finite prefix. Each phase is finite by termination of the component
+systems, so the union is terminating (this is the disjoint-union
+theorem of Toyama \citep{toyama}, obtained here from the commuting
+lemma and the termination of the components).
+\emph{Confluence.} By Newman's lemma \ref{nt:14}, local confluence and
+termination give confluence. Let $t \to_1 u$ and $t \to_2 v$; by the
+commuting lemma $u \to_2^* w$ and $v \to_1^* w$ for a common $w$, so the
+two steps are joinable; single-system peaks are joinable by local
+confluence of the components. Hence the union is locally confluent and,
+by termination, confluent.
+\emph{Normal forms.} By disjointness, a normal form of the union is a
+term with no $\to_1$-redex and no $\to_2$-redex, i.e.\ the componentwise
+normal form; confluence makes it unique.
+
+\emph{(ii)} Commutation gives the same rearrangement: any reduction
+reorders to $\to_1^* \to_2^*$, both phases finite, so the union
+terminates. For confluence, it suffices again to join the mixed peaks:
+by commutation $u \to_2^* w$ and $v \to_1^* w$; single-system peaks
+join by local confluence of the components. Termination plus local
+confluence yield confluence by \ref{nt:14}. Completeness follows.
+
+\emph{(iii)} By (i) or (ii) the union is complete, so by the argument
+of \ref{nt:19} two terms are equal in $E_1 \cup E_2$ if and only if
+their (unique, computable) union normal forms coincide. Each component
+normal form is computable by the decidability of the component theory;
+computing the componentwise normal form therefore decides the union
+theory.
+\end{proof}
+
+\begin{remark}
+The hypotheses are the content. Disjoint signatures make the systems
+commute, which is exactly the non-interference that modularity needs;
+the hierarchical case (ii) relaxes disjointness to commutation, whose
+natural sufficient conditions --- $\to_2$-rules $\to_1$-normal on both
+sides and $\to_1$-rules $\to_2$-normal on both sides, in a non-deleting
+signature --- are the engine's extension contract: a new theory may add
+rules over existing symbols provided it neither creates nor destroys the
+old theory's redexes. The engine's rule-addition API is therefore safe
+by construction: adding a theory whose rules satisfy the conditions
+preserves the normal forms, the decision procedure, and the lookup
+table, so the guarantees of \ref{nt:13}--\ref{nt:19} and
+\autoref{ch:free} hold for the extended system unchanged.
+\end{remark}

@@ -11,12 +11,13 @@ Run outputs are captured in `logs/<tool>.log`; `logs/SUMMARY.log` aggregates the
 | `contraction` | NT43 | Iteration-bound arithmetic `k(α,ε,d₀) = ⌈ln(ε(1−α)/d₀)/ln α⌉`: bound finite and ≥ 1; simulation `x_{n+1}=αx_n` reaches tolerance; monotonicity in α and ε. |
 | `bisim` | NT6 | Behavioral equivalence (partition refinement) is a congruence on small finite mealy machines: equivalence relation (reflexive/symmetric/transitive) and `M≈M′ ⇒ M∘N≈M′∘N, N∘M≈N∘M′, M⊗N≈M′⊗N` over a 2,260-machine universe. |
 | `batch_amort` | NT47 | Syscall-amortization bound `cost(batch_n) ≤ n·cost(single)` and non-increasing amortized cost for n = 1..=1024. |
+| `affine_typer` | NT55 | Linear typing in the affine system Λ: every variable consumed exactly once, contraction and weakening rejected, and evaluation preserves the leaf multiset and never increases node count (no allocation). |
 
-Run all five:
+Run all six:
 
 ```sh
 cargo build
-for b in kb_completion normal_forms contraction bisim batch_amort; do
+for b in kb_completion normal_forms contraction bisim batch_amort affine_typer; do
   cargo run --bin "$b" | tee "logs/$b.log"
 done
 ```

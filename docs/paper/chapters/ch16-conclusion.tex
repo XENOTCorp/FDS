@@ -3,7 +3,7 @@
 This thesis formalized Mol, the category of stateful transformations, as the algebraic foundation of zero-allocation network dataplanes. The contribution is a single, compact claim: the engineering practice of high-performance networking --- pipeline fusion, batching, hoisting, minimization, zero-copy --- is not a collection of heuristics but the observable face of a small number of categorical structures, and those structures yield theorems with proofs. Fifty-two theorems were stated and proved in the body of the thesis. They are collected below as the specification of the framework.
 
 \section{The Theorem Catalog}
-The catalog lists all theorems NT1--NT52. The tag column marks provenance: \textbf{[N]} denotes a statement original to this thesis, proved with elementary machinery; \textbf{[C]} denotes a classical result restated and fully proved inside Mol, with provenance cited in the text. The statements are compressed to one line; full statements and proofs are in the cited chapters.
+The catalog lists all theorems NT1--NT55. The tag column marks provenance: \textbf{[N]} denotes a statement original to this thesis, proved with elementary machinery; \textbf{[C]} denotes a classical result restated and fully proved inside Mol, with provenance cited in the text. The statements are compressed to one line; full statements and proofs are in the cited chapters.
 
 \begin{table}[!htbp]
 \centering
@@ -46,6 +46,7 @@ Theorem & Tag & Statement & Chapter\\
 \ref{nt:17} & [N] & Batch-flattening rewrites are confluent on batch trees; the flattened normal form is unique. & \autoref{ch:rewrite}\\
 \ref{nt:18} & [N] & Normalization soundness: $\mathrm{NF}(M) \approx M$ and $\mathrm{cost}(\mathrm{NF}(M)) \le \mathrm{cost}(M)$ for cost-nonincreasing rules. & \autoref{ch:rewrite}\\
 \ref{nt:19} & [N] & The runtime equational theory is decidable for finite signatures via normalization. & \autoref{ch:rewrite}\\
+\ref{nt:54} & [N] & Modular completion: adjoining a new equational theory preserves termination and confluence under the disjoint-union or hierarchical conditions; decidability is preserved. & \autoref{ch:rewrite}\\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -72,6 +73,7 @@ Theorem & Tag & Statement & Chapter\\
 \ref{nt:30} & [N] & Complexity closure: atoms in a class $C$ closed under $\circ$ and $\otimes$ yield molecules in $C$. & \autoref{ch:enrich}\\
 \ref{nt:31} & [C] & Descriptive complexity: finite-state molecules realize exactly the regular behaviors; minimal-state molecules realize minimal DFAs. & \autoref{ch:enrich}\\
 \ref{nt:32} & [N] & Projection reduction: if step depends on state only through $\pi$, then $S_{\min} \cong \pi(S)$. & \autoref{ch:enrich}\\
+\ref{nt:53} & [N] & Resource-graded cost enrichment: cache-line, false-sharing, and expected branch-misprediction costs form a graded monoidal enrichment; shortest-path optimality extends. & \autoref{ch:enrich}\\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -116,6 +118,7 @@ Theorem & Tag & Statement & Chapter\\
 \ref{nt:48} & [N] & Ring capacity invariant: capacity $2^k$ with bitmask indexing is correct iff in-flight $\le 2^k - 1$. & \autoref{ch:operad}\\
 \ref{nt:49} & [C] & Cut elimination $=$ deforestation: every pure pipeline fuses to a single morphism (Girard \cite{girard}, proved for Mol). & \autoref{ch:linear}\\
 \ref{nt:50} & [N] & Linearity: atoms consume input exactly once $\Rightarrow$ a well-typed hot path never allocates or deallocates. & \autoref{ch:linear}\\
+\ref{nt:55} & [N] & Affine typing: well-typed molecules consume resources exactly once and evaluate without allocation. & \autoref{ch:linear}\\
 \ref{nt:51} & [N] & Situation solvability: bounded types and additive costs $\Rightarrow$ the feasible set of $(A\to B,\Phi,\bar c)$ is finite and decidable; decision-matrix computation terminates. & \autoref{ch:situations}\\
 \ref{nt:52} & [N] & Zero-copy roundtrip: parse/serialize inverse on the well-formed domain $\Rightarrow$ parse;serialize $\approx$ id; roundtrip elimination is sound. & \autoref{ch:situations}\\
 \bottomrule
@@ -136,7 +139,7 @@ The framework is deliberately scoped, and its limitations should be stated as pr
 \section{Future Work}
 Three directions follow immediately from the limitations and from the open threads noted in the text.
 
-\textbf{Machine-checked formalization.} The entire catalog NT1--NT52 is a candidate for a proof assistant. The elementary character of the proofs and the decidable normal forms (\ref{nt:19}, \ref{nt:24}) suggest that a large fraction of the catalog is formalizable automatically, with the rewrite theorems (\ref{nt:13}--\ref{nt:19}) as the natural starting point.
+\textbf{Machine-checked formalization.} The entire catalog NT1--NT55 is a candidate for a proof assistant. The elementary character of the proofs and the decidable normal forms (\ref{nt:19}, \ref{nt:24}) suggest that a large fraction of the catalog is formalizable automatically, with the rewrite theorems (\ref{nt:13}--\ref{nt:19}) as the natural starting point.
 
 \textbf{Probabilistic and effectful extensions.} Internalizing the Markov structure behind \ref{nt:45}, and giving Mol an effectus-style account of partiality, would extend the framework from deterministic dataplanes to stochastic and best-effort systems while keeping the cost enrichment intact.
 

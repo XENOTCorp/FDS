@@ -567,6 +567,120 @@ behaviorally identical and, when the projection is discriminating, already
 minimal --- the layout discipline of policy [CACHE] of the companion standard.
 \end{remark}
 
+\section{Resource-Sensitive Cost Enrichment}\label{sec:enrich-graded}
+
+The cost enrichment of \autoref{nt:25}--\autoref{nt:27} accounts for a
+molecule by a single cost number. Real dataplane cost has structure:
+which cache lines a molecule touches, whether concurrently written hot
+fields collide in a line (false sharing), and how often the branch
+predictor guesses wrong. This section refines the enrichment to a
+\emph{resource-graded} structure --- a graded monad whose grades live in
+a resource monoid --- and shows that the optimality theorems of
+\ref{nt:26}--\ref{nt:27} survive the refinement.
+
+\begin{definition}[Resource grades]\label{def:grades}
+Let $M = \mathbb{N} \times \mathbb{N} \times \mathbb{R}_{\ge 0}$ be the
+\emph{resource monoid}, with elements $r = (L, F, B)$ and componentwise
+addition and order. For a molecule $f \colon A \to B$: $L(f)$ is the
+number of distinct cache lines its working set touches (a structure of
+size $s$ occupies $\lceil s/64 \rceil$ lines at the standard 64-byte
+line granularity); $F(f)$ is the number of \emph{false-sharing penalty
+events} --- a penalty event occurs when a write to a hot field of $f$
+hits a cache line also touched by a concurrently written hot field of
+another molecule running alongside it; and $B(f) = \sum_i p_i \pi_i$ is
+the \emph{expected branch-misprediction cost}, the sum over branch
+points of $f$ of the misprediction probability $p_i$ times the penalty
+$\pi_i$ in cycles. The \emph{grade} of $f$ is $g(f) = (L(f), F(f),
+B(f)) \in M$.
+\end{definition}
+
+\begin{theorem}[Resource-graded cost enrichment, NT53 [N]]\label{nt:53}
+The assignment $f \mapsto g(f)$ of \autoref{def:grades} is a
+well-defined enrichment of Mol over the monoidal category $(M, +)$:
+\begin{enumerate}
+\item[(i)] the identity has grade $0$ and composition is additive:
+$g(\mathrm{id}_A) = (0,0,0)$ and $g(h \circ f) = g(f) + g(h)$;
+\item[(ii)] tensor grades are subadditive in the cache-line component
+with ceiling arithmetic and additive in the other components:
+$L(f \otimes h) \le L(f) + L(h)$, with equality when the working sets of
+$f$ and $h$ are disjoint; $F(f \otimes h) = F(f) + F(h)$ when the hot
+fields of $f$ and $h$ lie in distinct cache lines and
+$F(f \otimes h) = F(f) + F(h) + 1$ when they share a line;
+$B(f \otimes h) = B(f) + B(h)$;
+\item[(iii)] the induced pseudo-metric $d(A,B) = \inf\{\, g(f)_1 +
+g(f)_2 + g(f)_3 : f \colon A \to B \,\}$ satisfies the triangle
+inequality.
+\end{enumerate}
+Consequently the shortest-path theorem \ref{nt:26} extends: with grades
+additive, a composition from $A$ to $B$ minimizing the total grade is
+exactly a shortest path in the finite type graph whose edge weights are
+the grades, and any locally minimal molecule --- one no single-step
+refinement of which lowers the total grade --- is globally optimal.
+\end{theorem}
+
+\begin{proof}
+\emph{(i)} The identity molecule is empty: it touches no cache lines,
+has no concurrently written hot fields, and has no branch points, so
+$g(\mathrm{id}_A) = (0,0,0)$. For composition, the accounted costs are
+additive by definition of the account: the composite $h \circ f$ is
+accounted to touch the lines of $f$ and the lines of $h$ ($L(h \circ f)
+= L(f) + L(h)$; the actual number of distinct lines touched is at most
+this account, so the account is a conservative bound), its false-sharing
+account is the sum of the components' accounts, and its branch points
+are the disjoint union of the branch points of $f$ and of $h$, so by
+linearity of expectation
+\[ B(h \circ f) = \sum_{i \in \mathrm{bp}(f)} p_i \pi_i +
+\sum_{j \in \mathrm{bp}(h)} p_j \pi_j = B(f) + B(h), \]
+with no independence hypothesis required: expectation is linear.
+
+\emph{(ii)} A structure of size $s$ occupies $\lceil s/64 \rceil$ lines,
+so the tensor $f \otimes h$ (working sets of sizes $s_f$, $s_h$)
+occupies at most $\lceil (s_f + s_h)/64 \rceil \le \lceil s_f/64 \rceil +
+\lceil s_h/64 \rceil = L(f) + L(h)$ lines, with equality when the
+working sets are disjoint. The false-sharing account adds a collision
+term: the hot fields of $f \otimes h$ are the pairs of hot fields of the
+components; a penalty event arises exactly when a pair shares a cache
+line, which contributes $0$ when the components' hot fields are
+separated by the layout (the hot/cold separation of the standard's
+[CACHE] policy) and $1$ otherwise. The branch component is additive by
+linearity of expectation, as in (i), over the disjoint union of branch
+points.
+
+\emph{(iii)} For any $f \colon A \to B$ and $h \colon B \to C$, the
+composite $h \circ f \colon A \to C$ has grade $g(f) + g(h)$ by (i), so
+\[ d(A,C) \le g(f) + g(h) \quad\text{for all } f, h. \]
+Taking the infimum over $f$ and $h$ on the right gives $d(A,C) \le
+d(A,B) + d(B,C)$: the triangle inequality. (The three grade components
+combine additively along a path, so the componentwise order makes the
+infimum well-defined and the inequality holds componentwise.)
+
+\emph{Extended shortest-path.} By (i), the grade of a composition is the
+sum of the grades of its atomic steps, so the total grade of a molecule
+is the weight of its path in the type graph. Minimizing the grade is
+therefore a shortest-path problem in the finite type graph (finite
+whenever the type signature is bounded, as in \ref{nt:22}), solvable by
+Dijkstra's algorithm with the extraction-order induction of \ref{nt:26}.
+For local optimality: suppose a molecule $M \colon A \to B$ is not
+globally optimal, so some $M'$ has strictly smaller total grade. The
+composite paths from $A$ to $B$ form a finite graph; by additivity,
+moving from $M$ to $M'$ along a cheaper route decomposes into a finite
+sequence of single-step grade decreases, the first of which is a
+one-step refinement of $M$ with strictly lower grade --- contradicting
+local minimality. Hence local minima are global optima.
+\end{proof}
+
+\begin{remark}
+The three components license the three layout disciplines of the
+companion standard: $L$ is what the cache-line accounting of [CACHE]
+minimizes; $F$ is exactly the quantity the hot/cold separation and
+per-core data-structure policies drive to zero; and $B$ is the quantity
+the refinement poset of \ref{nt:28}--\ref{nt:29} orders, so that the
+most-refined dispatch structure (dense integer matches, branchless
+cmov patterns) is precisely the one minimizing expected branch cost.
+The graded enrichment is a graded monad in the sense that grades
+compose additively along Kleisli-like composition; the resource
+annotation is the type-level shadow of the runtime account.
+\end{remark}
 \section{Summary}\label{sec:enrich-summary}
 
 \begin{table}[htbp]

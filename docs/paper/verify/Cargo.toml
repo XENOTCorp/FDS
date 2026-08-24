@@ -25,3 +25,7 @@ path = "src/bin/bisim.rs"
 [[bin]]
 name = "batch_amort"
 path = "src/bin/batch_amort.rs"
+
+[[bin]]
+name = "affine_typer"
+path = "src/bin/affine_typer.rs"

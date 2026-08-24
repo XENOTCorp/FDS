@@ -28,6 +28,7 @@ Tool & Theorems & What it checks\\
 \texttt{contraction} & \ref{nt:43} & Bound arithmetic: for sampled $(\alpha, \varepsilon, d_0)$ with $\alpha < 1$, computes $k(\alpha,\varepsilon,d_0) = \lceil \ln(\varepsilon(1-\alpha)/d_0)/\ln\alpha\rceil$ and asserts the fixed-point iterate stays within $\varepsilon$ after $k$ steps.\\
 \texttt{bisim} & \ref{nt:6} & Exhaustive congruence check: enumerates small finite machines, computes behavioral equivalence, and asserts that the equivalence is preserved by composition $\circ$ and tensor $\otimes$, i.e.\ that $\approx$ is a congruence.\\
 \texttt{batch\_amort} & \ref{nt:47} & On sample batch sizes $n$, asserts the amortization bound $\mathrm{cost}(\mathrm{batch}_n) \le n\cdot\mathrm{cost}(\mathrm{single}) + \mathrm{fixed}(n)$ and that $\mathrm{fixed}(n)/n \to 0$ along the sample.\\
+\texttt{affine\_typer} & \ref{nt:55} & Linear typing of sample molecules in the affine system: asserts every variable is consumed exactly once, contraction and weakening are rejected, and evaluation preserves the leaf multiset and never increases the node count (no allocation).\\
 \bottomrule
 \end{tabular}
 \end{table}

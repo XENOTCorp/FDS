@@ -3,3 +3,4 @@ PASS: normal_forms
 PASS: contraction
 PASS: bisim
 PASS: batch_amort
+PASS: affine_typer

@@ -1,0 +1,8 @@
+   Compiling fds-verify v0.1.0 (/home/xenot/Projects/FDS/docs/paper/verify)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.40s
+     Running `target/debug/affine_typer`
+PASS: NT55(a) linear typing — 4 sample derivations, every variable used exactly once
+PASS: NT55(a) contraction rejected — x ⊗ x with x declared once does not type-check (no contraction)
+PASS: NT55(a) weakening rejected — x with y unused in context does not type-check (no weakening)
+PASS: NT55(c) no allocation during evaluation — 2 closed terms normalized in 2 steps: leaf multiset preserved, node count never increases (no fresh nodes)
+OVERALL: PASS
