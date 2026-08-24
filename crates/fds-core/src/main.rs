@@ -24,6 +24,10 @@ fn main() {
             let secs = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(3);
             benchmarks::run_large(datagram, secs)
         }
+        Some("--bench-sctp") => {
+            let secs = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(3);
+            benchmarks::run_sctp(secs)
+        }
         Some("--latency") => {
             let secs = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(2);
             benchmarks::run_latency(secs)

@@ -1,11 +1,10 @@
-//! In-crate benchmark harness for the UDP loopback datapath (thesis
+//! In-crate benchmark harness for the loopback datapaths (thesis
 //! NT46/NT47 batching; standard \[OBS\], \[ALLOC\]).
 //!
-//! The crate is a BINARY package with no public API, so an external
-//! bench target cannot reach crate-private items; the harness lives here
-//! and is invoked from the `fds` binary via `--bench <seconds>` /
-//! `--bench-large <datagram> <seconds>` (arg dispatch wired at the
-//! integration milestone).
+//! An external bench target cannot reach crate-private items, so the
+//! harness lives here and is invoked from the `fds` binary via
+//! `--bench <seconds>` / `--bench-large <datagram> <seconds>` /
+//! `--bench-sctp <seconds>` (arg dispatch wired in `main.rs`).
 //!
 //! Datapath: `BATCH` fixed-size datagrams are sent to a peer socket
 //! bound on 127.0.0.1 and echoed back; packets and bytes are counted and
@@ -589,5 +588,184 @@ mod tests {
         eprintln!(
             "bench-large smoke: send {sp} pkts/{sb} B, recv {rp} pkts/{rb} B in 1s each"
         );
+    }
+}
+
+/// One-way SCTP stream throughput over loopback (`--bench-sctp <secs>`):
+/// a one-to-one SCTP listener on 127.0.0.1:0 accepts one association,
+/// then the client sends 32 KiB messages for `secs` seconds while a
+/// receiver thread counts bytes. Requires the kernel SCTP module
+/// (`modprobe sctp`); absent it, prints a note and returns Ok (the
+/// in-module transport tests skip the same way).
+pub fn run_sctp(seconds: u64) -> std::io::Result<()> {
+    use crate::config::SctpConfig;
+    use crate::sctp::{is_notification, unsupported, SctpSocket};
+    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::time::Instant;
+
+    const MSG: usize = 32 * 1024;
+    let wall = std::time::Duration::from_secs(seconds.max(1));
+
+    let cfg = SctpConfig {
+        reuseport: false,
+        ..SctpConfig::default()
+    };
+    let server = match SctpSocket::bind("127.0.0.1:0".parse().unwrap(), &cfg) {
+        Ok(s) => s,
+        Err(e) if unsupported(&e) => {
+            eprintln!("fds: bench-sctp: kernel SCTP unavailable (modprobe sctp) — skipping ({e})");
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
+    // One-to-one SCTP sockets must listen() to accept an association.
+    // SAFETY: `server` is a bound, nonblocking SCTP socket; listen(2)
+    // never blocks.
+    if unsafe { libc::listen(server.as_raw_fd(), 8) } < 0 {
+        let e = std::io::Error::last_os_error();
+        if unsupported(&e) {
+            eprintln!("fds: bench-sctp: listen unsupported (modprobe sctp) — skipping ({e})");
+            return Ok(());
+        }
+        return Err(e);
+    }
+    let server_addr = server.local_addr()?;
+    let client = SctpSocket::bind("127.0.0.1:0".parse().unwrap(), &cfg)?;
+
+    // Receiver thread: accept the association, then count bytes until
+    // the sender stops. WouldBlock means momentarily drained — yield,
+    // never sleep (a 1 ms sleep would cap the drain rate).
+    let stop = Arc::new(AtomicBool::new(false));
+    let rx_bytes = Arc::new(AtomicU64::new(0));
+    let rx_msgs = Arc::new(AtomicU64::new(0));
+    let stop2 = stop.clone();
+    let rx_bytes2 = rx_bytes.clone();
+    let rx_msgs2 = rx_msgs.clone();
+    let rx = std::thread::spawn(move || -> std::io::Result<()> {
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        let raw = loop {
+            // SAFETY: accept4 returns a new fd or -1; we pass no address
+            // buffers (only the fd is needed).
+            let raw = unsafe {
+                libc::accept4(
+                    server.as_raw_fd(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC,
+                )
+            };
+            if raw >= 0 {
+                break raw;
+            }
+            let e = std::io::Error::last_os_error();
+            if e.kind() == std::io::ErrorKind::WouldBlock {
+                if Instant::now() > deadline {
+                    return Err(std::io::Error::other("bench-sctp: timed out accepting"));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            } else if unsupported(&e) {
+                eprintln!("fds: bench-sctp: accept unsupported (modprobe sctp) — skipping ({e})");
+                return Ok(());
+            } else {
+                return Err(e);
+            }
+        };
+        // SAFETY: `raw` is a fresh fd owned by no other code.
+        let sock = SctpSocket {
+            fd: unsafe { OwnedFd::from_raw_fd(raw) },
+            cfg,
+        };
+        let mut buf = [0u8; 65536];
+        let mut stream = 0u16;
+        while !stop2.load(Ordering::Relaxed) {
+            match sock.recv_msg(&mut buf, &mut stream) {
+                Ok((n, _)) => {
+                    rx_bytes2.fetch_add(n as u64, Ordering::Relaxed);
+                    rx_msgs2.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(e) if is_notification(&e) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::yield_now();
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    });
+
+    // Establish the association with a first send (sendmsg implicitly
+    // connects); retry while the INIT handshake is in flight.
+    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+    let first = [0x5au8; MSG];
+    loop {
+        match client.send_msg(&first, 0, server_addr) {
+            Ok(_) => break,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() > deadline {
+                    return Err(std::io::Error::other("bench-sctp: timed out connecting"));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err(e) if unsupported(&e) => {
+                eprintln!("fds: bench-sctp: send unsupported (modprobe sctp) — skipping ({e})");
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    // Measure: send 32 KiB messages for `seconds` (partial sends are
+    // resumed at the same offset; the byte count is the truth).
+    let payload = vec![0x5au8; MSG];
+    let mut off = 0usize;
+    let t0 = Instant::now();
+    loop {
+        if Instant::now().saturating_duration_since(t0) >= wall {
+            break;
+        }
+        match client.send_msg(&payload[off..], 0, server_addr) {
+            Ok(n) => {
+                off += n;
+                if off >= MSG {
+                    off = 0;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::yield_now();
+            }
+            Err(e) if unsupported(&e) => {
+                eprintln!("fds: bench-sctp: send unsupported (modprobe sctp) — skipping ({e})");
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    // Grace for the receiver to drain in-flight messages, then stop it.
+    stop.store(true, Ordering::Relaxed);
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    drop(client);
+    let _ = rx.join();
+
+    let secs = wall.as_secs_f64();
+    let rx_b = rx_bytes.load(Ordering::Relaxed);
+    let gbps = rx_b as f64 * 8.0 / secs / 1e9;
+    let msgs = rx_msgs.load(Ordering::Relaxed);
+    println!(
+        "bench-sctp: {:.0}s one-way SCTP loopback: {rx_b} bytes ({gbps:.1} Gbps), {:.0} msgs/s ({} B/msg)",
+        secs, msgs as f64 / secs, MSG
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod sctp_tests {
+    use super::*;
+
+    #[test]
+    fn sctp_bench_runs_or_skips() {
+        // Without the kernel module this prints a note and returns Ok;
+        // with it, a 1 s run completes and reports.
+        run_sctp(1).expect("bench-sctp must not error");
     }
 }

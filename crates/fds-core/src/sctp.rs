@@ -156,8 +156,8 @@ extern "C" {
 
 /// A nonblocking SCTP one-to-one (or one-to-many) socket.
 pub(crate) struct SctpSocket {
-    fd: OwnedFd,
-    cfg: SctpConfig,
+    pub(crate) fd: OwnedFd,
+    pub(crate) cfg: SctpConfig,
 }
 
 /// Convert a `SocketAddr` into a `sockaddr_storage` + length for the
@@ -291,7 +291,7 @@ impl SctpSocket {
     }
 
     /// The address this socket is bound to (getsockname).
-    fn local_addr(&self) -> std::io::Result<SocketAddr> {
+    pub(crate) fn local_addr(&self) -> std::io::Result<SocketAddr> {
         // SAFETY: sockaddr_storage is zeroable, large enough for any
         // family, and aligned for sockaddr_in6.
         let mut ss: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
@@ -498,31 +498,31 @@ impl SctpSocket {
     }
 }
 
+/// Errno values meaning "no SCTP support here" (kernel module absent, or
+/// an association refused for lack of support): tests and the SCTP bench
+/// skip on these instead of failing.
+pub(crate) fn unsupported(e: &std::io::Error) -> bool {
+    matches!(
+        e.raw_os_error(),
+        Some(
+            libc::EPROTONOSUPPORT
+                | libc::EAFNOSUPPORT
+                | libc::EOPNOTSUPP
+                | libc::ENOPROTOOPT
+                | libc::EPROTOTYPE
+                | libc::ENOTCONN
+        )
+    )
+}
+
+/// recv_msg's "this message was an SCTP notification" sentinel.
+pub(crate) fn is_notification(e: &std::io::Error) -> bool {
+    e.kind() == std::io::ErrorKind::Other && e.to_string() == "sctp notification"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Errno values meaning "no SCTP support here" (kernel module absent,
-    /// or an association refused for lack of support): tests skip on
-    /// these instead of failing.
-    fn unsupported(e: &std::io::Error) -> bool {
-        matches!(
-            e.raw_os_error(),
-            Some(
-                libc::EPROTONOSUPPORT
-                    | libc::EAFNOSUPPORT
-                    | libc::EOPNOTSUPP
-                    | libc::ENOPROTOOPT
-                    | libc::EPROTOTYPE
-                    | libc::ENOTCONN
-            )
-        )
-    }
-
-    /// recv_msg's "this message was an SCTP notification" sentinel.
-    fn is_notification(e: &std::io::Error) -> bool {
-        e.kind() == std::io::ErrorKind::Other && e.to_string() == "sctp notification"
-    }
 
     fn loopback() -> SocketAddr {
         "127.0.0.1:0".parse().unwrap()
