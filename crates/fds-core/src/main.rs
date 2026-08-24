@@ -47,6 +47,17 @@ fn main() {
             let secs = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(3);
             benchmarks::run_tcp_against(addr, secs)
         }
+        Some("--bench-udp-against") => {
+            let addr: std::net::SocketAddr = args
+                .get(1)
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_else(|| {
+                    eprintln!("fds: --bench-udp-against <addr> [secs] — using 127.0.0.1:7777");
+                    "127.0.0.1:7777".parse().unwrap()
+                });
+            let secs = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(3);
+            benchmarks::run_udp_against(addr, secs)
+        }
         Some("--latency") => {
             let secs = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(2);
             benchmarks::run_latency(secs)

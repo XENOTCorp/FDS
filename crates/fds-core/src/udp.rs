@@ -344,8 +344,10 @@ impl UdpSocket {
 
     /// Send one datagram with MSG_ZEROCOPY (kernel-zero-copy when the
     /// NIC supports it). Only valid when the socket was created with
-    /// `cfg.zerocopy` (SO_ZEROCOPY set); requires CAP_NET_RAW. Returns
-    /// `Err(Unsupported)` when the kernel/NIC cannot do zerocopy.
+    /// `cfg.zerocopy` (SO_ZEROCOPY set). SO_ZEROCOPY needs no special
+    /// privilege (verified empirically; the old "requires CAP_NET_RAW"
+    /// claim was wrong). Returns `Err(Unsupported)` when the kernel/NIC
+    /// cannot do zerocopy.
     pub fn send_to_zerocopy(&self, data: &[u8], dst: SocketAddr) -> std::io::Result<usize> {
         const MSG_ZEROCOPY: libc::c_int = 0x4000000;
         let sa = sockaddr_in_from(dst)?;
@@ -382,6 +384,51 @@ impl UdpSocket {
             };
         }
         Ok(ret as usize)
+    }
+
+    /// Drain MSG_ZEROCOPY completion notifications from the socket's
+    /// error queue. Returns the number of notifications consumed. Each
+    /// zero-copy send leaves the send buffer referenced by the kernel
+    /// until the peer consumes the datagram; the caller must not reuse
+    /// the buffer until the corresponding notification is drained.
+    ///
+    /// NOTE: this kernel queues the notification with an EMPTY byte
+    /// range (ee_info == ee_data == 0) for UDP — verified empirically —
+    /// so the engine recycles buffers by notification count, not by
+    /// byte range (the error queue is FIFO and sends are ordered, so
+    /// counts are exact even when ranges are not).
+    pub fn drain_zerocopy_notifications(&self) -> std::io::Result<u64> {
+        const MSG_ERRQUEUE: libc::c_int = 0x2000;
+        const MSG_DONTWAIT: libc::c_int = 0x40;
+        let mut count: u64 = 0;
+        let mut iov_buf = [0u8; 128];
+        let mut cmsg_buf = [0u8; 512];
+        loop {
+            let mut iov = libc::iovec {
+                iov_base: iov_buf.as_mut_ptr().cast::<libc::c_void>(),
+                iov_len: iov_buf.len(),
+            };
+            let mut hdr: libc::msghdr = unsafe { std::mem::zeroed() };
+            hdr.msg_iov = &mut iov;
+            hdr.msg_iovlen = 1;
+            hdr.msg_control = cmsg_buf.as_mut_ptr().cast::<libc::c_void>();
+            hdr.msg_controllen = cmsg_buf.len();
+            // SAFETY: `hdr` is fully initialized; the kernel fills the
+            // iov and control buffers (sized above) and owns them only
+            // for the duration of the call.
+            let ret = unsafe {
+                libc::recvmsg(self.fd.as_raw_fd(), &mut hdr, MSG_ERRQUEUE | MSG_DONTWAIT)
+            };
+            if ret < 0 {
+                match io::Error::last_os_error().raw_os_error() {
+                    Some(libc::EAGAIN) | Some(libc::ENOENT) | Some(libc::ENOMSG) => break,
+                    Some(_) => return Err(io::Error::last_os_error()),
+                    None => break,
+                }
+            }
+            count += 1;
+        }
+        Ok(count)
     }
 
     /// Send a batch of datagrams (sendmmsg path). Returns the number
@@ -511,6 +558,100 @@ mod tests {
         assert_eq!(out[0].len, payload.len());
         assert_eq!(out[0].src, a.local_addr().unwrap());
         assert!(!out[0].truncated);
+    }
+
+    #[test]
+    fn zerocopy_udp_kernel_behavior() {
+        // Documents how THIS kernel handles UDP MSG_ZEROCOPY (assertions
+        // are kernel-agnostic — send integrity only; the behavior is
+        // logged). On this box: the kernel silently COPIES the data at
+        // send time (the mutation probe sees the OLD bytes), queues a
+        // single coalesced notification with an empty [0,0) byte range,
+        // and the engine's ZcState auto-disables zerocopy after a 5 ms
+        // grace so the worker never wedges.
+        let zc_cfg = UdpConfig {
+            reuseport: false,
+            zerocopy: true,
+            ..Default::default()
+        };
+        let sock = UdpSocket::new("127.0.0.1:0".parse().unwrap(), &zc_cfg).expect("zc bind");
+        let peer = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let payload = vec![0xabu8; 60 * 1024];
+        for _ in 0..3 {
+            let n = sock
+                .send_to_zerocopy(&payload, peer.local_addr().unwrap())
+                .expect("zc send");
+            assert_eq!(n, payload.len());
+            let mut buf = vec![0u8; 70_000];
+            let (got, _) = peer.recv_from(&mut buf).expect("peer recv");
+            assert_eq!(got, payload.len());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let notifs = sock
+            .drain_zerocopy_notifications()
+            .expect("udp drain");
+        eprintln!("udp: notifications after 3 zc sends = {notifs}");
+
+        // Mutation probe: send with ZC, mutate the buffer before the
+        // peer reads. Referenced pages would deliver the NEW bytes (real
+        // zero-copy); a send-time copy delivers the OLD ones.
+        let mut probe_payload = vec![0xdu8; 60 * 1024];
+        let n = sock
+            .send_to_zerocopy(&probe_payload, peer.local_addr().unwrap())
+            .expect("zc mutation send");
+        assert_eq!(n, probe_payload.len());
+        for b in probe_payload.iter_mut() {
+            *b = 0x5a;
+        }
+        let mut mbuf = vec![0u8; 70_000];
+        let (mgot, _) = peer.recv_from(&mut mbuf).expect("peer recv mutated");
+        assert_eq!(mgot, probe_payload.len());
+        let saw_old = mbuf[..mgot].iter().all(|&b| b == 0xdu8);
+        let saw_new = mbuf[..mgot].iter().all(|&b| b == 0x5au8);
+        eprintln!(
+            "udp: mutation test — peer saw OLD bytes (copied at send) = {saw_old}, NEW bytes (pages referenced) = {saw_new}"
+        );
+
+        // Corked probe: the same, with UDP_CORK set (the corked path is
+        // the documented route for UDP zerocopy).
+        let cork: libc::c_int = 1;
+        // SAFETY: setsockopt on an owned fd with valid args.
+        unsafe {
+            libc::setsockopt(
+                sock.fd.as_raw_fd(),
+                libc::SOL_UDP,
+                2, /* UDP_CORK */
+                (&cork as *const libc::c_int).cast(),
+                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            );
+        }
+        let mut cork_payload = vec![0xeu8; 60 * 1024];
+        let n = sock
+            .send_to_zerocopy(&cork_payload, peer.local_addr().unwrap())
+            .expect("corked zc send");
+        assert_eq!(n, cork_payload.len());
+        for b in cork_payload.iter_mut() {
+            *b = 0x3c;
+        }
+        let uncork: libc::c_int = 0;
+        // SAFETY: setsockopt on an owned fd with valid args.
+        unsafe {
+            libc::setsockopt(
+                sock.fd.as_raw_fd(),
+                libc::SOL_UDP,
+                2, /* UDP_CORK */
+                (&uncork as *const libc::c_int).cast(),
+                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            );
+        }
+        let mut cbuf = vec![0u8; 70_000];
+        let (cgot, _) = peer.recv_from(&mut cbuf).expect("peer recv corked");
+        assert_eq!(cgot, cork_payload.len());
+        let cork_saw_old = cbuf[..cgot].iter().all(|&b| b == 0xeu8);
+        let cork_saw_new = cbuf[..cgot].iter().all(|&b| b == 0x3cu8);
+        eprintln!(
+            "udp: corked mutation test — OLD (copied) = {cork_saw_old}, NEW (pages referenced) = {cork_saw_new}"
+        );
     }
 
     #[test]

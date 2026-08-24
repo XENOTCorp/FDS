@@ -31,8 +31,11 @@ const SCTP_MAX_BURST: libc::c_int = 20;
 /// `enum sctp_msg_flags` (also `SCTP_NOTIFICATION`).
 const MSG_NOTIFICATION: libc::c_int = 0x8000;
 // libc 0.2.189 exports neither of these on Linux-gnu; values from the
-// kernel UAPI (AF_SCTP = 30) and <netinet/sctp.h> (SOL_SCTP = 132).
-const AF_SCTP: libc::c_int = 30;
+// kernel UAPI and <netinet/sctp.h>. SOL_SCTP is 132. There is NO
+// AF_SCTP in the Linux UAPI: the kernel registers SCTP under the inet
+// family, so the socket call uses AF_INET + IPPROTO_SCTP (132) (an
+// earlier AF_SCTP = 30 constant was AF_TIPC and made every SCTP socket
+// fail with EAFNOSUPPORT).
 const SOL_SCTP: libc::c_int = 132;
 
 /// `sctp_assoc_t` from <linux/sctp.h>. The header typedefs it `__s32`;
@@ -277,10 +280,11 @@ impl SctpSocket {
     /// Create and bind an SCTP socket on `addr`, applying `cfg`.
     pub(crate) fn bind(addr: SocketAddr, cfg: &SctpConfig) -> std::io::Result<Self> {
         // SAFETY: socket(2) with valid constants; a fresh fd (or -1)
-        // comes back and we take ownership immediately.
+        // comes back and we take ownership immediately. Linux registers
+        // SCTP under the inet family — there is no AF_SCTP in the UAPI.
         let raw = unsafe {
             libc::socket(
-                AF_SCTP,
+                libc::AF_INET,
                 libc::SOCK_STREAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC,
                 libc::IPPROTO_SCTP,
             )

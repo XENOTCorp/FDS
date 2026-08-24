@@ -225,7 +225,10 @@ fn worker_epoll_loop(
     // Preallocated receive batch (hot path allocates nothing). Buffers
     // are sized to the IPv4 UDP wire maximum (65535), so ANY datagram —
     // including loopback GSO/GRO jumbo — is received whole, never
-    // truncated: 64 x 64 KiB = 4 MiB, allocated once per worker.
+    // truncated: 64 x 64 KiB = 4 MiB, allocated once per worker. The
+    // MSG_ZEROCOPY path keeps its own doubled set (the kernel references
+    // send pages until the error-queue notification, so a set cannot be
+    // reused until then); rx_bufs stays as the auto-disable fallback.
     let mut rx_bufs: Vec<mol::Buffer<{ crate::udp::MAX_DATAGRAM }>> = vec![mol::Buffer::new(); 64];
     let mut rx_out: Vec<crate::udp::RecvResult> = (0..64)
         .map(|_| crate::udp::RecvResult {
@@ -234,6 +237,11 @@ fn worker_epoll_loop(
             truncated: false,
         })
         .collect();
+    let mut zc: Option<ZcState> = if cfg.udp.zerocopy {
+        Some(ZcState::new())
+    } else {
+        None
+    };
 
     let timeout_ms = if cfg.reactor.busy_poll {
         0
@@ -259,7 +267,17 @@ fn worker_epoll_loop(
                 continue;
             }
             match ev.token {
-                TOKEN_UDP => drain_udp(udp_sock, &mut rx_bufs, &mut rx_out, metrics, id)?,
+                TOKEN_UDP => {
+                    if let Some(z) = &mut zc {
+                        if z.disabled {
+                            drain_udp(udp_sock, &mut rx_bufs, &mut rx_out, metrics, id)?;
+                        } else {
+                            drain_udp_zc(udp_sock, z, metrics, id)?;
+                        }
+                    } else {
+                        drain_udp(udp_sock, &mut rx_bufs, &mut rx_out, metrics, id)?;
+                    }
+                }
                 TOKEN_TCP_LISTENER => {
                     drain_accept(tcp_listener, &mut reactor, &conns, &mut streams, id)?;
                 }
@@ -500,6 +518,163 @@ fn drain_udp(
         if m > 0 {
             let _ = udp.send_batch(&echo[..m]);
         }
+    }
+    Ok(())
+}
+
+/// Smallest datagram that pays for the MSG_ZEROCOPY per-datagram
+/// sendmsg syscall (below it, the batched sendmmsg copy is cheaper).
+const ZC_MIN_DATAGRAM: usize = 4096;
+
+/// MSG_ZEROCOPY echo state: two receive-buffer sets alternate. The
+/// kernel references (does not copy) send pages, so a set whose
+/// zero-copy sends are in flight cannot be reused until their
+/// error-queue notifications are drained. This kernel reports empty
+/// byte ranges on UDP ZC notifications (verified empirically), so
+/// recycling is by notification COUNT: the error queue is FIFO and
+/// sends are ordered, so cumulative counts are exact.
+struct ZcState {
+    bufs: [Vec<mol::Buffer<{ crate::udp::MAX_DATAGRAM }>>; 2],
+    out: [Vec<crate::udp::RecvResult>; 2],
+    /// Per set: (cumulative ZC sends before this set, ZC sends from
+    /// this set) — `None` = reusable.
+    in_flight: [Option<(u64, u64)>; 2],
+    /// Cumulative ZC notifications drained from the error queue.
+    acked_notifs: u64,
+    /// Cumulative ZC datagrams sent (across both sets).
+    sent_total: u64,
+    /// The set the next recv targets (prefer alternating).
+    next: usize,
+    /// Set when notifications stop arriving (this kernel silently
+    /// copies UDP MSG_ZEROCOPY sends, so none ever come); the worker
+    /// then falls back to the copy path so it never wedges.
+    disabled: bool,
+    /// When both sets have been in flight without a free one.
+    stall_start: Option<std::time::Instant>,
+}
+
+impl ZcState {
+    fn new() -> Self {
+        let mk_out = || {
+            (0..64)
+                .map(|_| crate::udp::RecvResult {
+                    len: 0,
+                    src: "0.0.0.0:0".parse().unwrap(),
+                    truncated: false,
+                })
+                .collect()
+        };
+        Self {
+            bufs: [vec![mol::Buffer::new(); 64], vec![mol::Buffer::new(); 64]],
+            out: [mk_out(), mk_out()],
+            in_flight: [None, None],
+            acked_notifs: 0,
+            sent_total: 0,
+            next: 0,
+            disabled: false,
+            stall_start: None,
+        }
+    }
+
+    /// Drain the error queue and free any set whose sends have all been
+    /// notified.
+    fn recycle(&mut self, udp: &crate::udp::UdpSocket) -> std::io::Result<()> {
+        self.acked_notifs += udp.drain_zerocopy_notifications()?;
+        for slot in self.in_flight.iter_mut() {
+            if let Some((before, count)) = *slot {
+                if self.acked_notifs >= before + count {
+                    *slot = None;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `drain_udp` variant for `cfg.udp.zerocopy`: large datagrams are
+/// echoed with MSG_ZEROCOPY (the send buffer pages are referenced, not
+/// copied), small ones through the batched copy path. A set is only
+/// reused after its in-flight sends are notified, so receive and send
+/// stay safe without allocating on the datapath.
+fn drain_udp_zc(
+    udp: &crate::udp::UdpSocket,
+    zc: &mut ZcState,
+    metrics: &Metrics,
+    core: usize,
+) -> std::io::Result<()> {
+    zc.recycle(udp)?;
+    loop {
+        let set = if zc.in_flight[zc.next].is_none() {
+            zc.next
+        } else if zc.in_flight[1 - zc.next].is_none() {
+            1 - zc.next
+        } else {
+            // Both sets in flight: wait for notifications. Kernels that
+            // silently COPY UDP MSG_ZEROCOPY sends (this kernel does —
+            // verified: pages never referenced, no notifications) would
+            // wedge the worker forever; after a short grace, disable ZC
+            // for this worker and fall back to the copy path.
+            zc.recycle(udp)?;
+            if zc.in_flight[zc.next].is_some() && zc.in_flight[1 - zc.next].is_some() {
+                if zc.stall_start.is_none() {
+                    zc.stall_start = Some(std::time::Instant::now());
+                }
+                if zc.stall_start.unwrap().elapsed() >= std::time::Duration::from_millis(5) {
+                    eprintln!(
+                        "fds: worker {core}: udp zerocopy sends not completing (kernel copies \
+                         silently?) — disabling zerocopy for this worker"
+                    );
+                    zc.disabled = true;
+                    break;
+                }
+            } else {
+                zc.stall_start = None;
+            }
+            continue;
+        };
+        let n = udp.recv_batch(&mut zc.bufs[set], &mut zc.out[set])?;
+        if n == 0 {
+            break;
+        }
+        let mut copy_msgs: [(&[u8], SocketAddr); 64] = [(&[], "0.0.0.0:0".parse().unwrap()); 64];
+        let mut cm = 0;
+        let mut zc_sent: u64 = 0;
+        for (idx, r) in zc.out[set].iter().take(n).enumerate() {
+            if r.truncated {
+                metrics.add_drops(core, 1);
+                continue;
+            }
+            metrics.add_packets(core, 1);
+            metrics.add_bytes(core, r.len as u64);
+            let payload = &zc.bufs[set][idx].as_slice()[..r.len];
+            if r.len >= ZC_MIN_DATAGRAM {
+                match udp.send_to_zerocopy(payload, r.src) {
+                    Ok(sent) => {
+                        zc_sent += 1;
+                        zc.sent_total += 1;
+                        debug_assert_eq!(sent, r.len);
+                    }
+                    // Fall back to the copy path; the buffer is safe to
+                    // hand to sendmmsg because it copies before returning.
+                    Err(_) => {
+                        copy_msgs[cm] = (payload, r.src);
+                        cm += 1;
+                    }
+                }
+            } else {
+                copy_msgs[cm] = (payload, r.src);
+                cm += 1;
+            }
+        }
+        if cm > 0 {
+            let _ = udp.send_batch(&copy_msgs[..cm]);
+        }
+        zc.in_flight[set] = if zc_sent > 0 {
+            Some((zc.sent_total - zc_sent, zc_sent))
+        } else {
+            None
+        };
+        zc.next = 1 - set;
     }
     Ok(())
 }

@@ -904,3 +904,66 @@ pub fn run_tcp_against(addr: std::net::SocketAddr, seconds: u64) -> std::io::Res
     );
     Ok(())
 }
+
+/// Windowed UDP echo throughput against a *running* fds engine
+/// (`--bench-udp-against <addr> [secs]`): four client sockets (one per
+/// engine worker bucket via SO_REUSEPORT hashing) each fire a 64-datagram
+/// window of 60 KiB payloads and reap the echoes. Reports sent vs echoed
+/// Gbps and the echo-completion ratio — the client that makes the
+/// MSG_ZEROCOPY A/B measurable on the real server datapath.
+pub fn run_udp_against(addr: std::net::SocketAddr, seconds: u64) -> std::io::Result<()> {
+    const WINDOW: usize = 64;
+    const MSG: usize = 60 * 1024;
+    let seconds = seconds.max(1);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let sent = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let echoed = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let mut handles = Vec::new();
+    for _ in 0..4 {
+        let stop = stop.clone();
+        let sent = sent.clone();
+        let echoed = echoed.clone();
+        handles.push(std::thread::spawn(move || -> std::io::Result<()> {
+            use std::sync::atomic::Ordering;
+            let sock = std::net::UdpSocket::bind("127.0.0.1:0")?;
+            sock.set_read_timeout(Some(std::time::Duration::from_millis(200)))?;
+            let payload = vec![0xabu8; MSG];
+            let mut buf = vec![0u8; MSG + 2048];
+            while !stop.load(Ordering::Relaxed) {
+                for _ in 0..WINDOW {
+                    sock.send_to(&payload, addr)?;
+                }
+                sent.fetch_add((WINDOW * MSG) as u64, Ordering::Relaxed);
+                for _ in 0..WINDOW {
+                    match sock.recv_from(&mut buf) {
+                        Ok((n, _)) => {
+                            echoed.fetch_add(n as u64, Ordering::Relaxed);
+                        }
+                        // Recv timeout: the engine dropped an echo (send
+                        // buffer full) or is saturated; count and move on.
+                        Err(_) => break,
+                    }
+                }
+            }
+            Ok(())
+        }));
+    }
+    while std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    for h in handles {
+        h.join()
+            .map_err(|_| std::io::Error::other("client thread panicked"))??;
+    }
+    let s = sent.load(std::sync::atomic::Ordering::Relaxed);
+    let e = echoed.load(std::sync::atomic::Ordering::Relaxed);
+    println!(
+        "bench-udp-against: {addr} — 4 sockets x {MSG}B, sent {:.2} Gbps, echoed {:.2} Gbps, echo completion {:.2}%",
+        s as f64 * 8.0 / seconds as f64 / 1e9,
+        e as f64 * 8.0 / seconds as f64 / 1e9,
+        if s > 0 { 100.0 * e as f64 / s as f64 } else { 0.0 },
+    );
+    Ok(())
+}
