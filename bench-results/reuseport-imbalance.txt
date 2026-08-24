@@ -1,0 +1,8 @@
+# SO_REUSEPORT per-core distribution — 2026-08-24 14:52:59Z
+# host: xenot | cpu: Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz | kernel: 7.2.0_1
+# tool: fds engine metrics pull | params: core.N.packets during 4-flow load | duration: 4s
+core.0.packets 23715
+core.1.packets 8298
+core.2.packets 0
+core.3.packets 0
+cores: 4, mean 8003.2, stdev 9683.1, imbalance (cv): 1.210

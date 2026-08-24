@@ -1,0 +1,5 @@
+# context switches + cpu migrations /s during load — 2026-08-24 14:52:28Z
+# host: xenot | cpu: Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz | kernel: 7.2.0_1
+# tool: /proc/PID/status sampling | params: iperf3 client+server | duration: 4s
+pid 28361: voluntary 76/s, nonvoluntary 0/s
+pid 28359: voluntary 3/s, nonvoluntary 0/s

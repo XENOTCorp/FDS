@@ -321,9 +321,21 @@ pub fn run_engine_latency(addr: SocketAddr, seconds: u64) -> std::io::Result<()>
     while std::time::Instant::now() < deadline {
         let t0 = std::time::Instant::now();
         sock.send_to(&payload, addr)?;
+        // Wait for the echo; a nonblocking recv_batch may return Ok(0)
+        // while the peer is absent — bound the wait by the deadline so a
+        // dead engine cannot hang the client (it burns 100% CPU).
         loop {
             if sock.recv_batch(&mut bufs, &mut out)? > 0 {
                 break;
+            }
+            if std::time::Instant::now() >= deadline {
+                eprintln!(
+                    "fds: engine at {addr} not answering (is `fds` running?); giving up after {} samples",
+                    samples.len()
+                );
+                let dur = seconds as f64;
+                report_latency(&format!("engine latency vs {addr}"), &mut samples, count, dur);
+                return Ok(());
             }
         }
         samples.push(t0.elapsed().as_nanos() as u64);
@@ -786,4 +798,17 @@ mod sctp_tests {
         // with it, a 1 s run completes and reports.
         run_sctp(1).expect("bench-sctp must not error");
     }
+}
+
+/// Pull the engine's metrics report from its Unix socket and print it
+/// (`--metrics-pull [path]`): the observability counterpart to the
+/// in-engine `MetricsServer` (used by the cross-tool bench to read the
+/// per-core SO_REUSEPORT distribution).
+pub fn run_metrics_pull(path: &str) -> std::io::Result<()> {
+    use std::io::Read;
+    let mut sock = std::os::unix::net::UnixStream::connect(path)?;
+    let mut report = String::new();
+    sock.read_to_string(&mut report)?;
+    print!("{report}");
+    Ok(())
 }

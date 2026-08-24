@@ -1,0 +1,16 @@
+# metrics that could not be measured here — 2026-08-24 14:53:01Z
+# host: xenot | cpu: Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz | kernel: 7.2.0_1
+# tool: — | params: with reasons | duration: 4s
+hpack/qpack efficiency, RST_stream rate, HTTP/2 HOLB: the h2/h3 server
+  side (atomos-proto) is not instrumented — the h2/h3 crates are used
+  as-is; measuring these needs h2/h3 stats plumbing.
+lock contention call graphs (perf record sched:sched_switch): needs root
+  (sudo password required on this host). The receive loop holds no
+  locks by construction (per-core, run-to-completion, atomic counters).
+slabtop per-slab owner detail: needs root.
+bpftrace kprobes/uprobes: needs root.
+tokio-console: atomos-proto is not wired with console_subscriber.
+precise rcv_wnd auto-tuning lag curve: needs kernel tracing (bpf, root);
+  sampled instead via ss (see cwnd-variance.txt).
+wifi path: host-to-own-ip routes via loopback (see wifi-path.txt); a
+  real wifi test needs a second host on the LAN.

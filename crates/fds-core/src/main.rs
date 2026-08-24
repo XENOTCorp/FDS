@@ -24,6 +24,10 @@ fn main() {
             let secs = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(3);
             benchmarks::run_large(datagram, secs)
         }
+        Some("--metrics-pull") => {
+            let path = args.get(1).map(String::as_str).unwrap_or("/tmp/fds-metrics.sock");
+            benchmarks::run_metrics_pull(path)
+        }
         Some("--bench-sctp") => {
             let secs = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(3);
             benchmarks::run_sctp(secs)

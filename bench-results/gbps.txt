@@ -1,0 +1,12 @@
+# bit rates (loopback) — 2026-08-24 14:51:42Z
+# host: xenot | cpu: Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz | kernel: 7.2.0_1
+# tool: fds --bench-large / iperf3 / netperf | params: Gbps | duration: 4s
+fds one-way 60KB send: 33.21 Gbps
+fds one-way 60KB recv: 29.81 Gbps
+iperf3 tcp 1-stream: 21.8 Gbits/sec
+iperf3 tcp 4-stream SUM: 33.9 Gbits/sec
+iperf3 udp max 1-stream: 20.7 Gbits/sec (loss 0%)
+netperf TCP_STREAM: 21783.26 Mbps
+netperf UDP_STREAM: 25122.24 Mbps
+netperf TCP_RR: 87380 trans/s (~20µs kernel request-response floor)
+netperf TCP_CRR: 87380 trans/s (connect+request+response; per-conn time = 1/87380 s)
