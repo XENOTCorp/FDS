@@ -3,8 +3,12 @@
 //! baseline and environment variables override individual fields
 //! (`FDS_<SECTION>_<KEY>`, e.g. `FDS_REACTOR_BUSY_POLL=1`).
 //!
-//! Sub-project 3 owns the adaptive *build-time* configuration; this
-//! module is the engine's runtime side, read once at startup.
+//! The file is the single repo-root `config.json` (one file, no layering —
+//! sub-project 3 ruling), consumed at startup by the engine. The adaptive
+//! *build-time* tooling (sub-project 3) lives in `build/`: `build.sh`
+//! derives codegen flags from the hardware, and `fds-detect` regenerates
+//! `config.json` and `config/config.schema.json` (which validates this
+//! file) from the same field table as this module's serde model.
 
 use serde::{Deserialize, Serialize};
 

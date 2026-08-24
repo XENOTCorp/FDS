@@ -1,7 +1,7 @@
 # FDS Sub-Project 3: Build Tooling + Config — Design Spec
 
 **Date:** 2026-08-23
-**Status:** Draft for review (written in advance per author request; design-approval loop still applies before implementation)
+**Status:** Implemented 2026-08-24 (author ruling: "impl directly"; config.json = single repo-root file). Deliverables: `build/build.sh` + `build/detect.sh`, `crates/fds-detect/`, `config/config.schema.json`, repo-root `config.json`, `build/PROFILES.md`. Scope notes: §4.3's wider schema sections were superseded by the engine's shipped config surface (see PROFILES.md "Scope note").
 **Depends on:** Sub-project 1 (standard's decision matrices D-1…D-12 as the default-selection rationale)
 **Consumed by:** Sub-project 4 (transport engine reads config.json)
 

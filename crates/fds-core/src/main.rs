@@ -5,8 +5,9 @@
 //!
 //! This is a BINARY package with no public API: every module is
 //! crate-private and the `fds` binary is the product. Runtime
-//! configuration comes from `config.json` (see [`config`]); the adaptive
-//! build tooling is sub-project 3.
+//! configuration comes from the single repo-root `config.json` (see
+//! [`config`]); the adaptive build tooling (sub-project 3) lives in
+//! `build/`.
 //!
 //! Usage: `fds [config.json]` runs the engine; `fds --bench <secs>` runs
 //! the UDP loopback benchmark; `fds --bench-large <datagram> <secs>` runs

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/mol-core", "crates/fds-core"]
+members = ["crates/mol-core", "crates/fds-core", "crates/fds-detect"]
 
 [workspace.package]
 version = "0.1.0"
