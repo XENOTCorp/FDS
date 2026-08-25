@@ -620,6 +620,65 @@ mod tests {
             "bench-large smoke: send {sp} pkts/{sb} B, recv {rp} pkts/{rb} B in 1s each"
         );
     }
+
+    use crate::alloc_count;
+
+    #[test]
+    fn alloc_counter_observes_allocations() {
+        // Control: prove the harness itself works (a Vec::with_capacity
+        // must be observed), so a zero count is a real signal.
+        alloc_count::reset();
+        let _v: Vec<u8> = Vec::with_capacity(1024);
+        assert!(
+            alloc_count::count() > 0,
+            "control: the counter must observe Vec::with_capacity"
+        );
+        alloc_count::reset();
+        assert_eq!(alloc_count::count(), 0, "reset clears the counter");
+    }
+
+    #[test]
+    fn udp_echo_datapath_allocates_nothing() {
+        // Machine-checked zero-allocation (thesis NT67): the hot loop of
+        // the UDP echo datapath — send_batch -> peer echo -> recv_batch —
+        // must perform zero allocations. Runs on a dedicated thread so
+        // concurrent tests (per-thread counter) cannot pollute it.
+        std::thread::spawn(|| {
+            let dp = try_engine_datapath()
+                .or_else(try_std_datapath)
+                .expect("UDP datapath must be constructible");
+            let payload = [0xabu8; DATAGRAM];
+            let msgs: Vec<(&[u8], SocketAddr)> = vec![(&payload, dp.peer_addr); BATCH];
+            let mut bufs: Vec<mol::Buffer<RCV_CAP>> = vec![mol::Buffer::new(); SLOTS];
+            let mut out: Vec<RecvResult> = (0..SLOTS)
+                .map(|_| RecvResult {
+                    len: 0,
+                    src: SocketAddr::from(([0, 0, 0, 0], 0)),
+                    truncated: false,
+                })
+                .collect();
+            let mut scratch = [0u8; 2048];
+            // Warmup round: loopback buffers fill, and any one-time lazy
+            // init happens here — before the measured region.
+            send_chunk(&dp, &msgs, CHUNK).expect("warmup send");
+            echo_chunk(&dp, &mut scratch).expect("warmup echo");
+            recv_chunk(&dp, &mut bufs, &mut out, &mut scratch).expect("warmup recv");
+            alloc_count::reset();
+            for _ in 0..50 {
+                send_chunk(&dp, &msgs, CHUNK).expect("send");
+                echo_chunk(&dp, &mut scratch).expect("echo");
+                recv_chunk(&dp, &mut bufs, &mut out, &mut scratch).expect("recv");
+            }
+            let n = alloc_count::count();
+            assert_eq!(
+                n,
+                0,
+                "the UDP echo datapath performed {n} allocations across 50 hot-loop rounds"
+            );
+        })
+        .join()
+        .expect("datapath thread panicked");
+    }
 }
 
 /// One-way SCTP stream throughput over loopback (`--bench-sctp <secs>`):
@@ -967,3 +1026,4 @@ pub fn run_udp_against(addr: std::net::SocketAddr, seconds: u64) -> std::io::Res
     );
     Ok(())
 }
+

@@ -43,6 +43,8 @@
 
 pub mod benchmarks;
 mod checksum;
+#[cfg(test)]
+mod alloc_count;
 pub mod config;
 pub mod conn;
 pub mod engine;

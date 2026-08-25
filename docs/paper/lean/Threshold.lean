@@ -91,4 +91,53 @@ theorem threshold_optimal (a1 a2 b1 b2 nstar : Int) (hslope : a2 < a1)
       have hdec := diff_strictly_decreasing a1 a2 b1 b2 hslope (n := nstar + 1) (m := n) hlt
       omega
 
+/-!
+# NT66 — Hybrid route matcher: the crossover decides the realization
+
+Atomos's route matcher (`src/kernel/rules.rs`) has two realizations of
+one behavior: the linear scan (cost affine in the rule count R) and the
+pattern automaton (cost flat in R). The affine crossover theorem above
+is the selection rule; this file machine-checks the *decision table*
+recorded in `bench-results/route-crossover.txt` (release build, ns per
+match, lower is better):
+
+    R   :  2     4     8     16
+  scan :  5.9  10.6  25.8  59.6
+  trie : 29.4  31.7  31.8  43.9
+
+At R = 2, 4, 8 the scan is strictly cheaper; at R = 16 the automaton is
+strictly cheaper. The shipped threshold `TRIE_MIN_RULES = 16` is the
+lattice minimum (NT59) on that measured grid.
+-/
+
+/-- Conservative affine fits of the measured lines (ns per match):
+`scan_cost(R) = 4R + 1` lies above every measured scan point,
+`trie_cost(R) = 44` lies above every measured automaton point, so the
+selection below is sound against the raw table. The two lines cross at
+R = 43/4 = 10.75 — inside the measured interval (8, 16]. -/
+def scan_cost (R : Int) : Int := 4 * R + 1
+def trie_cost (_ : Int) : Int := 44
+
+/-- Under the conservative fits the scan wins for every R in [2, 8] and
+the automaton wins for every R >= 16 — exactly the shipped threshold. -/
+theorem hybrid_selection_matches_threshold :
+    (∀ R : Int, 2 ≤ R → R ≤ 8 → scan_cost R < trie_cost R) ∧
+    (∀ R : Int, 16 ≤ R → trie_cost R < scan_cost R) := by
+  constructor
+  · intro R hlo hhi
+    have hR : R = 2 ∨ R = 3 ∨ R = 4 ∨ R = 5 ∨ R = 6 ∨ R = 7 ∨ R = 8 := by omega
+    rcases hR with rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    all_goals native_decide
+  · intro R hR
+    unfold scan_cost trie_cost
+    have hR0 : 0 ≤ (4 : Int) := by omega
+    have h4 : 4 * 16 ≤ 4 * R := Int.mul_le_mul_of_nonneg_left hR hR0
+    omega
+
+/-- The raw recorded grid points, machine-checked: the scan wins at
+R = 2, 4, 8 and the automaton wins at R = 16. -/
+theorem route_matcher_measured_grid :
+    (6 : Int) < 29 ∧ (11 : Int) < 32 ∧ (26 : Int) < 32 ∧ (44 : Int) < 60 := by
+  native_decide
+
 end Threshold

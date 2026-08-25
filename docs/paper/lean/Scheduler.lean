@@ -64,4 +64,46 @@ theorem monotone {n a b : Nat} (hab : a ≤ b) : f n a ≤ f n b := by
   have hdiv : a / 8 ≤ b / 8 := Nat.div_le_div_right hab
   omega
 
+/-!
+# NT62 cycle — the decay-then-update attractor
+
+Between requests the scheduler decays demand (`tick_decay`):
+`d -> (7*d)/8`. The next request updates `d -> d + 1 - d/8` (the EMA of
+`f` above with n = 1). The composite
+
+    cycle d = f 1 (decay d)
+
+keeps the firewall datapath inside [7, 13] once it is there, and pulls
+every state at or above 14 strictly downward. The code test
+`decay_cycle_contracts_into_attractor` in `src/kernel/sched.rs` runs the
+same seven-state check; this file machine-checks it.
+-/
+
+/-- `tick_decay`: `d -> (7*d) >> 3`, the integer form. -/
+def decay (d : Nat) : Nat := (7 * d) / 8
+
+/-- One decay followed by one n = 1 update. -/
+def cycle (d : Nat) : Nat := f 1 (decay d)
+
+/-- The attractor [7, 13] is invariant under the cycle (all seven
+states, checked exhaustively). -/
+theorem cycle_keeps_attractor (d : Nat) (hlo : 7 ≤ d) (hhi : d ≤ 13) :
+    7 ≤ cycle d ∧ cycle d ≤ 13 := by
+  have h : d = 7 ∨ d = 8 ∨ d = 9 ∨ d = 10 ∨ d = 11 ∨ d = 12 ∨ d = 13 := by omega
+  rcases h with rfl | rfl | rfl | rfl | rfl | rfl | rfl
+  all_goals native_decide
+
+/-- Above the attractor the cycle is a strict contraction:
+`cycle d < d` for every `d >= 14`, so iterating the cycle converges
+into [7, 13]. -/
+theorem cycle_contracts_above (d : Nat) (h : 14 ≤ d) : cycle d < d := by
+  unfold cycle decay f
+  -- cycle d = (7d/8) + 1 - (7d/8)/8 <= (7d/8) + 1, and (7d/8) <= d - 2,
+  -- so cycle d <= d - 1 < d.
+  have hdiv : 7 * d / 8 ≤ d - 2 :=
+    (Nat.div_le_iff_le_mul_add_pred (a := 7 * d) (b := 8) (c := d - 2) (by omega : 0 < 8)).mpr
+      (by omega)
+  have hsub : (7 * d / 8) + 1 - (7 * d / 8) / 8 ≤ (7 * d / 8) + 1 := Nat.sub_le _ _
+  omega
+
 end Scheduler

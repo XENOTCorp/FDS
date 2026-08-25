@@ -1,0 +1,3 @@
+autotune: 2026-08-25T17:08:56-04:00
+lattice minimum (thesis NT59) on this kernel: epoll-busy-poll (udp echo 13.82 Gbps)
+run with: FDS_REACTOR_STRATEGY=epoll
