@@ -3,6 +3,10 @@ name = "fds-verify"
 version = "0.1.0"
 edition = "2021"
 
+# Isolated from the FDS root workspace: std-only by design, must build
+# offline with no crates.io dependencies.
+[workspace]
+
 # Proof-verification tools for the FDS thesis Appendix A.
 # Std-only by design: must build offline, no crates.io dependencies.
 

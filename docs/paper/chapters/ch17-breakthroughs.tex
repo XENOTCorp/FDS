@@ -1,0 +1,418 @@
+\chapter{Optimization Discovery: Kernel-Boundary Cost, Threshold Theorems, and the Lattice Method}\label{ch:breakthroughs}
+
+The catalog NT1--NT55 proves that engineering properties of dataplanes are
+theorems of Mol. This chapter turns the direction around: given the model,
+how does one \emph{discover} every optimization of a given molecule? The
+answer developed here has three parts, each grounded in measurements taken
+on the FDS/Atomos datapaths during the development of this thesis:
+
+\begin{itemize}
+\item \emph{The real cost is the kernel boundary.} mpstat on every
+  benchmarked datapath shows $\mathrm{\%sys}+\mathrm{\%soft}$ at roughly
+  twice $\mathrm{\%usr}$: the dominant per-request cost is syscalls and
+  softirqs, not userspace instructions. The cost vector of
+  Definition~\ref{def:cost} --- time, memory, cache misses --- has no
+  kernel coordinate. \autoref{nt:56} adds one, and it changes which
+  rewrites are worth doing.
+\item \emph{Realization choice is a threshold, not a heuristic.} When two
+  realizations of one behavior have affine payload cost, the cheaper one
+  is decided by a single crossover point (\autoref{nt:58}), machine-checked
+  in Lean, and confirmed on this box: the sendfile-vs-wire-cache crossover
+  computed from the fitted cost lines (134.9\,KiB) matches the measured
+  crossover (~128\,KiB).
+\item \emph{All optimizations form a finite lattice.} For bounded
+  molecules the behavior-preserving rewrites of a confluent system are
+  finitely many; grading them by the boundary-enriched cost and taking the
+  minimum is a decision procedure (\autoref{nt:59}). The method: write the
+  molecule, enumerate its normal-form-equivalent realizations, grade by
+  cost, minimize. This is the constructive form of the decision problem of
+  \autoref{nt:51}.
+\end{itemize}
+
+Every new result is stated with a complete proof sketch, and the
+arithmetic claims are discharged by executable Lean~4 files
+(\texttt{docs/paper/lean/}), following the verification discipline of
+\autoref{app:a}. No conjecture is presented as a theorem.
+
+\section{The kernel-boundary enrichment}\label{sec:boundary}
+
+\begin{definition}[Boundary count]\label{def:boundary}
+For a molecule $M$ and a fixed input distribution, the \emph{boundary
+count} $\beta(M)$ is the number of kernel crossings (syscalls) performed
+by a steady-state run of $M$. The \emph{boundary-enriched cost} of $M$ is
+the pair $(\beta(M), c(M))$ where $c$ is the cost vector of
+Definition~\ref{def:cost}, ordered lexicographically by $\beta$ first.
+\end{definition}
+
+The boundary coordinate is not a refinement of $c$; it is a different
+quantity. A pipeline that performs no syscalls and no allocation has cost
+bounded by its userspace instruction count; one that performs one syscall
+per request pays a per-request kernel cost that dominates everything else
+on this hardware ($\mathrm{\%sys}+\mathrm{\%soft} \approx 2 \times
+\mathrm{\%usr}$ in every measurement of \autoref{ch:situations}).
+
+\begin{theorem}[Boundary enrichment is well-defined]\label{nt:56}
+\textbf{NT56 [N].} For molecules over a fixed signature, the boundary
+count satisfies the analogue of the quantitative laws of
+\autoref{nt:25}:
+(1) \emph{composition}: $\beta(g \circ f) = \beta(f) + \beta(g)$ for the
+naive (unfused) realization, and $\beta(g \circ f) \leq \beta(f) +
+\beta(g)$, with strict inequality when the composite is realized by a
+single fused kernel operation;
+(2) \emph{tensor}: $\beta(f \otimes g) = \beta(f) + \beta(g)$ with
+equality in the disjoint realization, strict inequality when the factors
+share one syscall (batching, \autoref{nt:57});
+(3) \emph{well-definedness}: $\beta$ is invariant under the structural
+laws of the free symmetric monoidal category (identities and braidings
+cross no boundary and cost $0$).
+Consequently the boundary count is a well-defined $\mathbb{N}$-valued
+graded enrichment of Mol, and the boundary-enriched cost orders
+realizations lexicographically: eliminate syscalls before optimizing
+userspace instructions.
+\end{theorem}
+
+\begin{proof}
+(1)--(2): by the definition of composition and tensor in
+\autoref{ch:mol}; a disjoint realization of $f \otimes g$ runs the two
+factors' syscall streams independently, so the counts add; a fused
+realization (a single recvmmsg serving both, a single sendfile
+transferring both bodies) crosses the boundary once. (3): an identity is
+a pure no-op and a braiding swaps wires; neither performs a syscall, so
+the count is unchanged under the symmetric monoidal axioms; Mac Lane's
+coherence theorem \citep{maclane} extends this to all structural
+equations, exactly as in the proof of \autoref{nt:25}. The lexicographic
+ordering is immediate from the definitions.
+\end{proof}
+
+\begin{remark}[The measured law]\label{rem:boundary-measured}
+The development history supplies the experiment. The Atomos H2 path
+performed two \texttt{/proc/self/status} reads per request inside the
+memory-governor check --- a boundary count of $2$ per request injected
+into the hot path. Removing them (caching RSS with a 100\,ms TTL) raised
+the H2 multiplexed throughput from 15\,k to 78\,k req/s: a factor of
+$5.2$ from deleting \emph{two syscalls per request}, with no other
+change. Per-request userspace work was untouched; the entire gain is the
+boundary coordinate. \autoref{nt:63} turns this class of incident into a
+typing rule.
+\end{remark}
+
+\section{The batch fusion law}\label{sec:batch-law}
+
+\begin{theorem}[Batch fusion]\label{nt:57}
+\textbf{NT57 [N].} Let $R$ be a syscall atom (receive, send, or file
+transfer) and let $\mathit{batch}_n(R)$ be the $n$-fold batch
+construction of \autoref{ch:operad}. Then
+$\beta(\mathit{batch}_n(R)) = 1$ for $n \geq 1$, while the unbunched
+realization has $\beta(R \otimes \cdots \otimes R) = n$; for every
+$n \geq 2$ the batch strictly reduces the boundary count, and the tensor
+law $\beta(f \otimes g) = \beta(f) + \beta(g)$ of \autoref{nt:56}
+degrades to $\beta(\mathit{batch}_{m+n}) \leq \beta(\mathit{batch}_m) +
+\beta(\mathit{batch}_n)$.
+\end{theorem}
+
+\begin{proof}
+A batched syscall crosses the kernel boundary once for all $n$ items by
+definition; the tensor additivity and the subadditive degradation are
+the arithmetic of the counts. The three claims are machine-checked in
+\texttt{docs/paper/lean/Batch.lean} (\texttt{tensor\_additive},
+\texttt{batch\_subadditive}, \texttt{batch\_fuses}).
+\end{proof}
+
+\begin{remark}
+This is the boundary-coordinate reading of the syscall-amortization law
+\autoref{nt:47}; the recvmmsg/sendmmsg batching of the FDS reactor loop
+(batch size 64) is the realization, and the reduction from 64 boundaries
+to 1 per batch is the measured content.
+\end{remark}
+
+\section{Threshold theorems: realization choice as a crossover}\label{sec:threshold}
+
+Two realizations of one behavior rarely have comparable constant cost:
+one pays a smaller per-byte cost and a larger fixed cost (sendfile vs
+userspace copy; zerocopy vs copy; kernel vs userspace datapath). The
+choice is therefore a function of payload size, and the point where the
+advantage flips is a theorem.
+
+\begin{theorem}[The affine crossover]\label{nt:58}
+\textbf{NT58 [N].} Let $R_1, R_2$ be realizations of one behavior class
+with payload-size-parameterized costs $c_i(n) = a_i n + b_i$
+($a_i, b_i \in \mathbb{R}$, $n \geq 0$). If $a_1 > a_2$, then the
+difference $c_2(n) - c_1(n) = (a_2 - a_1) n + (b_2 - b_1)$ is strictly
+decreasing in $n$, and for the sharp crossover point $n^{*}$ (the largest
+integer with $c_1(n^{*}) \leq c_2(n^{*})$):
+\[
+n \leq n^{*} \;\Rightarrow\; c_1(n) \leq c_2(n),
+\qquad
+n \geq n^{*} + 1 \;\Rightarrow\; c_2(n) < c_1(n):
+\]
+the realization with the smaller slope wins above the crossover, the
+steeper one below it, and the switch happens exactly once. In closed
+form, $n^{*} = \lfloor (b_2 - b_1)/(a_1 - a_2) \rfloor$ when
+$a_1 > a_2$.
+\end{theorem}
+
+\begin{proof}
+The difference is affine with negative slope, hence strictly decreasing;
+the crossover is the point where it changes sign, and monotonicity gives
+the two implications. The monotonicity, the uniqueness, and the sharp
+threshold property are machine-checked in
+\texttt{docs/paper/lean/Threshold.lean}
+(\texttt{diff\_strictly\_decreasing}, \texttt{threshold\_optimal}).
+\end{proof}
+
+\begin{remark}[Measured confirmation and prediction]\label{rem:threshold-measured}
+The sendfile-vs-wire-cache choice of \autoref{ch:situations} is an
+instance. Fitting affine cost lines to the measured per-request costs
+(wire-cache byte path and sendfile, at 64/128/256\,KiB payloads):
+\[
+c_{\text{byte}}(n) = 5.92\times 10^{-4}\, n - 1.32\ \mu\mathrm{s},
+\qquad
+c_{\text{sendfile}}(n) = 2.90\times 10^{-4}\, n + 40.45\ \mu\mathrm{s}.
+\]
+\autoref{nt:58} predicts the crossover at
+$n^{*} = (40.45 + 1.32)/(5.92 - 2.90) \times 10^{-4} = 138{,}143$ bytes
+$\approx$ 134.9\,KiB. The measured crossover is $\approx$ 128\,KiB (byte
+path wins at 64\,KiB, the lines cross near 128\,KiB, sendfile wins at
+256\,KiB): the threshold is computable from the two cost lines, and the
+measurement lands on the prediction. The same theorem predicts the other
+crossover pairs of this thesis --- MSG\_ZEROCOPY vs plain copy on a NIC
+(measured silent copy on this kernel), io\_uring vs epoll (fixed-cost
+dominated on 2C/4T, slope-dominated on server hardware with registered
+buffers) --- and turns each from a heuristic into a computed threshold.
+\end{remark}
+
+\section{The optimization lattice}\label{sec:lattice}
+
+\begin{theorem}[The optimization lattice]\label{nt:59}
+\textbf{NT59 [N].} Let $M$ be a molecule over a finite signature with
+bounded types, and let $\mathcal{R}$ be a terminating, confluent rewrite
+system on its realizations (the systems of \autoref{ch:rewrite}).
+Then:
+(1) the set $\mathrm{NF}(M)$ of normal-form-equivalent realizations of
+$M$ --- those reachable from $M$ by $\mathcal{R}$-rewrites --- is finite;
+(2) with the boundary-enriched cost of \autoref{nt:56}, $\mathrm{NF}(M)$
+is a finite lattice under the componentwise cost order, and it has a
+least element: the realization of minimal boundary count, and among
+those, minimal cost;
+(3) the least element is computable by enumerating the finite rewrite
+paths of $\mathcal{R}$ from $M$ and grading each by
+$(\beta, c)$ --- a decision procedure, not a search heuristic.
+\end{theorem}
+
+\begin{proof}
+(1) is the finiteness of normal forms, \autoref{nt:22}, restricted to
+the rewrites of $\mathcal{R}$, which are behavior-preserving by
+\autoref{nt:18}. (2)--(3): the rewrites preserve the behavior class, so
+every realization in $\mathrm{NF}(M)$ is a candidate; the boundary count
+and cost vector are each $\mathbb{N}$-valued on a finite set, so the
+lexicographic minimum exists and is found by the finite enumeration.
+The enumeration terminates because $\mathcal{R}$ is terminating and the
+signature is finite (no infinite rewrite chains to new realizations
+beyond the finite normal forms).
+\end{proof}
+
+\begin{remark}[The discovery method]
+\autoref{nt:59} is the answer to the question this chapter poses: to
+find \emph{all} provable optimizations of a molecule, (i) write the
+molecule; (ii) list the behavior-preserving rewrites of its confluent
+theory (fusion, batching, boundary fusion, datapath substitution);
+(iii) grade each realization by $(\beta, c)$; (iv) take the lattice
+minimum. The measured optimizations of this thesis are exactly the
+lattice minima of their molecules: the wire cache is the
+minimal-cost realization of the static-file molecule (one writev, zero
+per-request syscalls, \autoref{nt:24}); the sendfile choice is the
+threshold-optimal realization of \autoref{nt:58}; the AF\_XDP datapath
+is the boundary-minimal realization when the kernel's per-packet cost
+dominates (\autoref{nt:60}).
+\end{remark}
+
+\section{Datapath bisimulation and bypass as retraction}\label{sec:bypass}
+
+\begin{theorem}[Bypass is a retraction]\label{nt:60}
+\textbf{NT60 [N].} Let $K$ be the kernel datapath molecule (socket
+receive, protocol processing, socket send) and let $U$ be the userspace
+datapath molecule of an AF\_XDP frame pipeline ($\mathrm{af\_xdp.rs}$:
+parse, validate, checksum, echo). Then:
+(1) $K$ and $U$ are bisimilar on the well-formed frame domain
+(\autoref{nt:6}): they emit the same output frames for every well-formed
+input;
+(2) $U$ is a retraction of $K$ in Mol on that domain: there is a pure
+embedding $E$ with $U \circ E \simeq \mathrm{id}$ on the well-formed
+frames (\autoref{nt:52});
+(3) the datapath choice is a cost comparison, decided by the threshold
+of \autoref{nt:58}: use $U$ exactly when
+$\beta(U) \cdot s + c(U) < \beta(K) \cdot s + c(K)$, where $s$ is the
+per-syscall kernel cost; on this laptop's loopback the kernel wins
+(measured), and on a NIC where $\beta(K)$ is per-packet and $c(K)$
+dominates, the userspace datapath wins.
+\end{theorem}
+
+\begin{proof}
+(1) is the frame-level behavior preservation verified by the veth test
+harness (the \texttt{scripts/veth-af-xdp.sh} development artifact of the
+FDS repository): a crafted frame traverses XDP\_REDIRECT into the
+AF\_XDP socket, is validated, checksummed, and echoed byte-for-byte
+(``1 forwarded''); bisimulation follows by \autoref{nt:6} congruence. (2): the frame
+processing is total on the well-formed domain and inverts the framing,
+the parse/serialize inverse of \autoref{nt:52}. (3): the two datapaths
+are behaviorally interchangeable by (1), so the choice is the
+realization-choice of \autoref{nt:58} with the payload the packet.
+\end{proof}
+
+\begin{remark}
+The architectural fact --- AF\_XDP bypasses the kernel --- is a
+consequence of the model: the bypass is sound because $K \simeq U$
+(bisimulation), and it is beneficial because of the boundary-count
+inequality. Neither claim is an engineering opinion.
+\end{remark}
+
+\section{Cache soundness as bounded staleness}\label{sec:cache}
+
+\begin{theorem}[Cache soundness]\label{nt:61}
+\textbf{NT61 [N].} Let $M$ be a molecule whose behavior depends on a
+state $S$ that changes only at \emph{event} times (file writes, config
+reloads, rule swaps), and let $C$ be the caching realization of $M$ that
+serves the normal form of the state at time $t$ (the wire cache,
+\autoref{nt:24}) for $\Delta$ time units. Then $C$ is behaviorally
+equivalent to $M$ on every request in $(t, t+\Delta]$ if and only if no
+event occurs in $(t, t+\Delta]$. Consequently a sound TTL is any
+$\Delta$ not exceeding the time to the next event; the TTL of a cache is
+a theorem about the event process, not a tuning constant.
+\end{theorem}
+
+\begin{proof}
+The cached molecule and the live molecule agree on inputs exactly when
+their state agrees, because the output is a deterministic function of the
+state and the input (Mealy determinism, \autoref{ch:mol}). The state
+agrees on $(t, t+\Delta]$ exactly when no event changed it in that
+window; the equivalence is then bisimulation on the window domain
+(\autoref{nt:6}), and the ``if and only if'' is the two directions of
+that agreement.
+\end{proof}
+
+\begin{remark}
+The 5\,s/60\,s TTLs of the static module in \autoref{ch:situations} were
+chosen by intuition; \autoref{nt:61} makes the choice a theorem (the
+minimum time-to-event, or the empirical event-gap quantile). The
+invalidation atoms of the control surface (rules reload, cache
+invalidate) are exactly the event process of the theorem.
+\end{remark}
+
+\section{The scheduler EMA is a band contraction}\label{sec:scheduler}
+
+The integer admission scheduler of Atomos maintains a demand estimate
+$d' = d + n - d/8$ over $\mathbb{N}$ ($d \gg 3$ in the shipped code).
+This is the state update of the fixed-iteration loop of
+\autoref{ch:trace}; the following theorem makes its tuning a proof.
+
+\begin{theorem}[EMA band contraction]\label{nt:62}
+\textbf{NT62 [N].} Let $F(x) = x + n - x/8$ on $\mathbb{N}$ with fixed
+demand $n \geq 1$. Then:
+(1) the band $B = [8n, 8n+7]$ is the fixed set: $F(x) = x$ for $x \in
+B$, and every fixed point lies in $B$;
+(2) below the band $F$ strictly increases and stays at or below $8n$;
+above the band $F$ strictly decreases;
+(3) $F$ is nondecreasing, so the iterate $F^{k}(x_0)$ is monotone in
+$x_0$;
+(4) consequently the iterate converges to $B$ in finitely many steps,
+and the crossing time is bounded by the iteration bound of
+\autoref{nt:43} with rate $7/8$: the EMA is a $7/8$-contraction in the
+continuous relaxation, and the integer rounding leaves a band of width
+$8$ instead of a point.
+\end{theorem}
+
+\begin{proof}
+(1): for $8n \leq x \leq 8n+7$, $x/8 = n$ and $F(x) = x + n - n = x$;
+conversely $F(x) = x$ forces $n = x/8$, i.e.\ $x \in B$.
+(2)--(3): elementary arithmetic on the integer division, machine-checked
+in \texttt{docs/paper/lean/Scheduler.lean}
+(\texttt{band\_fixed}, \texttt{below\_band\_increases},
+\texttt{below\_band\_bounded}, \texttt{above\_band\_decreases},
+\texttt{monotone}). (4): by (2)--(3) the distance to the band strictly
+decreases at each step outside it; since the state is integer and the
+step is strictly monotone toward the band, the crossing is finite, and
+the continuous relaxation $y' = (7/8)y + n$ is an exact $7/8$-
+contraction to the fixed point $8n$, so \autoref{nt:43} applies with
+$\alpha = 7/8$.
+\end{proof}
+
+\begin{remark}
+The scheduler's firewall thresholds and EMA decay were originally tuned
+empirically (the $r \leftarrow r - r/16$ rolling decay is the same
+contractive shape with rate $15/16$). \autoref{nt:62} gives the same
+constants a theorem: the estimate is within $\varepsilon$ of its
+attractor after $k(7/8, \varepsilon, d_0)$ steps, and the fast-path
+shortcut of the admission gate --- checking the global bound before the
+per-IP table --- is a cost-monotone rewrite (\autoref{nt:28}): cheaper,
+and behavior-preserving on the rejected set.
+\end{remark}
+
+\section{Zero-boundary loops: the hot-path effect discipline}\label{sec:zero-boundary}
+
+\begin{theorem}[Zero-boundary loops]\label{nt:63}
+\textbf{NT63 [N].} Let $L_k(M)$ be the fixed-iteration loop of
+\autoref{def:fixed-loop} whose body $M$ is a molecule typed in the
+affine system of \autoref{def:lambda} with no effectful atoms --- no
+syscall atom and no allocation atom in its signature. Then in steady
+state $\beta(L_k(M)) = 0$: the loop crosses the kernel boundary only in
+its setup, and its steady-state cost is purely userspace,
+$c(L_k(M)) = k \cdot c(M)$ by the additivity of \autoref{nt:25}.
+\end{theorem}
+
+\begin{proof}
+The affine typing of \autoref{nt:55} forces exact-once consumption and
+no allocation; a signature without syscall atoms performs no syscalls by
+the definition of the boundary count; the loop is fixed-iteration, so no
+boundary crossing occurs between iterations; the cost identity is the
+additive law applied $k$ times.
+\end{proof}
+
+\begin{remark}[The incident as a type error]\label{rem:zero-boundary}
+The $\mathrm{\%sys}$-dominance measured throughout this thesis and the
+5.2$\times$ multiplexing gain of \autoref{rem:boundary-measured} are the
+same fact seen twice: a hot path that crosses the kernel boundary pays
+for it per request. \autoref{nt:63} is the enforcement: a dataplane
+module whose loop body is not typed zero-boundary is rejected --- the
+\texttt{/proc} governor incident is a typing error, not a performance
+bug, and cannot compile. This is the linearity discipline of
+\autoref{ch:linear} extended from allocation to syscalls.
+\end{remark}
+
+\section{Verification and summary}\label{sec:breakthrough-verify}
+
+The arithmetic claims of this chapter are machine-checked by three
+executable Lean~4 files (std-only, no external dependencies, following
+the discipline of \autoref{app:a}):
+
+\begin{center}
+\begin{tabular}{@{}llp{8cm}@{}}
+\toprule
+File & Theorems & Claims checked\\
+\midrule
+\texttt{lean/Threshold.lean} & \ref{nt:58} & affine difference strictly
+decreasing; threshold optimality (steeper slope wins below, shallower
+above, switch once).\\
+\texttt{lean/Scheduler.lean} & \ref{nt:62} & EMA band fixed set; strict
+increase below / decrease above; monotonicity.\\
+\texttt{lean/Batch.lean} & \ref{nt:57} & tensor additivity; batch
+subadditivity; batch fusion $1 < n$.\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+All three compile clean with Lean 4.33.0 (std). The numerical claim of
+\autoref{rem:threshold-measured} --- the 134.9\,KiB predicted crossover
+against the measured $\approx$ 128\,KiB --- is reproduced by the
+benchmarks of \autoref{ch:situations} and the cost fits recorded in the
+development log.
+
+The method of this chapter --- enrich the cost model with the kernel
+boundary, prove realization choice is a threshold, and take the minimum
+of the finite lattice of behavior-preserving rewrites --- is the answer
+to the question ``what is the last optimization?'' It is not a bag of
+tricks; it is the decision procedure that \autoref{nt:59} proves exists,
+applied to the molecules this thesis constructs. The optimizations
+discovered this way are exactly the ones the measurements confirm:
+fewer syscalls per request, the correct datapath at the correct payload
+size, and a zero-boundary loop as the type-correct realization of a hot
+path.
