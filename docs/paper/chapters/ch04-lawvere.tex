@@ -1,6 +1,6 @@
 \chapter{Lawvere Theories for Dataplane Components}\label{ch:lawvere}
 
-A component is not only a molecule; it is a molecule governed by equations.
+A component is a molecule governed by equations.
 The ring buffer obeys cancellation laws relating $\mathit{push}$ and
 $\mathit{pop}$; the parser obeys the laws of sequence and choice; the
 transport obeys the laws of batching. This chapter collects the operations
@@ -12,14 +12,14 @@ the component in Mol. Second, the theory is the instrument of
 \emph{completeness}: for the ring theory the free model decides every term
 identity, so the rewrite engine of \autoref{ch:rewrite} is complete on the
 ring fragment. Third, the equations, read from left to right, are
-\emph{rewrite rules}: they license the optimizations of a dataplane ---
+\emph{rewrite rules}: they license the optimizations of a dataplane:
 ring cancellation (\S\ref{sec:lawvere-ring}), parser left factoring
 (\S\ref{sec:lawvere-parser}), and batch regrouping
-(\S\ref{sec:lawvere-transport}) --- and each rule is sound because the
+(\S\ref{sec:lawvere-transport}): and each rule is sound because the
 equation is an identity of the behavioral quotient Mol/$\approx$
-(\autoref{nt:6}). The theories, their models in Mol, and the rules they
+(\autoref{thm:6}). The theories, their models in Mol, and the rules they
 license are developed in \S\ref{sec:lawvere-ring}--\S\ref{sec:lawvere-rewrite},
-with NT9--NT12 stated and proved in place.
+with \autoref{thm:9}--\autoref{thm:12} stated and proved in place.
 
 \paragraph{Composition convention.}
 The sequential composite of molecules is written in pipeline order: $f;g$
@@ -27,15 +27,15 @@ denotes ``perform $f$, then $g$'', the composite $g \circ f$ of
 \autoref{sec:prelim-cat} read in the opposite direction; the catalog
 statements of \autoref{ch:intro} write this composite of the unary ring
 operations with $\circ$. The tensor $f \otimes g$ is the parallel composite
-of Mol (\autoref{ch:mol}), a symmetric monoidal category (\autoref{nt:3}).
+of Mol (\autoref{ch:mol}), a symmetric monoidal category (\autoref{thm:3}).
 Equations whose two sides realize genuinely different state spaces are
-asserted in the behavioral quotient Mol/$\approx$ (\autoref{nt:6}); where
+asserted in the behavioral quotient Mol/$\approx$ (\autoref{thm:6}); where
 the state spaces are in bijection, they hold in Mol itself.
 
 \section{The Ring-Buffer Theory}\label{sec:lawvere-ring}
 
 The ring buffer is the workhorse of the dataplane: a preallocated,
-fixed-capacity array, indexed by bitmask (\autoref{nt:48}), into which
+fixed-capacity array, indexed by bitmask (\autoref{thm:48}), into which
 elements are written and from which they are read. Its equational content
 is exactly what the rewrite engine of \autoref{ch:rewrite} needs.
 
@@ -64,13 +64,13 @@ front element $a$ and remaining content $s$. On the state space
 $B = E^{*}$ of finite buffers the operations are realized by the
 transformations
 \[
-\mathit{push}(a,s) = a \mathbin{::} s, \qquad
-\mathit{pop}(a \mathbin{::} s) = (a,s), \qquad
-\mathit{peek}(a \mathbin{::} s) = (a,\ a \mathbin{::} s),
+\mathit{push} (a,s) = a \mathbin{::} s, \qquad
+\mathit{pop} (a \mathbin{::} s) = (a,s), \qquad
+\mathit{peek} (a \mathbin{::} s) = (a,\ a \mathbin{::} s),
 \]
 the last two defined on the non-empty buffers. A finite ring of capacity
 $N = 2^{k}$ realizes the same laws on the invariant states $E^{\leq N-1}$
-(\autoref{nt:48}), with $\mathit{push}$ defined while room remains. This is
+(\autoref{thm:48}), with $\mathit{push}$ defined while room remains. This is
 the ring-buffer molecule of the dataplane in the single-ended discipline:
 $\mathit{push}$ inserts at the write position, $\mathit{pop}$ removes the
 element most recently inserted, and the two are behavioral inverses up to
@@ -81,13 +81,13 @@ usage a pop after a push removes a different element, and the laws fail.
 \label{rem:free-ring}
 The free algebra of the $\{\mathit{push}, \mathit{pop}\}$ fragment on one
 generator is the \emph{ring} of positions $\mathbb{Z}$: carrier
-$\mathbb{Z}$, $\mathit{push}(n) = n+1$, $\mathit{pop}(n) = n-1$, generator
+$\mathbb{Z}$, $\mathit{push} (n) = n+1$, $\mathit{pop} (n) = n-1$, generator
 $0$. Every cyclic quotient $\mathbb{Z}/2^{k}$ is a finite model of the
 fragment, and $\mathbb{Z}$ is the free model for which the theory is
-complete (\autoref{nt:9}).
+complete (\autoref{thm:9}).
 \end{remark}
 
-\begin{theorem}[Ring theory equations (NT9) [N]]\label{nt:9}
+\begin{theorem}[Ring theory equations (\autoref{thm:9}) [N]]\label{thm:9}
 The ring theory equations $\mathit{push}\circ\mathit{pop} = \mathit{id}$
 and $\mathit{pop}\circ\mathit{push} = \mathit{id}$ (when the buffer is
 non-empty) hold in every model of $\mathcal{R}$, and the equations are
@@ -113,9 +113,9 @@ $\mathit{peek}$ leaves the state unchanged.
 the rewrite rules $\mathit{push};\mathit{pop} \rightsquigarrow \mathit{id}$
 and $\mathit{pop};\mathit{push} \rightsquigarrow \mathit{id}$, and consider
 terms in one variable $x$. Each step deletes one $\mathit{push}$ and one
-$\mathit{pop}$, so the \emph{net exponent} $e(t) = \#\mathit{push} -
+$\mathit{pop}$, so the \emph{net exponent} $e (t) = \#\mathit{push} -
 \#\mathit{pop}$ is invariant, and a term with no adjacent pair of distinct
-operations is a pure run $\mathit{push}^{k}(x)$ or $\mathit{pop}^{k}(x)$,
+operations is a pure run $\mathit{push}^{k} (x)$ or $\mathit{pop}^{k} (x)$,
 of which exactly one exists per value of $e$. Every term reduces to the
 unique normal form with its net exponent, so two terms are provably equal
 exactly when their net exponents agree. In the free ring model
@@ -141,15 +141,15 @@ binary operations $\mathit{seq}$ (sequence) and $\mathit{choice}$, and the
 nullary operations $\varepsilon$ (the empty parser) and $\mathit{fail}$
 (the failing parser), presented by the equations
 \begin{align}
-\mathit{seq}(\mathit{seq}(p,q),r) &= \mathit{seq}(p,\mathit{seq}(q,r))
+\mathit{seq} (\mathit{seq} (p,q),r) &= \mathit{seq} (p,\mathit{seq} (q,r))
 &&\text{(sequence associative)},\\
-\mathit{seq}(\varepsilon,p) &= p = \mathit{seq}(p,\varepsilon)
+\mathit{seq} (\varepsilon,p) &= p = \mathit{seq} (p,\varepsilon)
 &&\text{(identity laws)},\\
-\mathit{choice}(\mathit{choice}(p,q),r) &= \mathit{choice}(p,\mathit{choice}(q,r))
+\mathit{choice} (\mathit{choice} (p,q),r) &= \mathit{choice} (p,\mathit{choice} (q,r))
 &&\text{(choice associative)},\\
-\mathit{choice}(p,\mathit{fail}) &= p = \mathit{choice}(\mathit{fail},p)
+\mathit{choice} (p,\mathit{fail}) &= p = \mathit{choice} (\mathit{fail},p)
 &&\text{(failure identity)},\\
-\mathit{seq}(p,\mathit{choice}(q,r)) &= \mathit{choice}(\mathit{seq}(p,q),\mathit{seq}(p,r))
+\mathit{seq} (p,\mathit{choice} (q,r)) &= \mathit{choice} (\mathit{seq} (p,q),\mathit{seq} (p,r))
 &&\text{(left distribution)}.
 \end{align}
 The last equation is \emph{left distribution}: sequence distributes over
@@ -165,15 +165,15 @@ Mol composite $p;q$; choice runs $p$'s lookahead test and takes the
 matching branch. Each choice is resolved by the next unconsumed token, so
 the models of $\mathcal{P}$ are the deterministic parsers of the LL(1)
 discipline, and the equations of \autoref{def:parser-theory} are identities
-of this semantics (\autoref{nt:10}).
+of this semantics (\autoref{thm:10}).
 
-\begin{theorem}[Parser theory (NT10) [N]]\label{nt:10}
+\begin{theorem}[Parser theory (\autoref{thm:10}) [N]]\label{thm:10}
 In the parser theory, sequence distributes over choice, choice is
 associative, the identity laws hold, and left factoring is sound: the
 rewrite
 \[
-\mathit{choice}(\mathit{seq}(p,q),\ \mathit{seq}(p,r)) \rightsquigarrow
-\mathit{seq}(p,\ \mathit{choice}(q,r))
+\mathit{choice} (\mathit{seq} (p,q),\ \mathit{seq} (p,r)) \rightsquigarrow
+\mathit{seq} (p,\ \mathit{choice} (q,r))
 \]
 preserves behavior.
 \end{theorem}
@@ -189,13 +189,13 @@ Associativity of $\mathit{seq}$ and of $\mathit{choice}$ is that of the
 underlying composition and of the ternary ``first, else'' decision. The
 identity laws hold because $\varepsilon$ consumes nothing and always
 succeeds, while $\mathit{fail}$ never succeeds: both
-$\mathit{seq}(\varepsilon,p) = p = \mathit{seq}(p,\varepsilon)$ and
-$\mathit{choice}(p,\mathit{fail}) = p = \mathit{choice}(\mathit{fail},p)$
+$\mathit{seq} (\varepsilon,p) = p = \mathit{seq} (p,\varepsilon)$ and
+$\mathit{choice} (p,\mathit{fail}) = p = \mathit{choice} (\mathit{fail},p)$
 are immediate. For left distribution, fix $p,q,r$. On the left, the input
 stream is first processed by $p$, and the choice between $q$ and $r$ is
 resolved by the first unconsumed token. On the right, the same stream is
-accepted exactly when it is accepted by $\mathit{seq}(p,q)$ or
-$\mathit{seq}(p,r)$, i.e.\ exactly when $p$ succeeds on it and $q$ or $r$
+accepted exactly when it is accepted by $\mathit{seq} (p,q)$ or
+$\mathit{seq} (p,r)$, i.e.\ exactly when $p$ succeeds on it and $q$ or $r$
 succeeds on the remainder; and the result is $p$'s result followed by the
 branch result, the same on both sides. The two sides therefore accept the
 same streams and return the same remainder and result, hence are equal in
@@ -206,8 +206,8 @@ preserved on every input.
 
 \section{The Transport Theory}\label{sec:lawvere-transport}
 
-The transport moves messages across a boundary --- a socket, a ring, a
-device --- and the fixed cost of each crossing makes batching the central
+The transport moves messages across a boundary: a socket, a ring, a
+device: and the fixed cost of each crossing makes batching the central
 optimization (\autoref{ch:operad}). The transport theory makes precise the
 equations that batching relies on.
 
@@ -218,10 +218,10 @@ the Lawvere theory over the unary operations $\mathit{recv}$ and
 $\mathit{send}$ and the $n$-ary operations $\mathit{batch}_{n}$
 ($n \geq 1$), presented by the equations
 \[
-\mathit{batch}_{n}(\mathit{recv},\ldots,\mathit{recv})
+\mathit{batch}_{n} (\mathit{recv},\ldots,\mathit{recv})
 = \underbrace{\mathit{recv} \otimes \cdots \otimes \mathit{recv}}_{n},
 \qquad
-\mathit{batch}_{n}(\mathit{send},\ldots,\mathit{send})
+\mathit{batch}_{n} (\mathit{send},\ldots,\mathit{send})
 = \underbrace{\mathit{send} \otimes \cdots \otimes \mathit{send}}_{n},
 \]
 and by the \emph{interchange law}
@@ -232,12 +232,12 @@ for all molecules $f,g,h,k$ of matching types. A \emph{model} of
 $\mathcal{T}$ in Mol realizes $\mathit{recv}$ and $\mathit{send}$ as
 transport molecules and $\mathit{batch}_{n}$ as the $n$-batch construction
 of \autoref{ch:operad}; the batch equations state that batching is
-tensoring, which holds for pure operations --- the datagram discipline, in
-which successive receives are independent --- and the interchange law holds
+tensoring, which holds for pure operations: the datagram discipline, in
+which successive receives are independent: and the interchange law holds
 in every model.
 \end{definition}
 
-\begin{theorem}[Transport theory (NT11) [N]]\label{nt:11}
+\begin{theorem}[Transport theory (\autoref{thm:11}) [N]]\label{thm:11}
 In the transport theory, $\mathit{batch\_recv} = \mathit{recv} \otimes
 \cdots \otimes \mathit{recv}$, and the interchange law
 $(f \otimes g);(h \otimes k) = (f;h) \otimes (g;k)$ holds.
@@ -251,7 +251,7 @@ applies its transition $n$ times, once per input, threading the state; a
 pure molecule has a single-element state space, so there is no state to
 thread, and its $n$-fold tensor applies the same transition to each
 coordinate independently. Both sides denote the same transformation on the
-tuple $A^{n}$, so $\mathit{batch}_{n}(\mathit{recv},\ldots,\mathit{recv})
+tuple $A^{n}$, so $\mathit{batch}_{n} (\mathit{recv},\ldots,\mathit{recv})
 = \mathit{recv} \otimes \cdots \otimes \mathit{recv}$, and likewise for
 $\mathit{send}$.
 
@@ -264,24 +264,24 @@ component, and the state spaces $(S_{f} \times S_{g}) \times (S_{h} \times
 S_{k})$ and $(S_{f} \times S_{h}) \times (S_{g} \times S_{k})$ correspond
 under the reassociation bijection, so the machines are equal in Mol: the
 bifunctoriality of the tensor of a symmetric monoidal category
-(\autoref{nt:3}, \cite{maclane}) in pipeline order.
+(\autoref{thm:3}, \cite{maclane}) in pipeline order.
 \end{proof}
 
 \section{Models in Mol and the Licensed Rewrite Rules}\label{sec:lawvere-rewrite}
 
-Each theory of this chapter is realized by the corresponding molecule ---
+Each theory of this chapter is realized by the corresponding molecule:
 the ring buffer of \S\ref{sec:lawvere-ring}, the parser of
 \S\ref{sec:lawvere-parser}, the transport of
-\S\ref{sec:lawvere-transport} --- and each equation, read from left to
+\S\ref{sec:lawvere-transport}: and each equation, read from left to
 right, is a rewrite rule available to the rewrite engine of
 \autoref{ch:rewrite}. Since every equation is an identity in Mol/$\approx$,
 every rule preserves behavior, and the termination and confluence results
-of \autoref{ch:rewrite} (NT13--NT19) turn the rules into a decision
+of \autoref{ch:rewrite} (\autoref{thm:13}--\autoref{thm:19}) turn the rules into a decision
 procedure. The central ring rule is ring cancellation: a $\mathit{push}$
 immediately followed by a $\mathit{pop}$ is behaviorally invisible and can
 be deleted.
 
-\begin{theorem}[Ring cancellation (NT12) [N]]\label{nt:12}
+\begin{theorem}[Ring cancellation (\autoref{thm:12}) [N]]\label{thm:12}
 An adjacent pair $\mathit{push}\circ\mathit{pop}$ is removable from any ring
 term with behavior preserved: for every context $C$ in the theory,
 $C[\mathit{push};\mathit{pop}] = C[\mathit{id}]$ holds in every model.
@@ -289,14 +289,14 @@ $C[\mathit{push};\mathit{pop}] = C[\mathit{id}]$ holds in every model.
 
 \begin{proof}
 By \eqref{eq:r1}, $\mathit{push};\mathit{pop} = \mathit{id}$ in every
-model. Contexts are built from the term constructors --- composition with a
-constant and tensor with a constant --- and each preserves equality: if
+model. Contexts are built from the term constructors: composition with a
+constant and tensor with a constant: and each preserves equality: if
 $u = v$ then $w;u = w;v$, $u;w = v;w$, and $w \otimes u = w \otimes v$ for
 every $w$. Induction on the construction of $C$ gives
 $C[\mathit{push};\mathit{pop}] = C[\mathit{id}]$ in every model, and equal
 morphisms of Mol/$\approx$ are behaviorally equivalent, so deleting the
-pair --- in particular from a pipeline in which a pushed element is popped
-immediately --- preserves behavior. The guarded equation \eqref{eq:r2}
+pair: in particular from a pipeline in which a pushed element is popped
+immediately: preserves behavior. The guarded equation \eqref{eq:r2}
 yields the analogous rule: $\mathit{pop};\mathit{push}$ is removable
 wherever the buffer is known to be non-empty.
 \end{proof}
@@ -310,24 +310,24 @@ Mol/$\approx$.}
 \label{tab:lawvere-rules}
 \begin{tabular}{@{}llp{6.5cm}@{}}
 \toprule
-Theory & Law (NT) & Licensed rewrite rule\\
+Theory & Law & Licensed rewrite rule\\
 \midrule
 Ring $\mathcal{R}$ & $\mathit{push};\mathit{pop} = \mathit{id}$
-(\ref{nt:9}, \ref{nt:12}) & $\mathit{push};\mathit{pop} \rightsquigarrow
+(\ref{thm:9}, \ref{thm:12}) & $\mathit{push};\mathit{pop} \rightsquigarrow
 \mathit{id}$: ring cancellation.\\
 Ring $\mathcal{R}$ & $\mathit{pop};\mathit{push} = \mathit{id}$, guarded
-(\ref{nt:9}) & $\mathit{pop};\mathit{push} \rightsquigarrow
+(\ref{thm:9}) & $\mathit{pop};\mathit{push} \rightsquigarrow
 \mathit{id}$ wherever the buffer is known non-empty.\\
-Parser $\mathcal{P}$ & left distribution (\ref{nt:10}) &
-$\mathit{choice}(p;q,\ p;r) \rightsquigarrow p;\mathit{choice}(q,r)$:
+Parser $\mathcal{P}$ & left distribution (\ref{thm:10}) &
+$\mathit{choice} (p;q,\ p;r) \rightsquigarrow p;\mathit{choice} (q,r)$:
 left factoring.\\
-Parser $\mathcal{P}$ & choice associative (\ref{nt:10}) &
-$\mathit{choice}(\mathit{choice}(p,q),r) \rightsquigarrow
-\mathit{choice}(p,\mathit{choice}(q,r))$: reassociation.\\
-Transport $\mathcal{T}$ & batch $=$ tensor (\ref{nt:11}) &
-$\mathit{batch}_{n}(\mathit{recv}) \rightsquigarrow
+Parser $\mathcal{P}$ & choice associative (\ref{thm:10}) &
+$\mathit{choice} (\mathit{choice} (p,q),r) \rightsquigarrow
+\mathit{choice} (p,\mathit{choice} (q,r))$: reassociation.\\
+Transport $\mathcal{T}$ & batch $=$ tensor (\ref{thm:11}) &
+$\mathit{batch}_{n} (\mathit{recv}) \rightsquigarrow
 \mathit{recv} \otimes \cdots \otimes \mathit{recv}$: flattening.\\
-Transport $\mathcal{T}$ & interchange (\ref{nt:11}) &
+Transport $\mathcal{T}$ & interchange (\ref{thm:11}) &
 $(f \otimes g);(h \otimes k) \rightsquigarrow (f;h) \otimes (g;k)$:
 independent branches.\\
 \bottomrule

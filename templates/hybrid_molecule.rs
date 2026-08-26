@@ -2,10 +2,10 @@
 //! with hot/cold state separation.
 //!
 //! Copy this file, rename the structs, and fill in `step`. The state is
-//! `(ProtocolState, Ctx)` = `Spure × Ctx` (thesis NT7), where
+//! `(ProtocolState, Ctx)` = `Spure × Ctx` (thesis ch. 3, the pure/effectful classification), where
 //! `ProtocolState` pairs the HOT fields (touched every step) and COLD
 //! fields (touched rarely: peer info, timers) in separate cache lines so
-//! they never share one (standard [CACHE], thesis NT53).
+//! they never share one (standard [CACHE], thesis ch. 7, the resource-graded cost enrichment).
 
 use mol::Molecule;
 

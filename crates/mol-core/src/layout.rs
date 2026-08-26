@@ -1,5 +1,5 @@
 //! Layout discipline: cache-line alignment, hot/cold separation, padded
-//! counters (standard [CACHE] cache-line accounting).
+//! counters (standard `CACHE` cache-line accounting).
 
 /// The cache-line size in bytes for alignment purposes.
 pub const fn cache_line_size() -> usize {

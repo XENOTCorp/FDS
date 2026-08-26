@@ -18,3 +18,4 @@ docs/paper/*.bbl
 docs/paper/*.blg
 docs/paper/*.fls
 docs/paper/*.fdb_latexmk
+docs/paper/verify/target/

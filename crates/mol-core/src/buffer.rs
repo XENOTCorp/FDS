@@ -1,5 +1,5 @@
 //! Fixed-capacity buffers and a lock-free object pool (standard \[R\],
-//! [ALLOC]).
+//! `ALLOC`).
 //!
 //! `Buffer` is a fixed-size byte buffer with a length; `Pool` is an
 //! arena of `N` values with a lock-free free list (an MPMC ring of free

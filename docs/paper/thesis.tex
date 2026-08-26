@@ -3,6 +3,8 @@
 \usepackage{amsmath,amssymb,amsthm}
 \usepackage{booktabs}
 \usepackage{array}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
 \usepackage{hyperref}
 \usepackage{natbib}
 \bibliographystyle{plainnat}
@@ -18,8 +20,8 @@
 \theoremstyle{remark}
 \newtheorem{remark}[theorem]{Remark}
 
-\title{\textbf{Mol}: The Category of Stateful Transformations ---\\ An Algebraic Theory of Zero-Allocation Dataplane Construction}
-\author{XENOT}
+\title{\textbf{Mol}: The Category of Stateful Transformations.\\ An Algebraic Theory of Zero-Allocation Dataplane Construction}
+\author{Alex @AscendNoosphere, XENOT Corporation}
 \date{2026}
 
 \begin{document}
@@ -27,7 +29,7 @@
 \input{chapters/ch00-abstract.tex}
 \tableofcontents
 
-% --- Part I: Foundations ---
+% Part I: Foundations
 \input{chapters/ch01-intro.tex}      % ch:intro
 \input{chapters/ch02-prelim.tex}     % ch:prelim
 \input{chapters/ch03-mol.tex}        % ch:mol
@@ -37,19 +39,18 @@
 \input{chapters/ch07-enrich.tex}     % ch:enrich
 \input{chapters/ch08-kleisli.tex}    % ch:kleisli
 
-% --- Part II: Structure theorems ---
+% Part II: Structure theorems
 \input{chapters/ch09-coalgebra.tex}  % ch:coalgebra
 \input{chapters/ch10-trace.tex}      % ch:trace
 \input{chapters/ch11-operad.tex}     % ch:operad
 \input{chapters/ch12-linear.tex}     % ch:linear
 
-% --- Part III: Applications ---
+% Part III: Applications
 \input{chapters/ch13-situations.tex} % ch:situations
 \input{chapters/ch14-testing.tex}    % ch:testing
 \input{chapters/ch15-related.tex}    % ch:related
 \input{chapters/ch16-conclusion.tex} % ch:conclusion
 \input{chapters/ch17-breakthroughs.tex} % ch:breakthroughs
-\input{chapters/ch18-applied.tex}       % ch:applied
 
 \appendix
 \input{chapters/appendix-a.tex}      % app:a

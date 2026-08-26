@@ -1,4 +1,4 @@
-//! Theorems NT22–NT24 — normal forms for the free category on a small atom signature.
+//! The normal-form theorems: finiteness, uniqueness, and completeness of normal forms for the free category on a small atom signature.
 //!
 //! Atom signature: f: A→B, g: B→C, h: C→D.  Composition terms are built from these
 //! atoms plus the identities introduced by the rewrite rules (id_A, id_B, id_C,
@@ -14,15 +14,15 @@
 //! explicit reduction loop over the three rewrite rules is additionally run on
 //! every term and its result checked against the direct flattening.
 //!
-//! Concrete evaluation (NT22–24, small atom signature):
+//! Concrete evaluation (normal-form theorems, small atom signature):
 //!   A = {0,1}, B = {0,1,2}, C = {0,1,2,3}, D = {0,1,2,3,4}
 //!   f: 0↦0, 1↦2      g: 0↦0, 1↦1, 2↦3      h: 0↦0, 1↦2, 2↦1, 3↦4
 //!
 //! Checks:
-//!   (a) finiteness   — number of distinct normal forms is finite (count reported);
-//!   (b) completeness — two terms have equal normal forms iff they denote the same
+//!   (a) finiteness: number of distinct normal forms is finite (count reported);
+//!   (b) completeness: two terms have equal normal forms iff they denote the same
 //!       composed function, asserted on every pair of the enumerated set;
-//!   (c) examples     — syntactically distinct terms with equal normal forms and
+//!   (c) examples: syntactically distinct terms with equal normal forms and
 //!       equal behavior.
 //!
 //! Std-only: no external crates; must build offline.
@@ -404,7 +404,7 @@ fn find_pair(nf_keys: &[NfKey], target: &NfKey) -> Option<(usize, usize)> {
 }
 
 fn main() {
-    println!("Theorem NT22–NT24 — normal forms for the free category on {{f,g,h}}");
+    println!("Normal-form theorems: normal forms for the free category on {{f,g,h}}");
     println!("==================================================================");
     println!();
     println!("Atom signature: f: A→B,  g: B→C,  h: C→D");
@@ -448,7 +448,7 @@ fn main() {
     println!("  total: {total} terms");
     println!();
 
-    // Supplementary: strict reading — leaves from {f,g,h} only.
+    // Supplementary: strict reading: leaves from {f,g,h} only.
     let sig_exprs = enumerate_sig_only();
     let mut sig_total = 0usize;
     let mut sig_nfs: BTreeMap<NfKey, usize> = BTreeMap::new();
@@ -462,7 +462,7 @@ fn main() {
             }
         }
     }
-    println!("Supplementary — strict reading, leaves from {{f,g,h}} only:");
+    println!("Supplementary: strict reading, leaves from {{f,g,h}} only:");
     println!("  {sig_total} terms; distinct normal forms: {} (all of depth ≤ 3)", sig_nfs.len());
     println!("  (without identities no term of depth 4..=6 is well typed, so the depth");
     println!("   bound is only meaningful once identities participate)");
@@ -625,7 +625,7 @@ fn main() {
                     ok_c = false;
                 }
                 println!(
-                    "  Example {}: normal form {} — {}",
+                    "  Example {}: normal form {}: {}",
                     n + 1,
                     display_nf(target),
                     if ok { "PASS" } else { "FAIL" }
@@ -637,7 +637,7 @@ fn main() {
             None => {
                 ok_c = false;
                 println!(
-                    "  Example {}: no pair found for normal form {} — FAIL",
+                    "  Example {}: no pair found for normal form {}: FAIL",
                     n + 1,
                     display_nf(target)
                 );

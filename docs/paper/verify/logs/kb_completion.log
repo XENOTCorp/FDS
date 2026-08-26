@@ -1,7 +1,6 @@
-   Compiling fds-verify v0.1.0 (/home/xenot/Projects/FDS/docs/paper/verify)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.67s
-     Running `target/debug/kb_completion`
-Theorem NT15 - the ring-buffer equational theory admits a complete rewrite
+    Finished `release` profile [optimized] target(s) in 0.01s
+     Running `target/release/kb_completion`
+Completion theorem: the ring-buffer equational theory admits a complete rewrite
 system, verified by Knuth-Bendix completion (std-only Rust).
 
 Signature: single sort; unary operations {push, pop}; variables x, y, ...

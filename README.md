@@ -82,12 +82,11 @@ See [BENCHMARKS.md](BENCHMARKS.md) for the results and the method.
 
 ## Documentation
 
-- [WIKI.md](WIKI.md): features, architecture, and implementation examples
+- [WIKI.md](WIKI.md): features, architecture, implementation examples,
+  and kernel and NIC tuning for production deployment
 - [BENCHMARKS.md](BENCHMARKS.md): apples-to-apples measurements
 - [docs/paper/thesis.pdf](docs/paper/thesis.pdf): the algebraic model of
   stateful transformations that the engine implements
-- [docs/ops-tuning.md](docs/ops-tuning.md): kernel and NIC settings for
-  production deployment
 
 ## License
 

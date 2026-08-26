@@ -1,7 +1,7 @@
-//! Theorem NT43 — iteration bound for contraction mappings.
+//! The iteration-bound theorem: k(alpha, eps, d0) iterations suffice for a contraction mapping.
 //!
 //! For a contraction with Lipschitz constant `alpha` in (0, 1) and initial
-//! distance `d0` from the fixed point, NT43 gives the number of iterations
+//! distance `d0` from the fixed point, the iteration-bound theorem gives the number of iterations
 //! needed to get within `eps` of the fixed point:
 //!
 //!     k(alpha, eps, d0) = ceil( ln(eps * (1 - alpha) / d0) / ln(alpha) )
@@ -23,7 +23,7 @@
 //!
 //! Std-only: no external crates (must build offline).
 
-/// NT43 bound `ceil(ln(eps * (1 - alpha) / d0) / ln(alpha))`.
+/// Iteration-bound formula: `ceil(ln(eps * (1 - alpha) / d0) / ln(alpha))`.
 /// Returns `None` when the bound is not a finite value `>= 1`.
 fn bound_k(alpha: f64, eps: f64, d0: f64) -> Option<i64> {
     let num = (eps * (1.0 - alpha) / d0).ln();
@@ -60,7 +60,7 @@ fn main() {
     let mut fail_c = false; // (c) non-decreasing in alpha
     let mut fail_d = false; // (d) non-decreasing as eps decreases
 
-    println!("Theorem NT43: k(alpha, eps, d0) = ceil(ln(eps*(1-alpha)/d0) / ln(alpha))");
+    println!("Iteration-bound theorem: k(alpha, eps, d0) = ceil(ln(eps*(1-alpha)/d0) / ln(alpha))");
     println!(
         "Samples: alpha in 0.1..=0.9 (step 0.1), eps in {{1e-3, 1e-6, 1e-9}}, d0 in {{1.0, 10.0}}"
     );
@@ -173,9 +173,9 @@ fn main() {
     );
 
     if pass_a && pass_b && pass_c && pass_d {
-        println!("NT43: ALL CHECKS PASS");
+        println!("iteration-bound theorem: ALL CHECKS PASS");
     } else {
-        println!("NT43: CHECKS FAILED");
+        println!("iteration-bound theorem: CHECKS FAILED");
         std::process::exit(1);
     }
 }

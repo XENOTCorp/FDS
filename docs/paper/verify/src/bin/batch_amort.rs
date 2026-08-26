@@ -1,13 +1,13 @@
-//! Theorem NT47 — syscall amortization.
+//! The syscall-amortization theorem.
 //!
 //! Cost model: sending one datagram costs `d`; each syscall carries a fixed
 //! overhead `h`. Sending `n` datagrams one syscall each costs `n * (h + d)`.
 //! Batching them into a single syscall costs `h + n * d`.
 //!
 //! Verified properties (for h in {100.0, 1000.0}, d in {1.0, 10.0}, n in 1..=1024):
-//!   (a) h + n*d <= n*(h+d) for every n            — batching is never worse;
-//!   (b) (h + n*d)/n is non-increasing in n        — amortized cost decreases;
-//!   (c) amortized cost at n = 1024 approaches d   — the per-datagram floor.
+//!   (a) h + n*d <= n*(h+d) for every n: batching is never worse;
+//!   (b) (h + n*d)/n is non-increasing in n: amortized cost decreases;
+//!   (c) amortized cost at n = 1024 approaches d: the per-datagram floor.
 //!
 //! All arithmetic is f64, applied consistently. All values here (100, 1000, 1,
 //! 10, n up to 1024) are exactly representable in f64, so comparisons are
@@ -27,7 +27,7 @@ fn individual_cost(h: f64, d: f64, n: usize) -> f64 {
 }
 
 fn main() {
-    println!("Theorem NT47 — syscall amortization");
+    println!("Syscall-amortization theorem");
     println!();
     println!("Cost model: per-datagram cost d, per-syscall overhead h.");
     println!("  individual: n datagrams in n syscalls => n * (h + d)");

@@ -1,4 +1,4 @@
-//! NT55 proof-check: the affine type system Λ types molecules linearly and
+//! The no-allocation theorem: the affine type system Λ types molecules linearly and
 //! well-typed closed terms evaluate without allocation.
 //!
 //! - Linear typing: contexts are disjoint-split in the comp and tensor
@@ -6,7 +6,7 @@
 //!   exactly once by construction, and we assert it explicitly.
 //! - Non-duplication: every reduction step is checked to produce only
 //!   nodes already present (a per-node unique id; the id set of a reduct
-//!   must be a subset of the redex's id set) — i.e. no step allocates.
+//!   must be a subset of the redex's id set): i.e. no step allocates.
 //! - Negative samples (duplicated variable use) must fail to type-check.
 
 use std::collections::HashSet;
@@ -51,7 +51,7 @@ fn free_vars(t: &Term, out: &mut Vec<String>) {
 
 /// Split a context into two disjoint sub-contexts covering it.
 /// Enumerate all ways: for each variable choose left, right, or (for
-/// variables not needed) neither — we only split contexts exactly.
+/// variables not needed) neither: we only split contexts exactly.
 fn splits(ctx: &Ctx) -> Vec<(Ctx, Ctx)> {
     let mut result = Vec::new();
     let n = ctx.len();
@@ -196,9 +196,9 @@ fn main() {
     let mut failures = 0usize;
     let mut check = |name: &str, ok: bool, detail: String| {
         if ok {
-            println!("PASS: {name} — {detail}");
+            println!("PASS: {name}: {detail}");
         } else {
-            println!("FAIL: {name} — {detail}");
+            println!("FAIL: {name}: {detail}");
             failures += 1;
         }
     };
@@ -244,7 +244,7 @@ fn main() {
         }
     }
     check(
-        "NT55(a) linear typing",
+        "no-allocation (a) linear typing",
         linearity_ok,
         format!("{well_typed} sample derivations, every variable used exactly once"),
     );
@@ -253,14 +253,14 @@ fn main() {
     let dup = Term::Tensor(Box::new(Term::Var("x".into())), Box::new(Term::Var("x".into())));
     let dup_ok = infer(&vec![("x".into(), Ty::Base(1))], &dup).is_none();
     check(
-        "NT55(a) contraction rejected",
+        "no-allocation (a) contraction rejected",
         dup_ok,
         "x ⊗ x with x declared once does not type-check (no contraction)".to_string(),
     );
     let weak = Term::Var("x".into());
     let weak_ok = infer(&vec![("x".into(), Ty::Base(1)), ("y".into(), Ty::Base(2))], &weak).is_none();
     check(
-        "NT55(a) weakening rejected",
+        "no-allocation (a) weakening rejected",
         weak_ok,
         "x with y unused in context does not type-check (no weakening)".to_string(),
     );
@@ -305,7 +305,7 @@ fn main() {
         }
     }
     check(
-        "NT55(c) no allocation during evaluation",
+        "no-allocation (c) no allocation during evaluation",
         no_alloc_ok,
         format!("{cases} closed terms normalized in {steps_total} steps: leaf multiset preserved, node count never increases (no fresh nodes)"),
     );

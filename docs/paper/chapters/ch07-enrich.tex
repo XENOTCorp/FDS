@@ -2,28 +2,28 @@
 
 Mol describes what can be composed and which behaviors are equivalent; it says
 nothing about cost. This chapter enriches the structure with numbers. The
-central idea is that Mol is not just a category but a \emph{resource-sensitive
-monoidal category}: every molecule carries a cost vector --- execution time,
-memory footprint, and cache misses --- and the composition operations of
+central idea is that Mol is a \emph{resource-sensitive monoidal category}:
+every molecule carries a cost vector with components for execution time,
+memory footprint, and cache misses, and the composition operations of
 \autoref{ch:mol} act on costs in a controlled way. Sequential composition
 adds costs, tensor composition is subadditive (parallel work shares fixed
 costs), and a \emph{refinement} preorder orders molecules by quality inside a
 behavior class.
 
-The chapter is the quantitative backbone of the thesis. NT25 makes the cost
+The chapter is the quantitative backbone of the thesis. \autoref{thm:25} makes the cost
 enrichment well-defined: additive composition cost, the triangle inequality,
-and tensor subadditivity. NT26 reduces global optimality to shortest paths in
-the finite type graph (Dijkstra, complete). NT27 proves the fusion bound:
+and tensor subadditivity. \autoref{thm:26} reduces global optimality to shortest paths in
+the finite type graph (Dijkstra, complete). \autoref{thm:27} proves the fusion bound:
 fusing costs no more than composing, and strictly less when the intermediate
-type never materializes. NT28 and NT29 formalize refinement and fast-path
+type never materializes. \autoref{thm:28} and \autoref{thm:29} formalize refinement and fast-path
 specialization: substitution preserves refinement, behavior, and cost
 monotonicity, and every finite refinement lattice has a unique most-refined
 element per behavior class, so the most-refined dispatcher is sound and
-cost-minimal. NT30 closes the complexity class of the dataplane: atoms whose
+cost-minimal. \autoref{thm:30} closes the complexity class of the dataplane: atoms whose
 costs lie in a class closed under the resource operations yield molecules in
-that class. NT31 is the descriptive-complexity anchor: finite-state molecules
+that class. \autoref{thm:31} is the descriptive-complexity anchor: finite-state molecules
 realize exactly the regular behaviors, and minimal-state molecules are exactly
-the minimal DFAs \cite{nerode}\cite{hopcroft}. NT32 is projection reduction:
+the minimal DFAs \cite{nerode}\cite{hopcroft}. \autoref{thm:32} is projection reduction:
 state that the step function consults only through a projection can be
 replaced by the projection's image.
 
@@ -32,10 +32,10 @@ replaced by the projection's image.
 \begin{definition}[Cost vectors and atom cost assignments]\label{def:cost}
 A \emph{cost vector} is an element of $\mathbb{R}_{\ge 0}^{3}$, the three
 coordinates being \emph{time}, \emph{memory}, and \emph{cache misses}; write
-$c(M) = (t(M), m(M), k(M))$ for the cost of a molecule $M$. The order on cost
+$c (M) = (t (M), m (M), k (M))$ for the cost of a molecule $M$. The order on cost
 vectors is componentwise: $u \le v$ iff $u_i \le v_i$ for $i = 1, 2, 3$, and
 $u + v$ is componentwise addition. An \emph{atom cost assignment} for a
-signature $\Sigma$ is a function $c \colon \mathrm{At}(\Sigma) \to
+signature $\Sigma$ is a function $c \colon \mathrm{At} (\Sigma) \to
 \mathbb{R}_{\ge 0}^{3}$ from the atoms of $\Sigma$ to cost vectors.
 \end{definition}
 
@@ -43,25 +43,25 @@ signature $\Sigma$ is a function $c \colon \mathrm{At}(\Sigma) \to
 Given an atom cost assignment, the \emph{additive extension} assigns to every
 molecule over $\Sigma$ a cost vector by the clauses
 $\mathrm{id}_A \mapsto 0$, $\sigma_{A,B} \mapsto 0$,
-$g \circ f \mapsto c(f) + c(g)$, and $f \otimes g \mapsto c(f) + c(g)$.
-NT25 shows that this assignment is well-defined (independent of the order in
+$g \circ f \mapsto c (f) + c (g)$, and $f \otimes g \mapsto c (f) + c (g)$.
+\autoref{thm:25} shows that this assignment is well-defined (independent of the order in
 which the clauses are applied), additive over composition, and subadditive
 over tensor.
 \end{definition}
 
-\begin{theorem}[Cost enrichment is well-defined]\label{nt:25}
-\textbf{NT25 [N].} Fix an atom cost assignment for a signature $\Sigma$
+\begin{theorem}[Cost enrichment is well-defined]\label{thm:25}
+ Fix an atom cost assignment for a signature $\Sigma$
 (Definition~\ref{def:cost}). The additive extension
 (Definition~\ref{def:additive-cost}) is a well-defined function on the
 molecules over $\Sigma$: it is invariant under the structural laws of the free
-symmetric monoidal category --- reassociation of composition, insertion and
-deletion of identities, and the coherence equations of the braiding --- and it
+symmetric monoidal category: reassociation of composition, insertion and
+deletion of identities, and the coherence equations of the braiding: and it
 satisfies, for all molecules $f, g$, the three quantitative laws of a
 resource-sensitive monoidal category:
-(1) \emph{additive composition cost}: $c(g \circ f) = c(f) + c(g)$;
-(2) \emph{triangle inequality}: $c(g \circ f) \le c(f) + c(g)$, with equality,
-and more generally $c(f_1 \circ \cdots \circ f_n) \le \sum_{i=1}^{n} c(f_i)$;
-(3) \emph{tensor subadditivity}: $c(f \otimes g) \le c(f) + c(g)$, with
+(1) \emph{additive composition cost}: $c (g \circ f) = c (f) + c (g)$;
+(2) \emph{triangle inequality}: $c (g \circ f) \le c (f) + c (g)$, with equality,
+and more generally $c (f_1 \circ \cdots \circ f_n) \le \sum_{i=1}^{n} c (f_i)$;
+(3) \emph{tensor subadditivity}: $c (f \otimes g) \le c (f) + c (g)$, with
 equality for the additive extension and strict inequality possible for
 implementations that share fixed costs across the two factors (batching,
 \autoref{ch:operad}).
@@ -76,10 +76,10 @@ cost of a molecule is the sum of the costs of its atoms, identities and
 braidings costing zero. This agrees with the clauses of
 Definition~\ref{def:additive-cost}, and we show it is invariant under the
 symmetric monoidal axioms, checked instance by instance. \emph{Associativity:}
-$c((f \circ g) \circ h) = c(f) + c(g) + c(h) = c(f \circ (g \circ h))$, and
-similarly for $\otimes$. \emph{Unit laws:} $c(f \circ \mathrm{id}) = c(f) +
-0 = c(f)$, and $c(\mathrm{id} \otimes f) = c(f)$. \emph{Braiding:}
-$\sigma_{A,B}$ contains no atoms, so $c(\sigma_{A,B}) = 0$, and both sides of
+$c ((f \circ g) \circ h) = c (f) + c (g) + c (h) = c (f \circ (g \circ h))$, and
+similarly for $\otimes$. \emph{Unit laws:} $c (f \circ \mathrm{id}) = c (f) +
+0 = c (f)$, and $c (\mathrm{id} \otimes f) = c (f)$. \emph{Braiding:}
+$\sigma_{A,B}$ contains no atoms, so $c (\sigma_{A,B}) = 0$, and both sides of
 the symmetry law $\sigma_{B,A} \circ \sigma_{A,B} = \mathrm{id}$ and of the
 hexagon equations carry cost $0$. \emph{Interchange law:} the two sides of
 $(f \otimes g) \circ (h \otimes k) = (f \circ h) \otimes (g \circ k)$ both sum
@@ -103,7 +103,7 @@ Hence (3) holds in general, with equality in the canonical model.
 
 \begin{remark}[Cost is defined on molecules, not behavior classes]
 Well-definedness is with respect to the structural equations, not behavioral
-equivalence: behaviorally equivalent molecules may carry different costs (NT6
+equivalence: behaviorally equivalent molecules may carry different costs (\autoref{thm:6}
 only equates behaviors). This is exactly the freedom that refinement
 (\autoref{sec:enrich-refine}) exploits: among the realizations of one
 behavior, the dataplane may pick the cheapest.
@@ -111,40 +111,40 @@ behavior, the dataplane may pick the cheapest.
 
 \section{Global optimality as a shortest-path problem}\label{sec:enrich-shortest}
 
-Cost is additive along composition (NT25), so the cost of a pipeline that is a
+Cost is additive along composition (\autoref{thm:25}), so the cost of a pipeline that is a
 sequential composite of atoms is the sum of the atom costs. Optimization is
 then graph theory: the atoms are the edges of a finite \emph{type graph}, and
 the cheapest pipeline is a shortest path in it.
 
-\begin{theorem}[Global optimality via shortest paths]\label{nt:26}
-\textbf{NT26 [N].} Let $\Sigma$ be a finite signature with bounded types and
-nonnegative atom costs, additively extended (NT25). The \emph{type graph} $G$
+\begin{theorem}[Global optimality via shortest paths]\label{thm:26}
+ Let $\Sigma$ be a finite signature with bounded types and
+nonnegative atom costs, additively extended (\autoref{thm:25}). The \emph{type graph} $G$
 has as vertices the types over $\Sigma$ and, for every atom
-$a \colon A \to B$, an edge $A \to B$ of weight $c(a) \ge 0$. For all types
+$a \colon A \to B$, an edge $A \to B$ of weight $c (a) \ge 0$. For all types
 $A, B$:
-(1) the minimum cost of a \emph{path-molecule} $A \to B$ --- a molecule
-composed of atoms and identities by sequential composition alone --- equals
-the shortest-path distance $d(A,B)$ in $G$;
-(2) Dijkstra's algorithm computes $d(A,B)$ for every pair of types, terminates
-on the finite graph, and is \emph{complete}: whenever $d(A,B) < \infty$ it
+(1) the minimum cost of a \emph{path-molecule} $A \to B$: a molecule
+composed of atoms and identities by sequential composition alone: equals
+the shortest-path distance $d (A,B)$ in $G$;
+(2) Dijkstra's algorithm computes $d (A,B)$ for every pair of types, terminates
+on the finite graph, and is \emph{complete}: whenever $d (A,B) < \infty$ it
 returns a shortest path, and that path is a min-cost path-molecule;
 (3) if every atom has a single-type source and a single-type target (the
 \emph{slice signature} of the dataplane hot path), then every molecule
 $A \to B$ is a path-molecule, and (1)--(2) hold for \emph{all} molecules:
 globally optimal molecules are exactly the shortest paths of $G$, of cost
-$d(A,B)$.
+$d (A,B)$.
 \end{theorem}
 
 \begin{proof}
 \emph{(1): the two optimization problems coincide.} A path-molecule $A \to B$
 is a finite sequence of atoms $a_1, \dots, a_n$ with $a_i \colon T_{i-1} \to
 T_i$, $T_0 = A$, $T_n = B$, interleaved with identities; it denotes the
-composite. By additivity (NT25),
-$c(a_1 \circ \cdots \circ a_n) = \sum_{i=1}^{n} c(a_i)$, the total weight of
+composite. By additivity (\autoref{thm:25}),
+$c (a_1 \circ \cdots \circ a_n) = \sum_{i=1}^{n} c (a_i)$, the total weight of
 the corresponding path $A \to B$ in $G$. Conversely every path in $G$ is the
 atom sequence of a path-molecule. The two sets are in bijection with equal
 costs, so the minimum over path-molecules equals the minimum over paths,
-$d(A,B)$.
+$d (A,B)$.
 \emph{(2): Dijkstra's algorithm.} Maintain for every vertex a tentative
 distance, and repeatedly extract the unvisited vertex of minimal tentative
 distance, relaxing its outgoing edges. \emph{Correctness by induction on the
@@ -152,19 +152,19 @@ extraction order.} Let $v$ be the vertex extracted at step $k$; all previously
 extracted vertices carry their true distances. Any path from the source $s$ to
 $v$ leaves the extracted set at some edge $u \to w$ with $u$ extracted and $w$
 not yet; its total weight is at least
-$\mathrm{dist}(u) + c(u \to w) \ge \mathrm{tentative}(w) \ge
-\mathrm{tentative}(v)$, the last by the extraction order, and
-$\mathrm{tentative}(v)$ is the weight of an actual path, so
-$\mathrm{tentative}(v) = d(s, v)$. Nonnegativity is used exactly at
-$\mathrm{dist}(u) + c(u \to w) \ge \mathrm{tentative}(w)$, which holds because
-relaxing $u \to w$ set $\mathrm{tentative}(w) \le \mathrm{dist}(u) + c(u \to
+$\mathrm{dist} (u) + c (u \to w) \ge \mathrm{tentative} (w) \ge
+\mathrm{tentative} (v)$, the last by the extraction order, and
+$\mathrm{tentative} (v)$ is the weight of an actual path, so
+$\mathrm{tentative} (v) = d (s, v)$. Nonnegativity is used exactly at
+$\mathrm{dist} (u) + c (u \to w) \ge \mathrm{tentative} (w)$, which holds because
+relaxing $u \to w$ set $\mathrm{tentative} (w) \le \mathrm{dist} (u) + c (u \to
 w)$ and later relaxations only lower it. The graph is finite (bounded types,
 \autoref{ch:free}), so the algorithm terminates after at most $V$ extractions
-and $E$ relaxations, $O(E \log V)$ with a priority queue. Recording the
+and $E$ relaxations, $O (E \log V)$ with a priority queue. Recording the
 predecessor on each relaxation yields a shortest path to every reachable
 target; by (1) that path is a min-cost path-molecule, and running the search
 from every source type covers all pairs. This is completeness: every pair with
-$d(A,B) < \infty$ is returned with a witness.
+$d (A,B) < \infty$ is returned with a witness.
 \emph{(3): slice signatures.} Assume every atom has a single base type as
 source and as target. Let $M \colon A \to B$ be any molecule, realized as a
 wiring diagram (\autoref{ch:free}). Every atom has exactly one input port and
@@ -173,54 +173,54 @@ diagram is a disjoint union of directed paths, each component with exactly one
 boundary input and one boundary output. For single types $A$ and $B$ the
 boundary is $A \to B$, so there is a single component: a path
 $X_0 \to X_1 \to \cdots \to X_n$ with $X_0 = A$ and $X_n = B$, i.e.\ a
-path-molecule. Its cost is the weight of that path, at least $d(A,B)$, and by
-(2) a shortest path attains $d(A,B)$; hence the global minimum over all
-molecules $A \to B$ is exactly $d(A,B)$.
+path-molecule. Its cost is the weight of that path, at least $d (A,B)$, and by
+(2) a shortest path attains $d (A,B)$; hence the global minimum over all
+molecules $A \to B$ is exactly $d (A,B)$.
 \end{proof}
 
 \begin{remark}[Scope of the statement]
 For a general signature, a molecule may route through tensor products: a
 parallel composite of paths joined by a braiding. Its cost is then the sum of
-its components' costs (NT25), and such parallelism is absorbed into the
-signature by batch atoms (NT17, \autoref{ch:operad}, NT47). The theorem's
+its components' costs (\autoref{thm:25}), and such parallelism is absorbed into the
+signature by batch atoms (\autoref{thm:17}, \autoref{ch:operad}, \autoref{thm:47}). The theorem's
 engineering content is unchanged: with nonnegative additive costs, optimal
 composition is a shortest-path problem, and Dijkstra's algorithm is complete
-for it. The lookup table of \autoref{ch:free} (NT24) stores exactly the
+for it. The lookup table of \autoref{ch:free} (\autoref{thm:24}) stores exactly the
 shortest paths of each behavior class.
 \end{remark}
 
 \section{The fusion bound}\label{sec:enrich-fusion}
 
-Cut elimination fuses a pipeline into a single morphism (NT49,
+Cut elimination fuses a pipeline into a single morphism (\autoref{thm:49},
 \autoref{ch:linear}); fusion pays for itself. The naive run of $g \circ f$
 writes the intermediate value of type $B$ to memory and reads it back; the
 fused run keeps that value in registers.
 
 \begin{definition}[Measured cost of materialization]\label{def:measured}
-Let $m(B) \ge 0$ be the memory charge of a materialized intermediate value of
-type $B$, with $m(B) > 0$ whenever $B$ is nonempty. The \emph{measured cost}
+Let $m (B) \ge 0$ be the memory charge of a materialized intermediate value of
+type $B$, with $m (B) > 0$ whenever $B$ is nonempty. The \emph{measured cost}
 of a naive run of the composite $g \circ f$ is
-$c^{\mathrm{meas}}(g \circ f) = c(f) + c(g) + m(B)$: the atoms do their nominal
+$c^{\mathrm{meas}} (g \circ f) = c (f) + c (g) + m (B)$: the atoms do their nominal
 work and the intermediate is stored and reloaded. The \emph{canonical fused
 molecule} for the pair $(f, g)$ is the same atoms rewired so that the
 intermediate is consumed in registers; it realizes $g \circ f$ and its
-measured cost is $c^{\mathrm{meas}}(h) = c(f) + c(g)$: no materialization
+measured cost is $c^{\mathrm{meas}} (h) = c (f) + c (g)$: no materialization
 charge. Any \emph{fused realization} of the behavior is a molecule $h$ with
 $h \simeq g \circ f$ and measured cost at most the canonical one.
 \end{definition}
 
-\begin{theorem}[Fusion bound]\label{nt:27}
-\textbf{NT27 [N].} Let $f \colon A \to B$ and $g \colon B \to C$ be molecules.
+\begin{theorem}[Fusion bound]\label{thm:27}
+ Let $f \colon A \to B$ and $g \colon B \to C$ be molecules.
 (1) The naive composite realizes $g \circ f$ at measured cost
-$c(f) + c(g) + m(B)$; the canonical fused molecule realizes the same behavior
-at cost $c(f) + c(g)$. Hence the optimal fused realization $h^{*}$ satisfies
-the \emph{fusion bound} $c(h^{*}) \le c(f) + c(g)$.
+$c (f) + c (g) + m (B)$; the canonical fused molecule realizes the same behavior
+at cost $c (f) + c (g)$. Hence the optimal fused realization $h^{*}$ satisfies
+the \emph{fusion bound} $c (h^{*}) \le c (f) + c (g)$.
 (2) The bound is strict exactly when the intermediate type never materializes:
-if $B$ is nonempty, then $m(B) > 0$ and
-$c^{\mathrm{meas}}(h^{*}) \le c(f) + c(g) < c(f) + c(g) + m(B) =
-c^{\mathrm{meas}}(g \circ f)$ --- fusing strictly decreases the measured cost,
+if $B$ is nonempty, then $m (B) > 0$ and
+$c^{\mathrm{meas}} (h^{*}) \le c (f) + c (g) < c (f) + c (g) + m (B) =
+c^{\mathrm{meas}} (g \circ f)$: fusing strictly decreases the measured cost,
 and in particular the memory and cache-miss components improve by the
-eliminated store and load. If $B$ is empty, $m(B) = 0$ and the two coincide.
+eliminated store and load. If $B$ is empty, $m (B) = 0$ and the two coincide.
 \end{theorem}
 
 \begin{proof}
@@ -230,71 +230,71 @@ the input and updates its state, then $g$ consumes the intermediate and
 updates its state. The canonical fused molecule is the same state space and
 the same two steps, with the intermediate held in registers instead of memory;
 its atom multiset is exactly that of $g \circ f$ (plugging introduces no
-atoms, NT25), so its nominal cost is $c(f) + c(g)$ and, since it never
-materializes $B$, its measured cost is $c(f) + c(g)$
+atoms, \autoref{thm:25}), so its nominal cost is $c (f) + c (g)$ and, since it never
+materializes $B$, its measured cost is $c (f) + c (g)$
 (Definition~\ref{def:measured}). It realizes $g \circ f$ by construction,
 while the naive run additionally stores and reloads the intermediate, costing
-$c(f) + c(g) + m(B)$. The optimal fused realization is no more expensive than
-the canonical one, giving $c(h^{*}) \le c(f) + c(g)$.
-\emph{(2): strictness.} If $B$ is nonempty then $m(B) > 0$, so
-$c(f) + c(g) < c(f) + c(g) + m(B)$: the left side is the canonical fused cost,
+$c (f) + c (g) + m (B)$. The optimal fused realization is no more expensive than
+the canonical one, giving $c (h^{*}) \le c (f) + c (g)$.
+\emph{(2): strictness.} If $B$ is nonempty then $m (B) > 0$, so
+$c (f) + c (g) < c (f) + c (g) + m (B)$: the left side is the canonical fused cost,
 the right side the naive composite cost, and fusing strictly decreases the
 measured cost. In the memory and cache-miss components the difference is
 exactly the charge of the eliminated store and load, so those components
-improve strictly. If $B$ is the empty type, $m(B) = 0$, both runs cost
-$c(f) + c(g)$, and the bound is tight.
+improve strictly. If $B$ is the empty type, $m (B) = 0$, both runs cost
+$c (f) + c (g)$, and the bound is tight.
 \end{proof}
 
 \begin{remark}[Fusion, normalization, and the lookup table]
 Fusion is cost-decreasing, and the normalization of \autoref{ch:rewrite} is
-cost-nonincreasing (NT18). Together with the fusion bound they imply that the
-normal form of a composite --- the fused pipeline --- is a refinement of every
+cost-nonincreasing (\autoref{thm:18}). Together with the fusion bound they imply that the
+normal form of a composite (the fused pipeline) is a refinement of every
 enumerated representative of its behavior class; this is the mechanism by
 which the lookup table of \autoref{ch:free} stores cost-optimal molecules
-(NT24, NT26, NT29).
+(\autoref{thm:24}, \autoref{thm:26}, \autoref{thm:29}).
 \end{remark}
 
 \section{Refinement and fast-path specialization}\label{sec:enrich-refine}
 
 Inside a behavior class, molecules are ordered by cost. A \emph{refinement}
-replaces a molecule by a cheaper one with the same behavior --- the formal
+replaces a molecule by a cheaper one with the same behavior: the formal
 counterpart of fast-path specialization: the general path is correct, and the
 specialized path is also correct and faster.
 
 \begin{definition}[Refinement]\label{def:refine}
 For molecules $f, f' \colon A \to B$ with $f \simeq f'$, write
 $f \sqsubseteq f'$ and call $f'$ a \emph{refinement} of $f$ when
-$c(f') \le c(f)$ componentwise. Write $f \equiv f'$ when both
+$c (f') \le c (f)$ componentwise. Write $f \equiv f'$ when both
 $f \sqsubseteq f'$ and $f' \sqsubseteq f$ hold (equal behavior and equal
 cost). The relation $\sqsubseteq$ is a preorder on each behavior class, and a
 partial order modulo $\equiv$.
 \end{definition}
 
-\begin{theorem}[Refinement substitution]\label{nt:28}
-\textbf{NT28 [N].} Refinement is preserved by substitution into compositions.
+\begin{theorem}[Refinement substitution]\label{thm:28}
+ Refinement is preserved by substitution into compositions.
 Let $f, f' \colon A \to B$ and $g, g' \colon B \to C$ be molecules with
 $f \sqsubseteq f'$ and $g \sqsubseteq g'$. Then $g \circ f \sqsubseteq
 g' \circ f'$: the composite $g' \circ f'$ is a refinement of $g \circ f$.
-Behavior is preserved --- $g' \circ f' \simeq g \circ f$ --- and cost is
-monotone --- $c(g' \circ f') \le c(g \circ f)$. The same holds for the tensor:
+Behavior is preserved ($g' \circ f' \simeq g \circ f$) and cost is
+monotone: $c (g' \circ f') \le c (g \circ f)$. The same holds for the tensor:
 $f \otimes g \sqsubseteq f' \otimes g'$ whenever the tensor cost is additive on
-the pairs involved (in particular under the additive extension, NT25).
+the pairs involved (in particular under the additive extension, \autoref{thm:25}).
 \end{theorem}
 
 \begin{proof}
 \emph{Behavior preserved.} From $f \sqsubseteq f'$ we have $f \simeq f'$, and
 from $g \sqsubseteq g'$ we have $g \simeq g'$. Behavioral equivalence is a
-congruence for $\circ$ and $\otimes$ (NT6), so $g \circ f \simeq g' \circ f'$
+congruence for $\circ$ and $\otimes$ (\autoref{thm:6}), so $g \circ f \simeq g' \circ f'$
 and $f \otimes g \simeq f' \otimes g'$.
-\emph{Cost monotone, sequential.} By additivity (NT25),
-$c(g \circ f) = c(f) + c(g)$ and $c(g' \circ f') = c(f') + c(g')$. Since
-$c(f') \le c(f)$ and $c(g') \le c(g)$ componentwise, adding componentwise
-gives $c(f') + c(g') \le c(f) + c(g)$, i.e.\ $c(g' \circ f') \le
-c(g \circ f)$. Together with the congruence, $g \circ f \sqsubseteq
+\emph{Cost monotone, sequential.} By additivity (\autoref{thm:25}),
+$c (g \circ f) = c (f) + c (g)$ and $c (g' \circ f') = c (f') + c (g')$. Since
+$c (f') \le c (f)$ and $c (g') \le c (g)$ componentwise, adding componentwise
+gives $c (f') + c (g') \le c (f) + c (g)$, i.e.\ $c (g' \circ f') \le
+c (g \circ f)$. Together with the congruence, $g \circ f \sqsubseteq
 g' \circ f'$.
 \emph{Cost monotone, tensor.} Under the additive extension,
-$c(f \otimes g) = c(f) + c(g)$ and $c(f' \otimes g') = c(f') + c(g')$ (NT25),
-and the same inequality gives $c(f' \otimes g') \le c(f \otimes g)$; with the
+$c (f \otimes g) = c (f) + c (g)$ and $c (f' \otimes g') = c (f') + c (g')$ (\autoref{thm:25}),
+and the same inequality gives $c (f' \otimes g') \le c (f \otimes g)$; with the
 tensor congruence, $f \otimes g \sqsubseteq f' \otimes g'$. For an arbitrary
 cost assignment the same conclusion holds whenever the tensor cost equals the
 sum on both pairs, which is the stated hypothesis.
@@ -303,61 +303,61 @@ sum on both pairs, which is the stated hypothesis.
 \begin{remark}[Fast-path specialization]
 The substitution property is the soundness certificate of specialization: any
 component of a pipeline may be replaced, at any depth, by a refinement of
-itself, and the whole pipeline remains a refinement of the original --- same
+itself, and the whole pipeline remains a refinement of the original: same
 behavior, no greater cost. This is how the dataplane's fast paths are
 introduced without re-verifying the full pipeline: each specialized atom is
-checked once against the general one (behavioral equivalence, NT6 and
-\autoref{ch:testing}), and NT28 lifts the guarantee to every composite.
+checked once against the general one (behavioral equivalence, \autoref{thm:6} and
+\autoref{ch:testing}), and \autoref{thm:28} lifts the guarantee to every composite.
 \end{remark}
 
-\begin{theorem}[Maximal refinement]\label{nt:29}
-\textbf{NT29 [N].} Let $\mathcal{C}$ be a finite set of molecules
+\begin{theorem}[Maximal refinement]\label{thm:29}
+ Let $\mathcal{C}$ be a finite set of molecules
 $A \to B$ with a common behavior (a \emph{behavior class}), ordered by
 $\sqsubseteq$ modulo $\equiv$ (Definition~\ref{def:refine}).
-(1) \emph{Existence.} $\mathcal{C}$ has a maximal element --- a molecule
-refined by no strictly better molecule of $\mathcal{C}$ --- and every element
+(1) \emph{Existence.} $\mathcal{C}$ has a maximal element: a molecule
+refined by no strictly better molecule of $\mathcal{C}$: and every element
 of $\mathcal{C}$ is refined by some maximal element.
-(2) \emph{Uniqueness.} If $\mathcal{C}$ is \emph{cost-closed} --- it contains
+(2) \emph{Uniqueness.} If $\mathcal{C}$ is \emph{cost-closed}: it contains
 a molecule whose cost is the componentwise minimum of the costs occurring in
-$\mathcal{C}$ --- then the maximal element is unique up to $\equiv$: the
-\emph{most-refined} representative, of cost $\min_{f \in \mathcal{C}} c(f)$.
+$\mathcal{C}$: then the maximal element is unique up to $\equiv$: the
+\emph{most-refined} representative, of cost $\min_{f \in \mathcal{C}} c (f)$.
 (3) \emph{The most-refined dispatcher}, which selects for every behavior class
-its most-refined representative, is sound --- each selected molecule has the
-class behavior, because it lies in the class --- and cost-minimal --- no other
+its most-refined representative, is sound: each selected molecule has the
+class behavior, because it lies in the class (and cost-minimal) no other
 selection realizes the class at strictly smaller cost in any component.
 \end{theorem}
 
 \begin{proof}
 \emph{(1): maximal elements exist.} If $f \in \mathcal{C}$ is not maximal, some
-$f_1 \in \mathcal{C}$ strictly refines it: $c(f_1) \le c(f)$ componentwise and
-$c(f_1) \neq c(f)$. A strictly refining chain
+$f_1 \in \mathcal{C}$ strictly refines it: $c (f_1) \le c (f)$ componentwise and
+$c (f_1) \neq c (f)$. A strictly refining chain
 $f, f_1, f_2, \dots$ cannot be infinite: each step lowers at least one
 component, and the componentwise-decreasing sequences in the finite set of
 cost vectors of $\mathcal{C}$ are finite. Hence a maximal element is reached,
 and every element is refined by one (iterate the same argument from it).
 \emph{(2): uniqueness under cost-closure.} Let
-$v^{*} = \min_{f \in \mathcal{C}} c(f)$ componentwise; by cost-closure some
-$f^{*} \in \mathcal{C}$ has $c(f^{*}) = v^{*}$. Let $g$ be any maximal element
-of $\mathcal{C}$. Since $v^{*} \le c(g)$ componentwise, if $c(g) \neq v^{*}$
+$v^{*} = \min_{f \in \mathcal{C}} c (f)$ componentwise; by cost-closure some
+$f^{*} \in \mathcal{C}$ has $c (f^{*}) = v^{*}$. Let $g$ be any maximal element
+of $\mathcal{C}$. Since $v^{*} \le c (g)$ componentwise, if $c (g) \neq v^{*}$
 then $f^{*}$ strictly refines $g$, contradicting maximality; hence
-$c(g) = v^{*}$. All maximal elements therefore carry the cost $v^{*}$ and the
+$c (g) = v^{*}$. All maximal elements therefore carry the cost $v^{*}$ and the
 class behavior, so they are pairwise $\equiv$; and $f^{*}$ itself is maximal,
 so maximal elements exist and are unique up to $\equiv$.
 \emph{(3): soundness and cost-minimality of the dispatcher.} The most-refined
 representative of a class is an element of the class, so it realizes the class
-behavior: the dispatcher is sound. Its cost is $v^{*} \le c(f)$ for every
+behavior: the dispatcher is sound. Its cost is $v^{*} \le c (f)$ for every
 $f$ in the class, so no other selection realizes the class at strictly
 smaller cost in any component: the dispatcher is cost-minimal.
 \end{proof}
 
 \begin{remark}[Tradeoffs and decision matrices]
-Without cost-closure there can be several incomparable maximal refinements ---
-one fast but memory-heavy, one slow but memory-light --- and this is exactly
+Without cost-closure there can be several incomparable maximal refinements:
+one fast but memory-heavy, one slow but memory-light: and this is exactly
 the tradeoff that the decision matrices of \autoref{ch:situations} resolve
 with a weight vector over the cost components. For the dataplane,
 cost-closure is supplied by the lookup table of \autoref{ch:free}:
-normalization is cost-nonincreasing (NT18), so the normal form of a class is a
-refinement of every enumerated representative (NT22--NT24), and fusion (NT27)
+normalization is cost-nonincreasing (\autoref{thm:18}), so the normal form of a class is a
+refinement of every enumerated representative (\autoref{thm:22}--\autoref{thm:24}), and fusion (\autoref{thm:27})
 only improves it further.
 \end{remark}
 
@@ -367,9 +367,9 @@ The complexity of the dataplane is decided by its atoms: whatever resource
 class the atoms belong to, and which the two compositions preserve, belongs to
 every molecule built from them.
 
-\begin{theorem}[Complexity closure]\label{nt:30}
-\textbf{NT30 [N].} (1) \emph{Structural closure.} Let $P$ be a property of
-molecules preserved by the composition operations --- if $f$ and $g$ have $P$
+\begin{theorem}[Complexity closure]\label{thm:30}
+ (1) \emph{Structural closure.} Let $P$ be a property of
+molecules preserved by the composition operations: if $f$ and $g$ have $P$
 then $g \circ f$ and $f \otimes g$ have $P$, and all identities and braidings
 have $P$. If every atom of a signature $\Sigma$ has $P$, then every molecule
 over $\Sigma$ has $P$.
@@ -386,17 +386,17 @@ cache-miss cost in $F$ and state size in $G$.
 \emph{(1): induction on the construction of molecules.} Every molecule over
 $\Sigma$ is built from atoms, identities, and braidings by finitely many
 applications of $\circ$ and $\otimes$: this is the definition of a molecule
-(NT3, \autoref{ch:mol}), and the free-category construction of
+(\autoref{thm:3}, \autoref{ch:mol}), and the free-category construction of
 \autoref{ch:free} shows that the construction is well-founded. Induct on the
 number of operations. Base cases: an atom has $P$ by hypothesis, and the
 identities and braidings have $P$ by hypothesis. Induction steps: if $f$ and
 $g$ have $P$, then $g \circ f$ and $f \otimes g$ have $P$ because $P$ is
 preserved by both operations. Hence every molecule over $\Sigma$ has $P$.
-\emph{(2): resource bounds by induction, using the composition laws of NT25.}
+\emph{(2): resource bounds by induction, using the composition laws of \autoref{thm:25}.}
 For the time and cache-miss components, additivity gives
-$t(g \circ f) = t(f) + t(g)$ and $k(g \circ f) = k(f) + k(g)$, and tensor
-subadditivity gives $t(f \otimes g) \le t(f) + t(g)$ and
-$k(f \otimes g) \le k(f) + k(g)$; since $F$ is closed under addition, the
+$t (g \circ f) = t (f) + t (g)$ and $k (g \circ f) = k (f) + k (g)$, and tensor
+subadditivity gives $t (f \otimes g) \le t (f) + t (g)$ and
+$k (f \otimes g) \le k (f) + k (g)$; since $F$ is closed under addition, the
 components stay in $F$ at every induction step. For the memory component, the
 state space of $g \circ f$ is $S_f \times S_g$, and the state space of
 $f \otimes g$ is likewise $S_f \times S_g$, so
@@ -409,9 +409,9 @@ the resource closure.
 \begin{remark}[The bounded-resource consequence]
 For $F$ the bounded functions (atoms with bounded time) and $G = \{1\}$ up to
 a constant (atoms with bounded state), closure gives: every molecule has
-bounded time per input and bounded state --- subject to the same constants
+bounded time per input and bounded state: subject to the same constants
 raised by the multiplicative composition of state bounds. The zero-allocation
-discipline of \autoref{ch:linear} (NT50) is the engineering form of this
+discipline of \autoref{ch:linear} (\autoref{thm:50}) is the engineering form of this
 statement: the complexity class of the dataplane is the complexity of its
 atoms, never more.
 \end{remark}
@@ -422,12 +422,12 @@ Finite-state molecules sit exactly at the regular level of the Chomsky
 hierarchy. Fix an input alphabet $A$ and an output alphabet $B$ for a
 finite-state molecule $M = (S, \mathit{step})$, an initial state $s_0 \in S$,
 and a set $F \subseteq S$ of accepting states. The \emph{language recognized}
-by $M$ is $L(M) = \{w \in A^{*} : \text{the run of } M \text{ on } w \text{ ends
+by $M$ is $L (M) = \{w \in A^{*} : \text{the run of } M \text{ on } w \text{ ends
 in } F\}$; the \emph{transduction computed} by $M$ from $s_0$ is the
 input--output map of \autoref{ch:mol}.
 
-\begin{theorem}[Descriptive complexity of Mol]\label{nt:31}
-\textbf{NT31 [C].} (1) \emph{Regularity.} Every finite-state molecule
+\begin{theorem}[Descriptive complexity of Mol]\label{thm:31}
+ (1) \emph{Regularity.} Every finite-state molecule
 recognizes a regular language, and its transduction is a deterministic Mealy
 transduction \cite{mealy}: finite state realizes no behavior beyond the
 regular ones.
@@ -435,61 +435,61 @@ regular ones.
 finite-state molecule, namely the minimal DFA of the language, whose states
 are the Myhill--Nerode equivalence classes \cite{nerode}.
 (3) \emph{Minimality.} Among the finite-state molecules recognizing a regular
-language $L$, the minimum number of states is the number $\kappa(L)$ of Nerode
-classes of $L$; every molecule attaining it --- a \emph{minimal-state
-molecule} --- is a minimal DFA, unique up to state-space isomorphism, and
-Hopcroft's algorithm computes it in time $O(n \log n)$ from any $n$-state
+language $L$, the minimum number of states is the number $\kappa (L)$ of Nerode
+classes of $L$; every molecule attaining it: a \emph{minimal-state
+molecule}: is a minimal DFA, unique up to state-space isomorphism, and
+Hopcroft's algorithm computes it in time $O (n \log n)$ from any $n$-state
 realization \cite{hopcroft}.
 \end{theorem}
 
 \begin{proof}
 \emph{(1): finite state stays inside the regular languages.} Write
-$\delta(s, a)$ for the state component of $\mathit{step}(s, a)$. The molecule
+$\delta (s, a)$ for the state component of $\mathit{step} (s, a)$. The molecule
 is a finite deterministic automaton $(S, A, \delta, s_0, F)$, and every such
 automaton recognizes a regular language. Concretely, by state elimination:
 let $L_s \subseteq A^{*}$ be the language recognized from state $s$. The
 languages $L_s$ satisfy the finite system of equations
 \[
-L_s = \bigcup_{a \in A} a \cdot L_{\delta(s,a)},
+L_s = \bigcup_{a \in A} a \cdot L_{\delta (s,a)},
 \]
 with the term $\varepsilon$ added when $s \in F$. Solving the system by
-substituting equations into each other --- the derivative method of Brzozowski
-\cite{brzozowski} --- expresses every $L_s$, in particular $L_{s_0} = L(M)$,
-as a regular expression over $A$; hence $L(M)$ is regular. The transduction
+substituting equations into each other: the derivative method of Brzozowski
+\cite{brzozowski}: expresses every $L_s$, in particular $L_{s_0} = L (M)$,
+as a regular expression over $A$; hence $L (M)$ is regular. The transduction
 reading is literal: a finite-state molecule with deterministic step is a
-deterministic Mealy machine (NT8, \autoref{ch:mol}), so its transduction is a
+deterministic Mealy machine (\autoref{thm:8}, \autoref{ch:mol}), so its transduction is a
 deterministic Mealy transduction \cite{mealy}.
 \emph{(2): every regular language is recognized by a finite-state molecule.}
 Let $L \subseteq A^{*}$ be regular. The Nerode equivalence $u \equiv_L v$ iff
 $\forall w \in A^{*} \colon (uw \in L \Leftrightarrow vw \in L)$ has finitely
 many classes exactly when $L$ is regular \cite{nerode}. The quotient
-$S_L = A^{*} / \equiv_L$ with transition $\delta([u], a) = [ua]$ and accepting
+$S_L = A^{*} / \equiv_L$ with transition $\delta ([u], a) = [ua]$ and accepting
 set $\{[u] : u \in L\}$ is a finite deterministic automaton recognizing $L$,
 well-defined because the class definition makes the transition and the
 accepting predicate independent of the representative. It is a finite-state
-molecule with state space $S_L$ and $\mathit{step}([u], a) = (o, [ua])$ for
-any fixed $o \in B$, the accepting set carried separately, and $L(M) = L$.
+molecule with state space $S_L$ and $\mathit{step} ([u], a) = (o, [ua])$ for
+any fixed $o \in B$, the accepting set carried separately, and $L (M) = L$.
 \emph{(3): minimal states are Nerode classes.} \emph{Lower bound.} Any
-automaton recognizing $L$ has at least $\kappa(L)$ states: words $u, v$ with
+automaton recognizing $L$ has at least $\kappa (L)$ states: words $u, v$ with
 $u \not\equiv_L v$ reach states that must be distinct, since one state cannot
 both accept and reject the distinguishing continuation $w$.
 \emph{Upper bound and uniqueness.} The automaton of (2) has exactly
-$\kappa(L)$ states, so the minimum is $\kappa(L)$. Let $N$ be any
-$\kappa(L)$-state automaton recognizing $L$ and let $\mathrm{st}_N(u)$ be the
-state it reaches on $u$. The map $\phi \colon \mathrm{st}_N(u) \mapsto [u]$ is
+$\kappa (L)$ states, so the minimum is $\kappa (L)$. Let $N$ be any
+$\kappa (L)$-state automaton recognizing $L$ and let $\mathrm{st}_N (u)$ be the
+state it reaches on $u$. The map $\phi \colon \mathrm{st}_N (u) \mapsto [u]$ is
 well-defined: if $u$ and $v$ reached the same state, that state cannot
 separate $uw$ from $vw$, so $u \equiv_L v$. It is injective ($u \not\equiv_L
-v$ forces $\mathrm{st}_N(u) \neq \mathrm{st}_N(v)$, by the lower-bound
-argument) and surjective (both sets have $\kappa(L)$ elements). It preserves
-the initial state ($\phi(\mathrm{st}_N(\varepsilon)) = [\varepsilon]$), the
-transitions ($\phi(\mathrm{st}_N(ua)) = [ua] = \delta_L([u], a)$), and the
-accepting sets ($\mathrm{st}_N(u) \in F_N \Leftrightarrow u \in L
+v$ forces $\mathrm{st}_N (u) \neq \mathrm{st}_N (v)$, by the lower-bound
+argument) and surjective (both sets have $\kappa (L)$ elements). It preserves
+the initial state ($\phi (\mathrm{st}_N (\varepsilon)) = [\varepsilon]$), the
+transitions ($\phi (\mathrm{st}_N (ua)) = [ua] = \delta_L ([u], a)$), and the
+accepting sets ($\mathrm{st}_N (u) \in F_N \Leftrightarrow u \in L
 \Leftrightarrow [u] \in F_L$). Hence $\phi$ is an isomorphism of machines, and
 minimal-state molecules are unique up to state-space isomorphism; by the
-state-space bijection quotient of \autoref{ch:mol} (NT2) the minimal molecule
+state-space bijection quotient of \autoref{ch:mol} (\autoref{thm:2}) the minimal molecule
 is unique. \emph{Complexity.} Hopcroft's algorithm computes the coarsest
-stable partition of the states of a given $n$-state automaton --- exactly the
-partition into Nerode classes --- in time $O(n \log n)$ \cite{hopcroft};
+stable partition of the states of a given $n$-state automaton: exactly the
+partition into Nerode classes: in time $O (n \log n)$ \cite{hopcroft};
 applied to any $n$-state realization of $L$, it returns the minimal molecule.
 \end{proof}
 
@@ -497,7 +497,7 @@ applied to any $n$-state realization of $L$, it returns the minimal molecule.
 For transductions the same statement holds with the Nerode relation replaced
 by the behavioral equivalence $\simeq$ of \autoref{ch:mol}: the minimal-state
 molecule realizing a transduction is the quotient of any realization by
-$\simeq$, unique up to state-space isomorphism (NT38, \autoref{ch:coalgebra}).
+$\simeq$, unique up to state-space isomorphism (\autoref{thm:38}, \autoref{ch:coalgebra}).
 The theorem shows that for the language projection this quotient is exactly
 the Myhill--Nerode quotient, so the two minimality theories coincide.
 \end{remark}
@@ -509,53 +509,53 @@ step function reads the state only through a projection, the state space can
 be replaced by the projection's image without changing behavior and without
 losing minimality.
 
-\begin{theorem}[Projection reduction]\label{nt:32}
-\textbf{NT32 [N].} Let $M = (S, \mathit{step})$ be a finite-state molecule and
+\begin{theorem}[Projection reduction]\label{thm:32}
+ Let $M = (S, \mathit{step})$ be a finite-state molecule and
 let $\pi \colon S \to P$ be a surjection such that the step function factors
 through $\pi$: there is a function
 $\mathit{step}_{P} \colon P \times A \to B \times P$ with
-$\mathit{step}(s, a) = \mathit{step}_{P}(\pi(s), a)$ for all $s \in S$ and
-$a \in A$ --- the step depends on the state only through $\pi$. Then:
+$\mathit{step} (s, a) = \mathit{step}_{P} (\pi (s), a)$ for all $s \in S$ and
+$a \in A$: the step depends on the state only through $\pi$. Then:
 (1) $(P, \mathit{step}_{P})$ is a well-defined finite-state molecule, the
 \emph{projection reduction} of $M$;
 (2) for every initial state $s_0$, the reduced molecule started at
-$\pi(s_0)$ is behaviorally equivalent to $M$ started at $s_0$;
-(3) if $\pi$ is \emph{discriminating} --- no two distinct elements of $P$ are
-behaviorally equivalent under $\mathit{step}_{P}$ --- then the minimal state
-space of the behavior satisfies $S_{\min} \cong \pi(S) = P$: the projection
+$\pi (s_0)$ is behaviorally equivalent to $M$ started at $s_0$;
+(3) if $\pi$ is \emph{discriminating}: no two distinct elements of $P$ are
+behaviorally equivalent under $\mathit{step}_{P}$: then the minimal state
+space of the behavior satisfies $S_{\min} \cong \pi (S) = P$: the projection
 reduction is already the minimal realization.
 \end{theorem}
 
 \begin{proof}
 \emph{(1): the reduction is a molecule.} The factorization says exactly that
-$\mathit{step}$ is constant on the fibers of $\pi$: if $\pi(s) = \pi(s')$,
-then $\mathit{step}(s, a) = \mathit{step}_{P}(\pi(s), a) =
-\mathit{step}_{P}(\pi(s'), a) = \mathit{step}(s', a)$. Hence
+$\mathit{step}$ is constant on the fibers of $\pi$: if $\pi (s) = \pi (s')$,
+then $\mathit{step} (s, a) = \mathit{step}_{P} (\pi (s), a) =
+\mathit{step}_{P} (\pi (s'), a) = \mathit{step} (s', a)$. Hence
 $\mathit{step}_{P}$ is well-defined on $P$, and $(P, \mathit{step}_{P})$ is a
 finite-state molecule in the sense of \autoref{ch:mol}.
 \emph{(2): behavioral equivalence.} Let $(s_i)_{i \ge 0}$ be the run of $M$
 on the word $a_1 \cdots a_n$ from $s_0$, and $(p_i)_{i \ge 0}$ the run of the
-reduction from $\pi(s_0)$. We show $p_i = \pi(s_i)$ by induction: for $i = 0$
-this is the initialization, and if $p_i = \pi(s_i)$, the next reduced state is
+reduction from $\pi (s_0)$. We show $p_i = \pi (s_i)$ by induction: for $i = 0$
+this is the initialization, and if $p_i = \pi (s_i)$, the next reduced state is
 the state component of
-$\mathit{step}_{P}(p_i, a_{i+1}) = \mathit{step}_{P}(\pi(s_i), a_{i+1}) =
-\mathit{step}(s_i, a_{i+1})$, which is $\pi(s_{i+1})$; the outputs coincide at
+$\mathit{step}_{P} (p_i, a_{i+1}) = \mathit{step}_{P} (\pi (s_i), a_{i+1}) =
+\mathit{step} (s_i, a_{i+1})$, which is $\pi (s_{i+1})$; the outputs coincide at
 every step by the same equality. Hence the two machines emit the same output
-word on every input word: they are behaviorally equivalent (NT6).
+word on every input word: they are behaviorally equivalent (\autoref{thm:6}).
 \emph{(3): minimality when $\pi$ is discriminating.} Two states in the same
 fiber of $\pi$ are behaviorally equivalent: by (2) applied to the sub-machines
-started at $s$ and $s'$ with $\pi(s) = \pi(s')$, their runs agree forever.
+started at $s$ and $s'$ with $\pi (s) = \pi (s')$, their runs agree forever.
 Hence every behavioral equivalence class is a union of fibers, and the minimal
-state space $S_{\min}$ --- the quotient of $S$ by behavioral equivalence
-(NT38, \autoref{ch:coalgebra}) --- is a quotient of the fiber quotient
+state space $S_{\min}$: the quotient of $S$ by behavioral equivalence
+(\autoref{thm:38}, \autoref{ch:coalgebra}): is a quotient of the fiber quotient
 $P = S / \ker \pi$: a canonical surjection $P \twoheadrightarrow S_{\min}$
 gives $|S_{\min}| \le |P|$. Since $\pi$ is discriminating, the elements of
 $P$ realize pairwise distinct behaviors, so any realization needs at least
 $|P|$ states; the reduction provides exactly $|P|$, hence $|S_{\min}| =
 |P|$. The canonical surjection is then a bijection, and it is an isomorphism
-of machines: both sides send $\pi(s)$ to its behavioral equivalence class, and
-the step is preserved by construction. Thus $S_{\min} \cong P = \pi(S)$; by
-the state-space bijection quotient of Mol (NT2) the isomorphism is an equality
+of machines: both sides send $\pi (s)$ to its behavioral equivalence class, and
+the step is preserved by construction. Thus $S_{\min} \cong P = \pi (S)$; by
+the state-space bijection quotient of Mol (\autoref{thm:2}) the isomorphism is an equality
 of Mol-morphisms.
 \end{proof}
 
@@ -564,79 +564,79 @@ The step functions of real dataplane atoms consult a handful of fields of a
 large state record. Projection reduction is the formal license to drop the
 rest: the molecule that carries only the consulted projection is
 behaviorally identical and, when the projection is discriminating, already
-minimal --- the layout discipline of policy [CACHE] of the companion standard.
+minimal: the layout discipline of policy [CACHE] of the companion standard.
 \end{remark}
 
 \section{Resource-Sensitive Cost Enrichment}\label{sec:enrich-graded}
 
-The cost enrichment of \autoref{nt:25}--\autoref{nt:27} accounts for a
+The cost enrichment of \autoref{thm:25}--\autoref{thm:27} accounts for a
 molecule by a single cost number. Real dataplane cost has structure:
 which cache lines a molecule touches, whether concurrently written hot
 fields collide in a line (false sharing), and how often the branch
 predictor guesses wrong. This section refines the enrichment to a
-\emph{resource-graded} structure --- a graded monad whose grades live in
-a resource monoid --- and shows that the optimality theorems of
-\ref{nt:26}--\ref{nt:27} survive the refinement.
+\emph{resource-graded} structure: a graded monad whose grades live in
+a resource monoid: and shows that the optimality theorems of
+\ref{thm:26}--\ref{thm:27} survive the refinement.
 
 \begin{definition}[Resource grades]\label{def:grades}
 Let $M = \mathbb{N} \times \mathbb{N} \times \mathbb{R}_{\ge 0}$ be the
 \emph{resource monoid}, with elements $r = (L, F, B)$ and componentwise
-addition and order. For a molecule $f \colon A \to B$: $L(f)$ is the
+addition and order. For a molecule $f \colon A \to B$: $L (f)$ is the
 number of distinct cache lines its working set touches (a structure of
 size $s$ occupies $\lceil s/64 \rceil$ lines at the standard 64-byte
-line granularity); $F(f)$ is the number of \emph{false-sharing penalty
-events} --- a penalty event occurs when a write to a hot field of $f$
+line granularity); $F (f)$ is the number of \emph{false-sharing penalty
+events}: a penalty event occurs when a write to a hot field of $f$
 hits a cache line also touched by a concurrently written hot field of
-another molecule running alongside it; and $B(f) = \sum_i p_i \pi_i$ is
+another molecule running alongside it; and $B (f) = \sum_i p_i \pi_i$ is
 the \emph{expected branch-misprediction cost}, the sum over branch
 points of $f$ of the misprediction probability $p_i$ times the penalty
-$\pi_i$ in cycles. The \emph{grade} of $f$ is $g(f) = (L(f), F(f),
-B(f)) \in M$.
+$\pi_i$ in cycles. The \emph{grade} of $f$ is $g (f) = (L (f), F (f),
+B (f)) \in M$.
 \end{definition}
 
-\begin{theorem}[Resource-graded cost enrichment, NT53 [N]]\label{nt:53}
-The assignment $f \mapsto g(f)$ of \autoref{def:grades} is a
+\begin{theorem}[Resource-graded cost enrichment, \autoref{thm:53} [N]]\label{thm:53}
+The assignment $f \mapsto g (f)$ of \autoref{def:grades} is a
 well-defined enrichment of Mol over the monoidal category $(M, +)$:
 \begin{enumerate}
 \item[(i)] the identity has grade $0$ and composition is additive:
-$g(\mathrm{id}_A) = (0,0,0)$ and $g(h \circ f) = g(f) + g(h)$;
+$g (\mathrm{id}_A) = (0,0,0)$ and $g (h \circ f) = g (f) + g (h)$;
 \item[(ii)] tensor grades are subadditive in the cache-line component
 with ceiling arithmetic and additive in the other components:
-$L(f \otimes h) \le L(f) + L(h)$, with equality when the working sets of
-$f$ and $h$ are disjoint; $F(f \otimes h) = F(f) + F(h)$ when the hot
+$L (f \otimes h) \le L (f) + L (h)$, with equality when the working sets of
+$f$ and $h$ are disjoint; $F (f \otimes h) = F (f) + F (h)$ when the hot
 fields of $f$ and $h$ lie in distinct cache lines and
-$F(f \otimes h) = F(f) + F(h) + 1$ when they share a line;
-$B(f \otimes h) = B(f) + B(h)$;
-\item[(iii)] the induced pseudo-metric $d(A,B) = \inf\{\, g(f)_1 +
-g(f)_2 + g(f)_3 : f \colon A \to B \,\}$ satisfies the triangle
+$F (f \otimes h) = F (f) + F (h) + 1$ when they share a line;
+$B (f \otimes h) = B (f) + B (h)$;
+\item[(iii)] the induced pseudo-metric $d (A,B) = \inf\{\, g (f)_1 +
+g (f)_2 + g (f)_3 : f \colon A \to B \,\}$ satisfies the triangle
 inequality.
 \end{enumerate}
-Consequently the shortest-path theorem \ref{nt:26} extends: with grades
+Consequently the shortest-path theorem \ref{thm:26} extends: with grades
 additive, a composition from $A$ to $B$ minimizing the total grade is
 exactly a shortest path in the finite type graph whose edge weights are
-the grades, and any locally minimal molecule --- one no single-step
-refinement of which lowers the total grade --- is globally optimal.
+the grades, and any locally minimal molecule: one no single-step
+refinement of which lowers the total grade: is globally optimal.
 \end{theorem}
 
 \begin{proof}
 \emph{(i)} The identity molecule is empty: it touches no cache lines,
 has no concurrently written hot fields, and has no branch points, so
-$g(\mathrm{id}_A) = (0,0,0)$. For composition, the accounted costs are
+$g (\mathrm{id}_A) = (0,0,0)$. For composition, the accounted costs are
 additive by definition of the account: the composite $h \circ f$ is
-accounted to touch the lines of $f$ and the lines of $h$ ($L(h \circ f)
-= L(f) + L(h)$; the actual number of distinct lines touched is at most
+accounted to touch the lines of $f$ and the lines of $h$ ($L (h \circ f)
+= L (f) + L (h)$; the actual number of distinct lines touched is at most
 this account, so the account is a conservative bound), its false-sharing
 account is the sum of the components' accounts, and its branch points
 are the disjoint union of the branch points of $f$ and of $h$, so by
 linearity of expectation
-\[ B(h \circ f) = \sum_{i \in \mathrm{bp}(f)} p_i \pi_i +
-\sum_{j \in \mathrm{bp}(h)} p_j \pi_j = B(f) + B(h), \]
+\[ B (h \circ f) = \sum_{i \in \mathrm{bp} (f)} p_i \pi_i +
+\sum_{j \in \mathrm{bp} (h)} p_j \pi_j = B (f) + B (h), \]
 with no independence hypothesis required: expectation is linear.
 
 \emph{(ii)} A structure of size $s$ occupies $\lceil s/64 \rceil$ lines,
 so the tensor $f \otimes h$ (working sets of sizes $s_f$, $s_h$)
 occupies at most $\lceil (s_f + s_h)/64 \rceil \le \lceil s_f/64 \rceil +
-\lceil s_h/64 \rceil = L(f) + L(h)$ lines, with equality when the
+\lceil s_h/64 \rceil = L (f) + L (h)$ lines, with equality when the
 working sets are disjoint. The false-sharing account adds a collision
 term: the hot fields of $f \otimes h$ are the pairs of hot fields of the
 components; a penalty event arises exactly when a pair shares a cache
@@ -647,10 +647,10 @@ linearity of expectation, as in (i), over the disjoint union of branch
 points.
 
 \emph{(iii)} For any $f \colon A \to B$ and $h \colon B \to C$, the
-composite $h \circ f \colon A \to C$ has grade $g(f) + g(h)$ by (i), so
-\[ d(A,C) \le g(f) + g(h) \quad\text{for all } f, h. \]
-Taking the infimum over $f$ and $h$ on the right gives $d(A,C) \le
-d(A,B) + d(B,C)$: the triangle inequality. (The three grade components
+composite $h \circ f \colon A \to C$ has grade $g (f) + g (h)$ by (i), so
+\[ d (A,C) \le g (f) + g (h) \quad\text{for all } f, h. \]
+Taking the infimum over $f$ and $h$ on the right gives $d (A,C) \le
+d (A,B) + d (B,C)$: the triangle inequality. (The three grade components
 combine additively along a path, so the componentwise order makes the
 infimum well-defined and the inequality holds componentwise.)
 
@@ -658,14 +658,14 @@ infimum well-defined and the inequality holds componentwise.)
 sum of the grades of its atomic steps, so the total grade of a molecule
 is the weight of its path in the type graph. Minimizing the grade is
 therefore a shortest-path problem in the finite type graph (finite
-whenever the type signature is bounded, as in \ref{nt:22}), solvable by
-Dijkstra's algorithm with the extraction-order induction of \ref{nt:26}.
+whenever the type signature is bounded, as in \ref{thm:22}), solvable by
+Dijkstra's algorithm with the extraction-order induction of \ref{thm:26}.
 For local optimality: suppose a molecule $M \colon A \to B$ is not
 globally optimal, so some $M'$ has strictly smaller total grade. The
 composite paths from $A$ to $B$ form a finite graph; by additivity,
 moving from $M$ to $M'$ along a cheaper route decomposes into a finite
 sequence of single-step grade decreases, the first of which is a
-one-step refinement of $M$ with strictly lower grade --- contradicting
+one-step refinement of $M$ with strictly lower grade: contradicting
 local minimality. Hence local minima are global optima.
 \end{proof}
 
@@ -674,7 +674,7 @@ The three components license the three layout disciplines of the
 companion standard: $L$ is what the cache-line accounting of [CACHE]
 minimizes; $F$ is exactly the quantity the hot/cold separation and
 per-core data-structure policies drive to zero; and $B$ is the quantity
-the refinement poset of \ref{nt:28}--\ref{nt:29} orders, so that the
+the refinement poset of \ref{thm:28}--\ref{thm:29} orders, so that the
 most-refined dispatch structure (dense integer matches, branchless
 cmov patterns) is precisely the one minimizing expected branch cost.
 The graded enrichment is a graded monad in the sense that grades
@@ -689,14 +689,14 @@ annotation is the type-level shadow of the runtime account.
 \toprule
 \textbf{Theorem} & \textbf{Tag} & \textbf{Content} \\
 \midrule
-NT25 & [N] & cost enrichment well-defined: additivity, triangle inequality, tensor subadditivity \\
-NT26 & [N] & optimal molecules are shortest paths in the type graph; Dijkstra complete \\
-NT27 & [N] & fusion bound $c(h^{*}) \le c(f) + c(g)$; strict when the intermediate never materializes \\
-NT28 & [N] & refinement substitution; behavior preserved, cost monotone \\
-NT29 & [N] & unique most-refined element per class; dispatcher sound and cost-minimal \\
-NT30 & [N] & complexity closure under $\circ$ and $\otimes$ \\
-NT31 & [C] & finite-state molecules = regular behaviors; minimal states = minimal DFA \\
-NT32 & [N] & projection reduction $S_{\min} \cong \pi(S)$ \\
+\autoref{thm:25} & [N] & cost enrichment well-defined: additivity, triangle inequality, tensor subadditivity \\
+\autoref{thm:26} & [N] & optimal molecules are shortest paths in the type graph; Dijkstra complete \\
+\autoref{thm:27} & [N] & fusion bound $c (h^{*}) \le c (f) + c (g)$; strict when the intermediate never materializes \\
+\autoref{thm:28} & [N] & refinement substitution; behavior preserved, cost monotone \\
+\autoref{thm:29} & [N] & unique most-refined element per class; dispatcher sound and cost-minimal \\
+\autoref{thm:30} & [N] & complexity closure under $\circ$ and $\otimes$ \\
+\autoref{thm:31} & [C] & finite-state molecules = regular behaviors; minimal states = minimal DFA \\
+\autoref{thm:32} & [N] & projection reduction $S_{\min} \cong \pi (S)$ \\
 \bottomrule
 \end{tabular}
 \caption{The theorems of this chapter.}
@@ -704,19 +704,19 @@ NT32 & [N] & projection reduction $S_{\min} \cong \pi(S)$ \\
 \end{table}
 
 This chapter gives Mol its quantitative layer. Costs form a well-defined
-enrichment of the category (NT25): composition adds, tensor is subadditive,
+enrichment of the category (\autoref{thm:25}): composition adds, tensor is subadditive,
 and the triangle inequality holds. With nonnegative additive costs, global
 optimality is a shortest-path problem in the finite type graph, and Dijkstra's
-algorithm is complete for it (NT26). Fusion always pays: the fused composite
+algorithm is complete for it (\autoref{thm:26}). Fusion always pays: the fused composite
 costs no more than the sum of its parts, and strictly less when the
-intermediate type never materializes (NT27). Refinement gives fast-path
+intermediate type never materializes (\autoref{thm:27}). Refinement gives fast-path
 specialization a soundness certificate: substitution preserves behavior and
-monotonically improves cost (NT28), and the most-refined dispatcher is sound
-and cost-minimal (NT29). Complexity closes over composition: the resource
-class of the dataplane is the resource class of its atoms (NT30). The
-expressive ceiling is exactly the regular level of the hierarchy (NT31), and
+monotonically improves cost (\autoref{thm:28}), and the most-refined dispatcher is sound
+and cost-minimal (\autoref{thm:29}). Complexity closes over composition: the resource
+class of the dataplane is the resource class of its atoms (\autoref{thm:30}). The
+expressive ceiling is exactly the regular level of the hierarchy (\autoref{thm:31}), and
 projection reduction prunes state that is only consulted through a projection
-(NT32). Together with the normal forms of \autoref{ch:free} and the decision
+(\autoref{thm:32}). Together with the normal forms of \autoref{ch:free} and the decision
 matrices of \autoref{ch:situations}, these results turn ``choose a molecule
 for this behavior within this budget'' into a finite, decidable, and
-computable problem (NT51).
+computable problem (\autoref{thm:51}).

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Reactor autotune (thesis NT59: the optimization lattice is finite, so
+# Reactor autotune (thesis ch. 17: the optimization lattice is finite, so
 # its minimum is computable — compute it on THIS kernel, at startup
 # time, and run the winner).
 #
@@ -87,7 +87,7 @@ esac
 
 {
   echo "autotune: $(date -Is)"
-  echo "lattice minimum (thesis NT59) on this kernel: $best (udp echo $best_score Gbps)"
+  echo "lattice minimum (thesis ch. 17) on this kernel: $best (udp echo $best_score Gbps)"
   echo "run with: $HINT"
 } | tee -a "$OUT"
 echo "recorded in $OUT"

@@ -1,7 +1,6 @@
-   Compiling fds-verify v0.1.0 (/home/xenot/Projects/FDS/docs/paper/verify)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.38s
-     Running `target/debug/batch_amort`
-Theorem NT47 — syscall amortization
+    Finished `release` profile [optimized] target(s) in 0.01s
+     Running `target/release/batch_amort`
+Syscall-amortization theorem
 
 Cost model: per-datagram cost d, per-syscall overhead h.
   individual: n datagrams in n syscalls => n * (h + d)

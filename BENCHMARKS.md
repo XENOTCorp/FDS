@@ -142,5 +142,5 @@ here; a measurement on this machine would not be apples-to-apples.
 HTTP/1.1, HTTP/2, and HTTP/3 measurements are in the Atomos repository:
 [BENCHMARKS.md](../Atomos/BENCHMARKS.md). The Atomos H1 engine is the
 FDS epoll transport; its comparisons against nginx, h2o, Caddy,
-Seastar, axum, Hyper, and nghttpd are measured with the same method as
-above.
+Seastar, axum, Hyper, and actix-web are measured with the same method
+as above.

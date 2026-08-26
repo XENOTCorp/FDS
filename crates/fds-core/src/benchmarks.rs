@@ -1,5 +1,5 @@
 //! In-crate benchmark harness for the loopback datapaths.
-//! Batching; standard [OBS], [ALLOC].
+//! Batching; standard `OBS`, `ALLOC`.
 //!
 //! An external bench target cannot reach crate-private items, so the
 //! harness lives here and is invoked from the `fds` binary via
@@ -20,7 +20,7 @@
 //! direction, with datagrams up to the IPv4 UDP wire maximum — the
 //! "10-40+ Gbps loopback" number the standard quotes is a
 //! memory-bandwidth bound that only shows up with large datagrams (see
-//! docs/engine.md "Throughput").
+//! WIKI.md "Datapaths").
 
 use crate::config::UdpConfig;
 use crate::udp::{set_int, RecvResult, UdpSocket};

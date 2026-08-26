@@ -45,8 +45,36 @@ if [ "$pages" -lt 30 ]; then
 fi
 echo "PASS: $pages pages (>= 30 required)"
 
+# --- Gate 4: no NT numbering in sources ---
+if grep -rnE '\b(nt|NT)[0-9]+' chapters/ thesis.tex >/dev/null 2>&1; then
+    echo "FAIL: NT numbering tokens found in paper sources" >&2
+    exit 1
+fi
+echo "PASS: no NT numbering in sources"
+
+# --- Gate 5: no em-dashes in sources ---
+if grep -rnE -- '---|—' chapters/ thesis.tex >/dev/null 2>&1; then
+    echo "FAIL: em-dashes (--- or the Unicode character) found in paper sources" >&2
+    exit 1
+fi
+echo "PASS: no em-dashes in sources"
+
+# --- Gate 6: no AI-speech patterns in sources ---
+if grep -rniE "it's not|it is not|this is not|that is not|not merely|not only|far from|in other words|simply put|dive into|seamless|cutting-edge|cutting edge|state of the art|state-of-the-art|unlock|unleash|leverage|crafted" chapters/ refs.bib >/dev/null 2>&1; then
+    echo "FAIL: AI-speech patterns found in paper sources" >&2
+    exit 1
+fi
+echo "PASS: no AI-speech patterns in sources"
+
+# --- Gate 7: standalone (no Lean, FDS, or Atomos references) ---
+if grep -rniE '\bLean4?\b|FDS|Atomos' chapters/ refs.bib >/dev/null 2>&1; then
+    echo "FAIL: Lean, FDS, or Atomos references found in paper sources" >&2
+    exit 1
+fi
+echo "PASS: paper is standalone (no Lean, FDS, or Atomos references)"
+
 if [ "${1:-}" = "--verify" ]; then
-    # --- Gate 4: proof-verification tools ---
+    # --- Gate 8: proof-verification tools ---
     if [ ! -d verify ]; then
         echo "FAIL: docs/paper/verify missing" >&2
         exit 1

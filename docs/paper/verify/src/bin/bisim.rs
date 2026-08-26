@@ -1,4 +1,4 @@
-//! NT6 proof-check: behavioral equivalence (bisimulation) is a congruence
+//! congruence theorem proof-check: behavioral equivalence (bisimulation) is a congruence
 //! for sequential composition (∘) and tensor (⊗) on small finite mealy
 //! machines.
 //!
@@ -186,9 +186,9 @@ fn main() {
     let mut failures = 0usize;
     let mut check = |name: &str, ok: bool, detail: String| {
         if ok {
-            println!("PASS: {name} — {detail}");
+            println!("PASS: {name}: {detail}");
         } else {
-            println!("FAIL: {name} — {detail}");
+            println!("FAIL: {name}: {detail}");
             failures += 1;
         }
     };
@@ -233,7 +233,7 @@ fn main() {
         }
     }
     check(
-        "NT6(a) reflexive",
+        "congruence (a) reflexive",
         refl_ok,
         format!("M ≈ M for all {universe_size} machines"),
     );
@@ -251,7 +251,7 @@ fn main() {
         }
     }
     check(
-        "NT6(a) symmetric",
+        "congruence (a) symmetric",
         sym_ok,
         "equivalent(a,b) == equivalent(b,a) on 10,000 sampled ordered pairs".to_string(),
     );
@@ -290,7 +290,7 @@ fn main() {
         }
     }
     check(
-        "NT6(a) transitive",
+        "congruence (a) transitive",
         trans_ok,
         format!("same-class membership consistent on {triples} sampled triples"),
     );
@@ -344,17 +344,17 @@ fn main() {
         }
     }
     check(
-        "NT6(b) M∘N ≈ M'∘N",
+        "congruence (b) M∘N ≈ M'∘N",
         comp_left_ok,
         format!("{pair_results} congruence checks"),
     );
     check(
-        "NT6(c) N∘M ≈ N∘M'",
+        "congruence (c) N∘M ≈ N∘M'",
         comp_right_ok,
         format!("{pair_results} congruence checks"),
     );
     check(
-        "NT6(d) M⊗N ≈ M'⊗N",
+        "congruence (d) M⊗N ≈ M'⊗N",
         tens_ok,
         format!("{pair_results} congruence checks"),
     );

@@ -1,7 +1,6 @@
-   Compiling fds-verify v0.1.0 (/home/xenot/Projects/FDS/docs/paper/verify)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.29s
-     Running `target/debug/contraction`
-Theorem NT43: k(alpha, eps, d0) = ceil(ln(eps*(1-alpha)/d0) / ln(alpha))
+    Finished `release` profile [optimized] target(s) in 0.01s
+     Running `target/release/contraction`
+Iteration-bound theorem: k(alpha, eps, d0) = ceil(ln(eps*(1-alpha)/d0) / ln(alpha))
 Samples: alpha in 0.1..=0.9 (step 0.1), eps in {1e-3, 1e-6, 1e-9}, d0 in {1.0, 10.0}
 
 (a)(b) per sample:
@@ -77,4 +76,4 @@ SUMMARY (54 samples):
   (b) simulation |x_k| <= eps (rel. tol. 1e-12): PASS
   (c) k never decreases as alpha increases    : PASS
   (d) k non-decreasing as eps decreases      : PASS
-NT43: ALL CHECKS PASS
+iteration-bound theorem: ALL CHECKS PASS

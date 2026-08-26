@@ -21,7 +21,7 @@
           "type": "integer",
           "default": 0,
           "description": "Worker thread count; 0 = one per logical CPU.",
-          "x-trade-off": "More workers give more parallelism but per-core caches and queues must fit; oversubscription adds scheduling noise (see the measured p999 tails in docs/engine.md).",
+          "x-trade-off": "More workers give more parallelism but per-core caches and queues must fit; oversubscription adds scheduling noise (see the measured p999 tails in WIKI.md).",
           "x-derived-from": "engine default (0 = one per logical CPU; 2x physical on SMT)"
         },
         "stack_bytes": {
@@ -74,7 +74,7 @@
           "default": 256,
           "description": "io_uring ring entries (strategy io-uring).",
           "x-trade-off": "Larger rings hold more in-flight ops; entries are power-of-two and floored by the datapath (UDP slots + accept + timeout).",
-          "x-derived-from": "engine default (NT48 ring invariant)"
+          "x-derived-from": "engine default (ring-capacity invariant)"
         },
         "io_uring_sq_thread": {
           "type": "integer",
@@ -135,7 +135,7 @@
           "type": "boolean",
           "default": false,
           "description": "SO_INCOMING_CPU steering.",
-          "x-trade-off": "Pins flows to the RX softirq CPU — on loopback that collapses every flow onto one worker; enable only with NIC RSS/IRQ affinity (docs/ops-tuning.md).",
+          "x-trade-off": "Pins flows to the RX softirq CPU — on loopback that collapses every flow onto one worker; enable only with NIC RSS/IRQ affinity (WIKI.md).",
           "x-derived-from": "engine ruling (loopback collapse)"
         }
       }

@@ -2,7 +2,7 @@
 //!
 //! Copy this file, rename the struct, and fill in `apply`. Keep the atom
 //! zero-sized (no fields) whenever possible so it composes with no runtime
-//! cost (thesis NT4; standard [A]: atoms are pure or effectful, no hidden
+//! cost (thesis ch. 3; standard [A]: atoms are pure or effectful, no hidden
 //! state, total on their declared domain).
 
 use mol::{Atom, PureAtom};

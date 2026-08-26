@@ -52,7 +52,7 @@ static CORE_FIELDS: &[FieldDef] = &[
         default_json: "0",
         derived_from: "engine default (0 = one per logical CPU; 2x physical on SMT)",
         description: "Worker thread count; 0 = one per logical CPU.",
-        trade_off: "More workers give more parallelism but per-core caches and queues must fit; oversubscription adds scheduling noise (see the measured p999 tails in docs/engine.md).",
+        trade_off: "More workers give more parallelism but per-core caches and queues must fit; oversubscription adds scheduling noise (see the measured p999 tails in WIKI.md).",
     },
     FieldDef {
         key: "stack_bytes",
@@ -170,7 +170,7 @@ static UDP_FIELDS: &[FieldDef] = &[
         default_json: "false",
         derived_from: "engine ruling (loopback collapse)",
         description: "SO_INCOMING_CPU steering.",
-        trade_off: "Pins flows to the RX softirq CPU — on loopback that collapses every flow onto one worker; enable only with NIC RSS/IRQ affinity (docs/ops-tuning.md).",
+        trade_off: "Pins flows to the RX softirq CPU — on loopback that collapses every flow onto one worker; enable only with NIC RSS/IRQ affinity (WIKI.md).",
     },
 ];
 

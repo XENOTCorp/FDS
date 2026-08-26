@@ -11,15 +11,15 @@ is defined here or directly cited.
 \begin{definition}[Category]
 A \emph{category} $\mathcal{C}$ consists of
 \begin{itemize}
-  \item a collection $\mathrm{Ob}(\mathcal{C})$ of \emph{objects};
-  \item for every pair of objects $A, B$, a set $\mathcal{C}(A,B)$ of
-        \emph{morphisms}, the \emph{hom-set}, with $f \in \mathcal{C}(A,B)$
+  \item a collection $\mathrm{Ob} (\mathcal{C})$ of \emph{objects};
+  \item for every pair of objects $A, B$, a set $\mathcal{C} (A,B)$ of
+        \emph{morphisms}, the \emph{hom-set}, with $f \in \mathcal{C} (A,B)$
         written $f \colon A \to B$;
   \item for every object $A$, an \emph{identity} morphism
-        $1_A \in \mathcal{C}(A,A)$;
+        $1_A \in \mathcal{C} (A,A)$;
   \item for every triple of objects $A, B, C$, a \emph{composition} function
-        \[ \circ \colon \mathcal{C}(B,C) \times \mathcal{C}(A,B)
-           \to \mathcal{C}(A,C), \qquad (g, f) \mapsto g \circ f, \]
+        \[ \circ \colon \mathcal{C} (B,C) \times \mathcal{C} (A,B)
+           \to \mathcal{C} (A,C), \qquad (g, f) \mapsto g \circ f, \]
 \end{itemize}
 such that composition is \emph{associative}, $(h \circ g) \circ f
 = h \circ (g \circ f)$, and the \emph{identity laws} hold,
@@ -35,7 +35,7 @@ written $A \cong B$~\cite{maclane}.
 
 \begin{remark}
 A category is \emph{small} if its objects and morphisms form sets and
-\emph{locally small} if every hom-set $\mathcal{C}(A,B)$ is a set; all
+\emph{locally small} if every hom-set $\mathcal{C} (A,B)$ is a set; all
 categories in this thesis are locally small, and the distinction matters only
 for \S\ref{sec:prelim-acc}~\cite{maclane}.
 \end{remark}
@@ -54,12 +54,12 @@ A \emph{functor} $F \colon \mathcal{C} \to \mathcal{D}$ assigns to each
 object $A$ of $\mathcal{C}$ an object $F A$ of $\mathcal{D}$ and to each
 morphism $f \colon A \to B$ a morphism $F f \colon F A \to F B$, preserving
 identities and composition:
-$F 1_A = 1_{F A}$ and $F(g \circ f) = F g \circ F f$~\cite{maclane}.
+$F 1_A = 1_{F A}$ and $F (g \circ f) = F g \circ F f$~\cite{maclane}.
 \end{definition}
 
 \begin{definition}[Full, faithful, essentially surjective]
 A functor $F \colon \mathcal{C} \to \mathcal{D}$ is \emph{full} if
-$\mathcal{C}(A,B) \to \mathcal{D}(F A, F B)$ is surjective for all $A, B$,
+$\mathcal{C} (A,B) \to \mathcal{D} (F A, F B)$ is surjective for all $A, B$,
 \emph{faithful} if it is injective for all $A, B$, and \emph{essentially
 surjective on objects} if every object of $\mathcal{D}$ is isomorphic to
 $F A$ for some object $A$ of $\mathcal{C}$~\cite{maclane}.
@@ -148,21 +148,21 @@ is tuple formation with unit $()$, which is strict and symmetric.
 \begin{definition}[Traced monoidal category]
 Let $\mathcal{C}$ be a symmetric monoidal category. A \emph{trace} is a
 family of operations
-\[ \mathrm{Tr}^{U}_{A,B} \colon \mathcal{C}(A \otimes U,\, B \otimes U)
-   \to \mathcal{C}(A,B), \]
+\[ \mathrm{Tr}^{U}_{A,B} \colon \mathcal{C} (A \otimes U,\, B \otimes U)
+   \to \mathcal{C} (A,B), \]
 natural in $A$ and $B$ and dinatural in the \emph{feedback object} $U$,
 satisfying the following axioms~\cite{joyalsv, arxiv-traced-monoidal}:
 \begin{itemize}
-  \item \emph{Vanishing}: $\mathrm{Tr}^{I}_{A,B}(f) = f$ for
+  \item \emph{Vanishing}: $\mathrm{Tr}^{I}_{A,B} (f) = f$ for
         $f \colon A \otimes I \to B \otimes I$, and
         $\mathrm{Tr}^{U \otimes V}_{A,B}
         = \mathrm{Tr}^{U}_{A,B} \circ
           \mathrm{Tr}^{V}_{A \otimes U, B \otimes U}$;
   \item \emph{Superposing}: for $f \colon A \otimes U \to B \otimes U$ and
         $g \colon C \to D$,
-        \[ \mathrm{Tr}^{U}_{A \otimes C, B \otimes D}(f \otimes g)
-           = \mathrm{Tr}^{U}_{A,B}(f) \otimes g; \]
-  \item \emph{Yanking}: $\mathrm{Tr}^{U}_{U,U}(\sigma_{U,U}) = 1_U$.
+        \[ \mathrm{Tr}^{U}_{A \otimes C, B \otimes D} (f \otimes g)
+           = \mathrm{Tr}^{U}_{A,B} (f) \otimes g; \]
+  \item \emph{Yanking}: $\mathrm{Tr}^{U}_{U,U} (\sigma_{U,U}) = 1_U$.
 \end{itemize}
 A \emph{traced monoidal category} is a symmetric monoidal category equipped
 with a trace. The trace internalizes feedback: a morphism
@@ -212,7 +212,7 @@ computations. A Kleisli morphism $A \to B$ is then a morphism
 $A \times S \to B \times S$, exactly the transition function of a
 deterministic Mealy machine with state space $S$
 ~\cite{maclane, arxiv-monads-kleisli, mealy, moore, arxiv-mealy}. The
-Kleisli category of this monad models $\mathbf{EffMol}(\mathrm{Ctx})$ in
+Kleisli category of this monad models $\mathbf{EffMol} (\mathrm{Ctx})$ in
 \autoref{ch:mol}, and the pure/effectful decomposition of
 \autoref{ch:kleisli} is phrased in this language.
 \end{example}
@@ -231,12 +231,12 @@ Let $F \colon \mathcal{C} \to \mathcal{C}$ be an endofunctor. An
 morphism $s \colon S \to F S$. A \emph{homomorphism} of $F$-coalgebras
 $(S,s) \to (T,t)$ is a morphism $f \colon S \to T$ with
 $t \circ f = F f \circ s$. Coalgebras and their homomorphisms form the
-category $\mathbf{Coalg}(F)$~\cite{arxiv-coalgebra-min}.
+category $\mathbf{Coalg} (F)$~\cite{arxiv-coalgebra-min}.
 \end{definition}
 
 \begin{definition}[Final coalgebra]
 A \emph{final} (terminal) coalgebra is a terminal object of
-$\mathbf{Coalg}(F)$: a coalgebra $(Z, \zeta)$ such that for every coalgebra
+$\mathbf{Coalg} (F)$: a coalgebra $(Z, \zeta)$ such that for every coalgebra
 $(S,s)$ there is a unique homomorphism $(S,s) \to (Z,\zeta)$~\cite{arxiv-coalgebra-min}.
 \end{definition}
 
@@ -275,18 +275,18 @@ A \emph{model} of a Lawvere theory $\mathcal{L}$ in a category $\mathcal{C}$
 with finite products is a finite-product-preserving functor
 $\mathcal{L} \to \mathcal{C}$. Models for $\mathcal{C} = \mathbf{Set}$ are
 the \emph{algebras} of the theory, and models and natural transformations
-form a category $\mathbf{Mod}(\mathcal{L}, \mathcal{C})$~\cite{lawvere,
+form a category $\mathbf{Mod} (\mathcal{L}, \mathcal{C})$~\cite{lawvere,
 arxiv-lawvere}.
 \end{definition}
 
 \begin{remark}
 The \emph{free algebra} on $n$ generators is the model represented by object
-$n$: the finite-product-preserving functor $\mathcal{L}(n,-)$ with values in
+$n$: the finite-product-preserving functor $\mathcal{L} (n,-)$ with values in
 $\mathbf{Set}$, whose underlying set is the set of terms in $n$ variables
 modulo the equations of the theory~\cite{lawvere}. A finitary equational
 theory in the sense of universal algebra (Section~\ref{sec:prelim-univ}) is
 the same data as a Lawvere theory, and its variety of algebras is
-$\mathbf{Mod}(\mathcal{L}, \mathbf{Set})$. The equations of the dataplane
+$\mathbf{Mod} (\mathcal{L}, \mathbf{Set})$. The equations of the dataplane
 component theories of \autoref{ch:lawvere} (ring, parser, transport) are
 Lawvere theories whose models are the corresponding molecules.
 \end{remark}
@@ -294,19 +294,19 @@ Lawvere theories whose models are the corresponding molecules.
 \section{Operads, Multicategories, and Clubs}\label{sec:prelim-operads}
 
 \begin{definition}[Symmetric operad]
-A \emph{symmetric operad} $P$ (in $\mathbf{Set}$) consists of a set $P(n)$
+A \emph{symmetric operad} $P$ (in $\mathbf{Set}$) consists of a set $P (n)$
 of \emph{$n$-ary operations} for each $n \geq 0$, an action of the symmetric
-group $\Sigma_n$ on $P(n)$, a distinguished element $1 \in P(1)$ (the
+group $\Sigma_n$ on $P (n)$, a distinguished element $1 \in P (1)$ (the
 \emph{identity operation}), and composition maps
-\[ P(k) \times P(n_1) \times \cdots \times P(n_k)
-   \to P(n_1 + \cdots + n_k), \]
+\[ P (k) \times P (n_1) \times \cdots \times P (n_k)
+   \to P (n_1 + \cdots + n_k), \]
 that are associative, unital with respect to $1$, and equivariant with
 respect to the symmetric group actions~\cite{leinster, arxiv-operads}.
 \end{definition}
 
 \begin{definition}[Algebra over an operad]
 An \emph{algebra} over a symmetric operad $P$ is a set $A$ together with, for
-each $p \in P(n)$, an operation $A^n \to A$, respecting the identity, the
+each $p \in P (n)$, an operation $A^n \to A$, respecting the identity, the
 composition maps, and the symmetric group action~\cite{leinster,
 arxiv-operads}.
 \end{definition}
@@ -393,7 +393,7 @@ instance of this correspondence.
 \begin{definition}[Presentable objects, accessible categories]
 Let $\kappa$ be a regular cardinal. An object $A$ of a category
 $\mathcal{C}$ is \emph{$\kappa$-presentable} if the hom-functor
-$\mathcal{C}(A, -)$ preserves $\kappa$-filtered colimits. The category
+$\mathcal{C} (A, -)$ preserves $\kappa$-filtered colimits. The category
 $\mathcal{C}$ is \emph{$\kappa$-accessible} if it has $\kappa$-filtered
 colimits and there is a set of $\kappa$-presentable objects such that every
 object of $\mathcal{C}$ is a $\kappa$-filtered colimit of objects from that
@@ -412,7 +412,7 @@ Every locally presentable category is complete and cocomplete, and the
 categories of models of Lawvere theories (Section~\ref{sec:prelim-lawvere})
 and the categories of algebras of many signatures are locally presentable.
 Local presentability is the standard tool for proving the existence of free
-structures, such as the free symmetric monoidal category $F(\Sigma)$ whose
+structures, such as the free symmetric monoidal category $F (\Sigma)$ whose
 existence \autoref{ch:free} invokes~\cite{adamek, lawvere}.
 \end{remark}
 
@@ -477,3 +477,52 @@ Universal algebra and clones & \S\ref{sec:prelim-univ} & \autoref{ch:rewrite} \\
 \caption{The categorical tools of this chapter and where the thesis applies them.}
 \end{table}
 
+
+\section{Notation and acronyms}\label{sec:prelim-notation}
+
+All acronyms are defined here and at their first use.
+
+\paragraph{Acronyms.}
+\begin{itemize}
+\item \textbf{SMC}: symmetric monoidal category (\autoref{sec:prelim-mon}).
+\item \textbf{DFA}: deterministic finite automaton.
+\item \textbf{EMA}: exponentially weighted moving average (the
+  scheduler estimate of \autoref{sec:scheduler}).
+\item \textbf{IPC}: instructions per cycle, a processor counter.
+\item \textbf{TLB}: translation lookaside buffer; a dTLB is the data
+  TLB.
+\item \textbf{RSS}: resident set size, the physical memory a process
+  occupies.
+\item \textbf{L1, L3}: first- and last-level processor caches.
+\item \textbf{TCP, UDP, SCTP}: the Transmission Control Protocol, the
+  User Datagram Protocol, and the Stream Control Transmission Protocol.
+\item \textbf{HTTP}: the Hypertext Transfer Protocol.
+\item \textbf{NIC}: network interface controller.
+\item \textbf{DNS}: the Domain Name System.
+\item \textbf{FTP}: the File Transfer Protocol.
+\item \textbf{LL(1)}: left-to-right, leftmost-derivation parsing with
+  one token of lookahead.
+\item \textbf{RFC}: Request for Comments, the standards document series
+  of the Internet Engineering Task Force.
+\item \textbf{SQPOLL}: submission-queue polling, an io\_uring mode in
+  which the kernel polls the submission queue and the application skips
+  the enter-system-call.
+\item \textbf{TLS}: Transport Layer Security.
+\item \textbf{QUIC}: the connection-oriented transport protocol used
+  by HTTP/3.
+\item \textbf{SIMD}: single instruction, multiple data.
+\item \textbf{KB}: Knuth--Bendix completion (\autoref{ch:rewrite}).
+\item \textbf{TTL}: time to live, a cache validity window.
+\item \textbf{AF\_XDP}: the kernel's eXpress Data Path socket family.
+\item \textbf{io\_uring}: the kernel's asynchronous completion-ring
+  interface.
+\item \textbf{MSG\_ZEROCOPY}: the socket flag for zero-copy sends.
+\item \textbf{PGO}: profile-guided optimization.
+\end{itemize}
+
+\paragraph{Notation.}
+$\circ$ is sequential composition and $\otimes$ is parallel
+composition (tensor); $\mathrm{id}_A$ is the identity on the object
+$A$; $\simeq$ is behavioral equivalence; $\beta(M)$ is the boundary
+count of Definition~\ref{def:boundary}; $c(M)$ is the cost vector of
+Definition~\ref{def:cost}; $\mathrm{NF}(M)$ is the normal form of $M$.

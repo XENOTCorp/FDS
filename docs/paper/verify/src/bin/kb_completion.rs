@@ -1,4 +1,4 @@
-//! Theorem NT15 — the ring-buffer equational theory admits a complete rewrite
+//! Completion theorem: the ring-buffer equational theory admits a complete rewrite system
 //! system, verified by Knuth-Bendix completion (std-only Rust, no crates).
 //!
 //! Single sort; two unary operations `push` and `pop`. Terms are trees over
@@ -379,7 +379,7 @@ fn main() {
         Rule::new(Term::pop(Term::push(x.clone())), x.clone()),
     ];
 
-    println!("Theorem NT15 - the ring-buffer equational theory admits a complete rewrite");
+    println!("Completion theorem: the ring-buffer equational theory admits a complete rewrite");
     println!("system, verified by Knuth-Bendix completion (std-only Rust).");
     println!();
     println!("Signature: single sort; unary operations {{push, pop}}; variables x, y, ...");

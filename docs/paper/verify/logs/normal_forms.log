@@ -1,6 +1,6 @@
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s
-     Running `target/debug/normal_forms`
-Theorem NT22–NT24 — normal forms for the free category on {f,g,h}
+    Finished `release` profile [optimized] target(s) in 0.01s
+     Running `target/release/normal_forms`
+Normal-form theorems: normal forms for the free category on {f,g,h}
 ==================================================================
 
 Atom signature: f: A→B,  g: B→C,  h: C→D
@@ -28,7 +28,7 @@ identities are introduced by the rewrite rules):
   depth  6:  3024 terms
   total: 3929 terms
 
-Supplementary — strict reading, leaves from {f,g,h} only:
+Supplementary: strict reading, leaves from {f,g,h} only:
   7 terms; distinct normal forms: 6 (all of depth ≤ 3)
   (without identities no term of depth 4..=6 is well typed, so the depth
    bound is only meaningful once identities participate)
@@ -59,15 +59,15 @@ matches direct normalization, and every term generated exactly once: PASS
 
 (c) Examples: syntactically distinct terms with equal normal forms and
     equal behavior
-  Example 1: normal form f : A→B — PASS
+  Example 1: normal form f : A→B: PASS
     term A (depth 1): f
     term B (depth 2): f∘id_A
     equal behavior on all inputs of A: 0↦0, 1↦2
-  Example 2: normal form g∘f : A→C — PASS
+  Example 2: normal form g∘f : A→C: PASS
     term A (depth 2): g∘f
     term B (depth 3): (g∘f)∘id_A
     equal behavior on all inputs of A: 0↦0, 1↦3
-  Example 3: normal form h∘g∘f : A→D — PASS
+  Example 3: normal form h∘g∘f : A→D: PASS
     term A (depth 3): (h∘g)∘f
     term B (depth 3): h∘(g∘f)
     equal behavior on all inputs of A: 0↦0, 1↦4

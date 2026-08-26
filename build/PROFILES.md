@@ -38,11 +38,11 @@ Every knob in `config.json` carries `x-derived-from` in
 
 | Default | Origin | Rule |
 |---------|--------|------|
-| `udp.rcvbuf`/`sndbuf`, `tcp.rcvbuf`/`sndbuf` | D-1 (ring/buffer sizing, L3-aware) | `clamp(pow2(L3/2), 4 MiB, 16 MiB)`: a socket buffer absorbs one L3-sized burst while the working set stays cache-resident. Power of two keeps the kernel's reported (doubled) value and the ring layout aligned (NT48). |
+| `udp.rcvbuf`/`sndbuf`, `tcp.rcvbuf`/`sndbuf` | D-1 (ring/buffer sizing, L3-aware) | `clamp(pow2(L3/2), 4 MiB, 16 MiB)`: a socket buffer absorbs one L3-sized burst while the working set stays cache-resident. Power of two keeps the kernel's reported (doubled) value and the ring layout aligned (the ring-capacity invariant). |
 | `core.threads` = 0 | engine default ([CONC]) | 0 = one worker per logical CPU (2x physical on SMT) — the default is already hardware-adaptive. |
 | `reactor.strategy` | D-5 (polling strategy) | Moderate packet rate + small syscall share → readiness loop (`epoll-busy-poll`); high rate where syscall amortization pays → kernel-side batching (`io-uring`); extreme rate + zero-copy + a dedicated core → zero-copy kernel ring (AF_XDP, `af_xdp.device`). |
 | Allocation/zero-allocation | D-11 (allocation policy) | The hot path never allocates (ALLOC-01/02); buffers are preallocated at startup — enforced by the zero-alloc test in mol-core. |
-| Batch sizes, in-flight caps | D-4 (batch size, NT47) | Engine constants (`recv_batch`, `UDP_SLOTS`, ring capacities) follow NT47's amortization rule; the observable knob is `reactor.max_events`. |
+| Batch sizes, in-flight caps | D-4 (batch size, syscall amortization) | Engine constants (`recv_batch`, `UDP_SLOTS`, ring capacities) follow the syscall-amortization rule; the observable knob is `reactor.max_events`. |
 
 ## Workflow
 
@@ -69,5 +69,5 @@ engine first with a minimal runtime module (`config.rs`), so the schema here is
 the **engine's actual contract** — every field the engine reads, with its
 rationale. Speculative sections were dropped rather than shipped dead: the
 standard's no-overengineering rule. Ring/buffer sizing decisions surface as the
-D-1 socket-buffer defaults above and as engine constants (NT48), documented in
-`docs/engine.md`.
+D-1 socket-buffer defaults above and as engine constants (the ring-capacity invariant), documented in
+`WIKI.md`.
