@@ -99,7 +99,11 @@ dedicated-core deployments.
 
 ## SCTP throughput
 
-One-way SCTP over loopback, 32 KiB messages, 3 s.
+One-way SCTP over loopback, 32 KiB messages, 3 s. The FDS row is
+measured in-process: both endpoints live inside the engine process and
+traverse the kernel SCTP stack over a loopback socket pair. The lksctp
+row uses a separate server process and client process over the same
+kernel stack. The message pattern, payload, and duration are identical.
 
 | Stack | Throughput | Messages per second |
 | --- | --- | --- |
