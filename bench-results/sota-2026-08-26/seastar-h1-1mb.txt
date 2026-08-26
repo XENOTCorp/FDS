@@ -1,0 +1,8 @@
+Running 10s test @ http://127.0.0.1:8093/file/file1m.bin
+  8 threads and 512 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     2.73s     1.05s    7.14s    92.32%
+    Req/Sec    38.76     39.74   290.00     82.88%
+  1563 requests in 10.03s, 1.72GB read
+Requests/sec:    155.85
+Transfer/sec:    175.68MB

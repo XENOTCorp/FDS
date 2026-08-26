@@ -40,17 +40,17 @@ are in `bench-results/`.
 Windowed echo: four client sockets, 64 in-flight 60 KiB datagrams,
 5 s. The same client measures every server.
 
-| Server | Sent | Echoed | Completion | Rank | % of fastest |
+| Server | Sent | Echoed | Completion | Rank | % vs FDS |
 | --- | --- | --- | --- | --- | --- |
-| libuv | 19.10 Gbps | 19.10 Gbps | 100.00% | 1 | 100% |
-| tokio (multi-thread) | 16.99 Gbps | 16.99 Gbps | 100.00% | 2 | 89.0% |
-| FDS engine (epoll, event-driven) | 16.71 Gbps | 16.69 Gbps | 99.90% | 3 | 87.5% |
+| libuv | 19.10 Gbps | 19.10 Gbps | 100.00% | 1 | +14.3% |
+| tokio (multi-thread) | 16.99 Gbps | 16.99 Gbps | 100.00% | 2 | +1.7% |
+| FDS engine (epoll, event-driven) | 16.71 Gbps | 16.69 Gbps | 99.90% | 3 | 0% (baseline) |
 
 The FDS engine is the only row with a drop path: the engine counts a
 drop when the echo write would block and discards that burst. The
 tokio and libuv servers buffer the echo in memory, which keeps the
 completion at 100% at the cost of unbounded memory under a write flood.
-The three engines are within 13% of the fastest row.
+Relative to FDS: tokio +1.7%, libuv +14.3%.
 
 ## TCP echo throughput
 
@@ -60,36 +60,36 @@ trip per frame, which is what a request-response protocol does.
 
 Write flood, four connections, 60 KiB writes, 5 s:
 
-| Server | Client to server | Notes | Rank | % of fastest |
+| Server | Client to server | Notes | Rank | % vs FDS |
 | --- | --- | --- | --- | --- |
-| FDS engine (epoll, event-driven) | 36.68 Gbps | drops echoes on write-block; bounded memory | 1 | 100% |
-| libuv | 27.29 Gbps | buffers echoes in memory | 2 | 74.4% |
+| FDS engine (epoll, event-driven) | 36.68 Gbps | drops echoes on write-block; bounded memory | 1 | 0% (baseline) |
+| libuv | 27.29 Gbps | buffers echoes in memory | 2 | -25.6% |
 | tokio | stalled | flow control halts both sides; the bench client never reads | n/a | n/a |
 
 Lockstep echo, four connections, 60 KiB frames, 5 s:
 
-| Server | Aggregate echo rate | Rank | % of fastest |
+| Server | Aggregate echo rate | Rank | % vs FDS |
 | --- | --- | --- | --- |
-| FDS engine (epoll, event-driven) | 2494 MiB/s (2444, 2494 in two runs) | 1 | 100% |
-| tokio | 2226 MiB/s (2198, 2226 in two runs) | 2 | 89.3% |
-| libuv | 1983 MiB/s (1962, 1983 in two runs) | 3 | 79.5% |
+| FDS engine (epoll, event-driven) | 2494 MiB/s (2444, 2494 in two runs) | 1 | 0% (baseline) |
+| tokio | 2226 MiB/s (2198, 2226 in two runs) | 2 | -10.7% |
+| libuv | 1983 MiB/s (1962, 1983 in two runs) | 3 | -20.5% |
 
-FDS leads tokio by 12.0% and libuv by 25.8% on the lockstep path.
+On the lockstep path tokio trails FDS by 10.7% and libuv by 20.5%.
 
 ## UDP latency percentiles
 
 Single in-flight 32 B datagram, measured from a second process
 (`--latency-against`), 3 s.
 
-| Server | p50 | p90 | p99 | p999 | mean | Rank (p50) | % vs best (p50) |
+| Server | p50 | p90 | p99 | p999 | mean | Rank (p50) | % vs FDS (p50) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| tokio | 14.2 | 19.9 | 31.2 | 77.4 | 15.4 | 1 | best |
-| FDS engine (epoll, event-driven) | 14.4 | 17.7 | 28.1 | 79.3 | 15.7 | 2 | +1.4% |
+| tokio | 14.2 | 19.9 | 31.2 | 77.4 | 15.4 | 1 | -1.4% |
+| FDS engine (epoll, event-driven) | 14.4 | 17.7 | 28.1 | 79.3 | 15.7 | 2 | 0% (baseline) |
 
-All values are microseconds. Ranked by p50 (lower is better). FDS
-leads the p90 tail (17.7 vs 19.9 µs, 11.1% faster) and the p99 tail
-(28.1 vs 31.2 µs, 9.9% faster); tokio leads p50, p999, and mean by
-1.4-2.5%. The engine's in-process loopback latency,
+All values are microseconds. Ranked by p50 (lower is better).
+Relative to FDS: tokio is 1.4% faster at p50, 2.4% faster at p999,
+and 1.9% faster on the mean; FDS is 12.4% faster at p90 and 11.0%
+faster at p99. The engine's in-process loopback latency,
 measured without a competing client process, is p50 11.5 µs, p90
 17.5 µs, p99 28.2 µs, p999 71.3 µs (`--latency 5`).
 
@@ -110,10 +110,10 @@ traverse the kernel SCTP stack over a loopback socket pair. The lksctp
 row uses a separate server process and client process over the same
 kernel stack. The message pattern, payload, and duration are identical.
 
-| Stack | Throughput | Messages per second | Rank | % of fastest |
+| Stack | Throughput | Messages per second | Rank | % vs FDS |
 | --- | --- | --- | --- | --- |
-| FDS engine | 13.8 Gbps | 52,651 | 1 | 100% |
-| lksctp-tools (kernel SCTP, C harness) | 12.24 Gbps | 46,692 | 2 | 88.7% |
+| FDS engine | 13.8 Gbps | 52,651 | 1 | 0% (baseline) |
+| lksctp-tools (kernel SCTP, C harness) | 12.24 Gbps | 46,692 | 2 | -11.3% |
 
 SCTP echo RTT through the kernel stack (lksctp harness, 32 B messages):
 p50 22.2 µs, p90 27.2 µs, p99 48.1 µs, mean 24.3 µs.
@@ -123,11 +123,11 @@ p50 22.2 µs, p90 27.2 µs, p99 48.1 µs, mean 24.3 µs.
 The same engine, three polling strategies, UDP echo 4 x 60 KiB, with
 the event-driven default:
 
-| Strategy | UDP echo | TCP flood | Rank (UDP) | % of best (UDP) |
+| Strategy | UDP echo | TCP flood | Rank (UDP) | % vs epoll (default) |
 | --- | --- | --- | --- | --- |
-| io_uring (event-driven) | 17.70 Gbps | stalled (accept/echo path) | 1 | 100% |
-| epoll (event-driven, default) | 16.97 Gbps | 35.24 Gbps | 2 | 95.9% |
-| io_uring SQPOLL | 16.68 Gbps | ~0 (stalls) | 3 | 94.2% |
+| io_uring (event-driven) | 17.70 Gbps | stalled (accept/echo path) | 1 | +4.3% |
+| epoll (event-driven, default) | 16.97 Gbps | 35.24 Gbps | 2 | 0% (baseline) |
+| io_uring SQPOLL | 16.68 Gbps | ~0 (stalls) | 3 | -1.7% |
 
 Ranked by UDP echo. On TCP only the epoll row is sound: io_uring
 ranks first on UDP but is not admissible because its TCP datapath
