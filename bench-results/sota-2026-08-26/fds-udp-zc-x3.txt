@@ -1,0 +1,6 @@
+zc three-run characterization (fresh engine per run):
+run1: sent 6.61 Gbps, echoed 6.37, completion 96.46% (disable fired)
+run2: sent 15.48 Gbps, echoed 15.17, completion 98.05% (disable fired)
+run3: sent 15.26 Gbps, echoed 15.05, completion 98.64% (disable fired)
+baseline (no ZC) three runs same session: 13.14, 13.53, 16.22 Gbps
+baseline same-engine pair: 14.17, 13.23 Gbps

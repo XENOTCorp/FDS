@@ -1,0 +1,8 @@
+Running 5s test @ http://127.0.0.1:8093/file/file64k.bin
+  4 threads and 100 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    41.21ms    3.99ms  71.50ms   76.65%
+    Req/Sec   606.16     55.97   707.00     80.50%
+  12088 requests in 5.01s, 759.02MB read
+Requests/sec:   2412.09
+Transfer/sec:    151.46MB

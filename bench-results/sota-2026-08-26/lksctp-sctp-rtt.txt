@@ -1,0 +1,1 @@
+sctp echo rtt: 65536 samples — p50 22.2 p90 27.2 p99 48.1 us, mean 24.3 us

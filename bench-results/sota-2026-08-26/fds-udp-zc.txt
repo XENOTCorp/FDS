@@ -1,0 +1,4 @@
+zc steady-state, same engine instance, 2 runs (FDS_UDP_ZEROCOPY=1):
+run1: bench-udp-against: 4 sockets x 61440B, sent 10.90 Gbps, echoed 10.69 Gbps, echo completion 98.06%
+run2: bench-udp-against: 4 sockets x 61440B, sent 15.11 Gbps, echoed 14.79 Gbps, echo completion 97.92%
+disable messages: 1 (worker self-disabled after 5 ms grace; kernel silently copies)

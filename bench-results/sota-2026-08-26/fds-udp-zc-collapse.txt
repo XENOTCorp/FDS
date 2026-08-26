@@ -1,0 +1,4 @@
+zc matrix-run collapse (artifact): sent 0.65 Gbps, echoed 0.02, completion 2.96%
+cause: engine started 0.4 s after pkill of the previous engine; SO_REUSEPORT
+coexistence split flows onto the dying engine's sockets, which no longer read.
+Not reproduced with kill-wait between engine restarts.

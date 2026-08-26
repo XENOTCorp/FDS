@@ -1,0 +1,11 @@
+# H2/H3 tokio-path bench — h2c 127.0.0.1:8090 / h3 127.0.0.1:8090, 1000 reqs
+
+## H2 (h2c)
+seq: 11801 req/s — p50 73.9us p90 90.8us p99 228.0us p999 2404.3us
+mux x64: 53713 req/s (single connection)
+holb-proxy: small GET p50 72.9us p99 249.0us while 256 KiB upload in flight (H2 muxes streams)
+hpack-proxy: skipped (server does not serve /metrics)
+
+## H3 (QUIC)
+seq: 7225 req/s — p50 123.4us p90 164.6us p99 427.0us p999 1555.6us
+mux x64: 38071 req/s (single connection)
