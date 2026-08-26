@@ -1,0 +1,1 @@
+engine latency vs 127.0.0.1:7777: 81298 samples over 3s — p10  19.9µs p20  20.5µs p30  20.9µs p40  21.0µs p50  21.1µs p60  21.2µs p70  22.1µs p80  22.7µs p90  24.2µs p95  33.3µs p99  88.0µs p999 3744.8µs — mean 36.7µs, median 21.1µs, stdev 239.6µs, jitter(stdev/mean) 6.52

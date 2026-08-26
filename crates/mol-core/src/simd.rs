@@ -1,13 +1,13 @@
-//! Bounds-safe SIMD helpers (standard \[SIMD\]; thesis NT25/NT53).
+//! Bounds-safe SIMD helpers (standard \[SIMD\]).
 //!
-//! Discipline: vectorized loops run over `chunks_exact` only — never past
+//! Discipline: vectorized loops run over array slices only — never past
 //! the slice end — and the remainder is handled by a scalar loop. Length
 //! 0 and unaligned slices are safe (unaligned loads via `_mm256_loadu`).
 //! No vector operation can read or write out of bounds by construction.
 
 /// Sum 16-bit big-endian words of `data` into a `u32` accumulator,
 /// wrapping. This is the building block of IP/TCP/UDP one's-complement
-/// checksums (thesis Ch. 13, NT47 batching).
+/// checksums (batching; RFC 1071).
 ///
 /// `sum_u16(b"ab")` = 0x6162 = 24930.
 #[inline]
@@ -16,7 +16,7 @@ pub fn sum_u16(data: &[u8]) -> u32 {
     {
         if is_x86_feature_detected!("avx2") {
             // SAFETY: the function is guarded by the feature check above;
-            // `chunks_exact` guarantees the SIMD loop never over-reads.
+            // `as_chunks` guarantees the SIMD loop never over-reads.
             return unsafe { sum_u16_avx2(data) };
         }
     }
@@ -27,11 +27,10 @@ pub fn sum_u16(data: &[u8]) -> u32 {
 #[inline]
 pub fn sum_u16_scalar(data: &[u8]) -> u32 {
     let mut sum: u32 = 0;
-    let mut chunks = data.chunks_exact(2);
-    for pair in &mut chunks {
+    let (chunks, rem) = data.as_chunks::<2>();
+    for pair in chunks {
         sum = sum.wrapping_add(((pair[0] as u32) << 8) | pair[1] as u32);
     }
-    let rem = chunks.remainder();
     if !rem.is_empty() {
         // Odd trailing byte: pad with zero (RFC 1071 semantics).
         sum = sum.wrapping_add((rem[0] as u32) << 8);
@@ -62,7 +61,7 @@ pub fn u16_checksum(data: &[u8]) -> u16 {
 ///
 /// # Safety
 /// Call only when AVX2 is detected. Bounds are guaranteed by
-/// `chunks_exact`; loads are unaligned-safe (`_mm256_loadu_si256`).
+/// `as_chunks`; loads are unaligned-safe (`_mm256_loadu_si256`).
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn sum_u16_avx2(data: &[u8]) -> u32 {
@@ -71,8 +70,8 @@ unsafe fn sum_u16_avx2(data: &[u8]) -> u32 {
     let mut acc_even: u64 = 0;
     let mut acc_odd: u64 = 0;
 
-    let mut chunks = data.chunks_exact(32);
-    for chunk in &mut chunks {
+    let (chunks, rem) = data.as_chunks::<32>();
+    for chunk in chunks {
         let v = _mm256_loadu_si256(chunk.as_ptr() as *const __m256i);
         // even = v & 0x00FF00FF... (keep low byte of each 16-bit lane)
         let even_mask = _mm256_set1_epi16(0x00FF);
@@ -93,7 +92,6 @@ unsafe fn sum_u16_avx2(data: &[u8]) -> u32 {
     // Combine: word sum = even_sum * 256 + odd_sum, then add the scalar
     // remainder (with the RFC 1071 odd-byte padding).
     let mut total = (acc_even << 8).wrapping_add(acc_odd) as u32;
-    let rem = chunks.remainder();
     if !rem.is_empty() {
         total = total.wrapping_add(sum_u16_scalar(rem));
     }

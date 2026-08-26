@@ -101,7 +101,7 @@ static REACTOR_FIELDS: &[FieldDef] = &[
         key: "io_uring_entries",
         json_type: JsonType::U32,
         default_json: "256",
-        derived_from: "engine default (NT48 ring invariant)",
+        derived_from: "engine default",
         description: "io_uring ring entries (strategy io-uring).",
         trade_off: "Larger rings hold more in-flight ops; entries are power-of-two and floored by the datapath (UDP slots + accept + timeout).",
     },
@@ -375,7 +375,7 @@ pub(crate) static SECTIONS: &[SectionDef] = &[
 /// D-1 socket-buffer sizing: each socket buffer absorbs one L3-sized burst
 /// while the working set stays cache-resident.
 /// `clamp(pow2(L3/2), 4 MiB, 16 MiB)` — a power of two so the kernel's
-/// reported (doubled) value and the ring layout stay aligned (NT48).
+/// reported (doubled) value and the ring layout stay aligned.
 pub(crate) fn d1_socket_buffer_bytes(l3: u64) -> u64 {
     (l3 / 2).next_power_of_two().clamp(4 << 20, 16 << 20)
 }

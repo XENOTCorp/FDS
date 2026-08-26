@@ -1,4 +1,4 @@
-//! Equational law tests (thesis NT9–NT12, NT46): the algebraic theory of
+//! Equational law tests: the algebraic theory of
 //! Mol must hold in the concrete model. Property-style tests over
 //! deterministic sweeps — no external RNG, so the suite stays fast and
 //! reproducible (standard [TEST]).
@@ -36,7 +36,7 @@ impl Molecule for Mul {
 }
 
 /// Stateful molecule: output = input + accumulator, accumulator += n each
-/// step (a per-connection sequence counter; thesis NT38 minimal state).
+/// step (a per-connection sequence counter minimal state).
 #[derive(Clone, Copy)]
 struct Acc(u32);
 
@@ -74,7 +74,7 @@ impl Molecule for Branchy {
 
 #[test]
 fn then_is_associative() {
-    // (f;g);h and f;(g;h) agree on every input (NT1 associativity). The
+    // (f;g);h and f;(g;h) agree on every input. The
     // state shapes differ (nested tuples) but the observable behavior —
     // the output stream — is identical.
     let f = Acc(1);
@@ -91,7 +91,7 @@ fn then_is_associative() {
 
 #[test]
 fn interchange_law_holds_with_state() {
-    // (f⊗g);(h⊗k) ≅ (f;h)⊗(g;k) (NT11) — with stateful molecules on both
+    // (f⊗g);(h⊗k) ≅ (f;h)⊗(g;k) — with stateful molecules on both
     // sides. The outputs agree for every input; the states agree up to the
     // canonical reassociation isomorphism ((f,g),(h,k)) ≅ ((f,h),(g,k)).
     let f = Acc(1);
@@ -117,8 +117,8 @@ fn interchange_law_holds_with_state() {
 
 #[test]
 fn par_is_symmetric_up_to_swap() {
-    // f⊗g on (x, y) equals g⊗f on (y, x) with outputs swapped (NT3
-    // symmetric monoidal structure).
+    // f⊗g on (x, y) equals g⊗f on (y, x) with outputs swapped (tensor
+    // symmetry).
     let f = Acc(1);
     let g = Add(7);
     let a = par(f, g);
@@ -135,7 +135,7 @@ fn par_is_symmetric_up_to_swap() {
 
 #[test]
 fn tensor_array_is_elementwise_independent() {
-    // [M; N] steps each element independently (NT46 batching): element
+    // [M; N] steps each element independently: element
     // i's output depends only on input i and state i.
     let arr = [Acc(1), Acc(2), Acc(3), Acc(4)];
     let mut states = [0u32; 4];
@@ -152,7 +152,7 @@ fn tensor_array_is_elementwise_independent() {
 
 #[test]
 fn sequential_pipeline_satisfies_its_equation() {
-    // Concrete equations hold over a sweep (NT9: equations in the model):
+    // Concrete equations hold over a sweep (equations in the model):
     // (x + 5) * 2 and x * 2 + 5 are both realized — and they differ, so
     // order matters (composition is not commutative).
     let a = then(Add(5), Mul(2));
@@ -167,7 +167,7 @@ fn sequential_pipeline_satisfies_its_equation() {
 
 #[test]
 fn step_is_deterministic() {
-    // NT8: the same molecule, state, and input give the same output and
+    // Determinism: the same molecule, state, and input give the same output and
     // successor state — on both branches of Branchy.
     let m = Branchy;
     for x in 0..200u32 {
@@ -189,7 +189,7 @@ fn step_is_deterministic() {
 
 #[test]
 fn spsc_ring_is_fifo_across_wraparound() {
-    // NT12: the ring realizes FIFO streams; push;pop = id elementwise,
+    // The ring realizes FIFO streams; push;pop = id elementwise,
     // including across slot-index wraparound (CAP 16, in-flight ≤ 15).
     let ring = SpscRing::<u64, 16>::new();
     let mut next_push = 0u64;

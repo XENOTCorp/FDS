@@ -1,9 +1,9 @@
 //! FDS transport engine — library API.
 //!
 //! A nonblocking, edge-triggered, busy-polling, batched, zero-allocation
-//! TCP/UDP/SCTP dataplane on the Mol framework (thesis NT34–NT36
-//! reactor-as-trace, NT46–NT47 batching, NT48 rings; standard policies
-//! \[IO\], \[SIMD\], \[CONC\], \[SEC\], \[OBS\], \[ALLOC\]).
+//! TCP/UDP/SCTP dataplane on the Mol framework (reactor as a trace,
+//! batching, rings; standard policies \[IO\], \[SIMD\], \[CONC\], \[SEC\],
+//! \[OBS\], \[ALLOC\]).
 //!
 //! # Structure
 //!
@@ -13,8 +13,7 @@
 //!   [`config`] applied before bind (SO_REUSEPORT admission), batch I/O,
 //!   and zero-copy helpers.
 //! - [`conn`] — per-core preallocated connection tables with hot/cold
-//!   cache-line separation and packed [`conn::ConnectionId`] tokens
-//!   (thesis NT53).
+//!   cache-line separation and packed [`conn::ConnectionId`] tokens.
 //! - [`config`] — the runtime configuration surface (single repo-root
 //!   `config.json` plus `FDS_*` env overrides).
 //! - [`metrics`] — lock-free per-core counters pulled over a Unix socket.

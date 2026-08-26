@@ -5,10 +5,10 @@
 //! Composition (`then`) threads outputs through states; tensor (`par`)
 //! runs two molecules side by side on product states. All molecules are
 //! `Sized` and their state is `'static`; hot-path molecules should keep
-//! `State` and `Input`/`Output` small and `Copy` (thesis NT50 linearity:
+//! `State` and `Input`/`Output` small and `Copy` (linearity:
 //! exactly-once consumption, no hidden allocation).
 
-/// A stateful transformation `A → B` with state space `S` (thesis NT1).
+/// A stateful transformation `A → B` with state space `S`.
 ///
 /// `step` is the mealy transition: it reads `input`, mutates `state` in
 /// place (the new state), and returns the output. `S: 'static` so states
@@ -22,21 +22,21 @@ pub trait Molecule: Sized {
     fn step(&self, state: &mut Self::State, input: Self::Input) -> Self::Output;
 }
 
-/// PureMol: molecules whose state space is the unit type (thesis NT4).
+/// PureMol: molecules whose state space is the unit type.
 /// These are exactly total functions `A → B`.
 pub trait PureMolecule: Molecule<State = ()> {}
 
 impl<T: Molecule<State = ()>> PureMolecule for T {}
 
 /// EffMol(Ctx): molecules whose state space is exactly a runtime context
-/// `Ctx` (thesis NT5 — the Kleisli category of the State Ctx monad).
+/// `Ctx`.
 /// `Ctx` is generic: each application supplies its preallocated context.
 pub trait EffectfulMolecule<Ctx>: Molecule<State = Ctx> {}
 
 impl<Ctx, T: Molecule<State = Ctx>> EffectfulMolecule<Ctx> for T {}
 
 /// HybridMol: molecules whose state is a product of a protocol-logic state
-/// and a runtime context, `S = Spure × Ctx` (thesis NT7).
+/// and a runtime context, `S = Spure × Ctx`.
 pub trait HybridMolecule<Spure, Ctx>: Molecule<State = (Spure, Ctx)> {}
 
 impl<Spure, Ctx, T: Molecule<State = (Spure, Ctx)>> HybridMolecule<Spure, Ctx> for T {}

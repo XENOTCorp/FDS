@@ -1,4 +1,4 @@
-//! Zero-allocation hot-path probe (standard [ALLOC]; thesis NT50).
+//! Zero-allocation hot-path probe (standard [ALLOC]).
 //!
 //! A counting global allocator records every heap allocation. The declared
 //! hot path — ring ingress/egress, molecule steps, checksums, pool
@@ -180,6 +180,6 @@ fn reactor_pipeline_allocates_nothing() {
     assert_eq!(
         allocations(),
         before,
-        "hot path must not allocate (standard [ALLOC], thesis NT50)"
+        "hot path must not allocate (standard [ALLOC])"
     );
 }

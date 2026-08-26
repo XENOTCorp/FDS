@@ -1,4 +1,4 @@
-//! Lock-free rings (standard \[R\], thesis NT48).
+//! Lock-free rings (standard \[R\]).
 //!
 //! Both rings are power-of-two capacity with bitmask indexing. The SPSC
 //! ring keeps in-flight ≤ CAP − 1 so the masked full/empty checks are

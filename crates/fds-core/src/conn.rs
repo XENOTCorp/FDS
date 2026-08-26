@@ -1,4 +1,4 @@
-//! Connection/association state (standard \[CACHE\], thesis NT53): hot
+//! Connection/association state (standard \[CACHE\]): hot
 //! fields (touched every step) and cold fields (rarely touched) live in
 //! separate cache lines; per-core tables are preallocated at startup
 //! (standard \[ALLOC\]) and index by a packed [`ConnectionId`].

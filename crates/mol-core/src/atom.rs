@@ -1,4 +1,4 @@
-//! Atoms: the irreducible morphisms of Mol (thesis NT1–NT8).
+//! Atoms: the irreducible morphisms of Mol.
 //!
 //! A pure atom is a total function `A → B` with no state; an effectful
 //! atom is a morphism of EffMol(Ctx), acting on a preallocated runtime

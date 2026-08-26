@@ -1,5 +1,5 @@
-//! In-crate benchmark harness for the loopback datapaths (thesis
-//! NT46/NT47 batching; standard \[OBS\], \[ALLOC\]).
+//! In-crate benchmark harness for the loopback datapaths.
+//! Batching; standard [OBS], [ALLOC].
 //!
 //! An external bench target cannot reach crate-private items, so the
 //! harness lives here and is invoked from the `fds` binary via
@@ -203,7 +203,7 @@ pub fn run(seconds: u64) -> std::io::Result<()> {
 /// Round-trip latency distribution of the UDP echo datapath (single
 /// in-flight datagram): samples the RTT for `seconds` seconds and reports
 /// the p50/p99/p999 percentiles plus max. p99 is the tail-latency budget
-/// the engine targets (standard \[OBS\]; thesis NT25 cost model).
+/// the engine targets (standard \[OBS\] cost model).
 pub fn run_latency(seconds: u64) -> std::io::Result<()> {
     let seconds = seconds.max(1);
     let sock = try_io(|| {
@@ -415,7 +415,7 @@ fn run_inner(seconds: u64) -> std::io::Result<Stats> {
     Ok(stats)
 }
 
-/// One-way large-datagram loopback throughput (thesis NT47 batching at
+/// One-way large-datagram loopback throughput (batching at
 /// the memory-bandwidth ceiling): measures each direction separately so
 /// the per-packet echo cost of [`run`] does not hide the byte ceiling.
 /// `datagram` is clamped to the IPv4 UDP payload maximum (65507).
@@ -639,7 +639,7 @@ mod tests {
 
     #[test]
     fn udp_echo_datapath_allocates_nothing() {
-        // Machine-checked zero-allocation (thesis NT67): the hot loop of
+        // Machine-checked zero-allocation: the hot loop of
         // the UDP echo datapath — send_batch -> peer echo -> recv_batch —
         // must perform zero allocations. Runs on a dedicated thread so
         // concurrent tests (per-thread counter) cannot pollute it.

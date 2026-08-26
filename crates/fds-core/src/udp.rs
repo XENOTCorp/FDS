@@ -1,8 +1,8 @@
-//! UDP transport (standard \[IO\], \[SIMD\]; thesis NT46/NT47 batching):
+//! UDP transport (standard [IO], [SIMD] batching):
 //! nonblocking sockets with `recvmmsg`/`sendmmsg` batch I/O, UDP_SEGMENT
 //! (GSO) and UDP_GRO offloads, optional MSG_ZEROCOPY for large
 //! datagrams. The batch ring between recvmmsg and processing is the
-//! framework's ring (NT48 invariant).
+//! framework's ring.
 //!
 //! CONTRACT (implementer): implement [`UdpSocket`] on top of libc/rustix
 //! with the exact signatures below (the crate compiles with these stubs;

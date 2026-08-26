@@ -1,0 +1,2 @@
+bench-udp-against: 127.0.0.1:7777 — 4 sockets x 61440B, sent 11.17 Gbps, echoed 11.16 Gbps, echo completion 99.91%
+bench-tcp-against: 127.0.0.1:7778 — 4 conns, 11.85 Gbps client->server (1482 MiB/s)

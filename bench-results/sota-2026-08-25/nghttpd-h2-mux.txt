@@ -1,0 +1,23 @@
+starting benchmark...
+spawning thread #0: 16 total client(s). 50000 total requests
+Application protocol: h2c
+progress: 10% done
+progress: 20% done
+progress: 30% done
+progress: 40% done
+progress: 50% done
+progress: 60% done
+progress: 70% done
+progress: 80% done
+progress: 90% done
+progress: 100% done
+
+finished in 302.42ms, 165335.17 req/s, 27.60MB/s
+requests: 50000 total, 50000 started, 50000 done, 0 succeeded, 50000 failed, 0 errored, 0 timeout
+status codes: 0 2xx, 0 3xx, 50000 4xx, 0 5xx
+traffic: 8.35MB (8751424) total, 489.20KB (500944) headers (space savings 91.92%), 7.01MB (7350000) data
+                 min         max         median      p95         p99         mean        sd         +/- sd
+request     :     1.29ms     10.49ms      5.61ms      7.58ms      9.83ms      6.01ms      1.02ms    81.91%
+connect     :      156us      1.85ms       951us      1.85ms      1.85ms       975us       537us    62.50%
+TTFB        :     3.06ms     10.71ms      6.83ms     10.71ms     10.71ms      6.82ms      2.63ms    62.50%
+req/s       :   10350.49    10616.13    10425.84    10616.13    10616.13    10433.77       68.73    81.25%

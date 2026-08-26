@@ -1,111 +1,94 @@
-# FDS — Fast Data Transmission
+# FDS
 
-A Rust project for TCP/UDP/SCTP communication engineered to the silicon:
-nonblocking, edge-triggered, busy-polling, batched, zero-allocation
-dataplanes — usable for web servers, DNS, FTP, and custom protocols.
-Linux-only.
+Fast Data Transmission. A Linux network engine for TCP, UDP, and SCTP,
+written in Rust. The engine is nonblocking, edge-triggered, busy-polled,
+batched, and zero-allocation on the hot path.
 
-The project is built as sequential sub-projects, each grounded in a formal
-paper (thesis) and a software standard:
+FDS is the transport layer under Atomos, an HTTP server. It is also a
+library for building custom protocols. See the [paper](docs/paper/thesis.pdf)
+for the algebraic model that the engine implements, [BENCHMARKS.md](BENCHMARKS.md)
+for measured comparisons against existing software, and [WIKI.md](WIKI.md)
+for features, architecture, and implementation examples.
 
-| Sub-project | What | Where | Status |
-|---|---|---|---|
-| 1 | **Paper + standard** — the Mol category theory (NT1–NT55), a rewriting-based cost model, an ARCSS-style software standard, and proof-verification tools | `docs/paper/`, `docs/standard/`, `docs/paper/verify/` | merged |
-| 2 | **Mol framework** — `mol-core` (lib `mol`): atoms, molecules, composition, lock-free rings, buffers, memory layout, SIMD checksums, authoring templates | `crates/mol-core/`, `templates/` | merged |
-| 3 | **Build tooling** — adaptive build script + `config.json` hardware detection | `build/`, `config/`, `crates/fds-detect/` | merged |
-| 4 | **Transport engine** — `fds-core` (lib `fds_core` + bin `fds`): epoll busy-poll reactor, UDP/TCP/SCTP transports, hot/cold connection state, metrics, bench/fuzz; consumed by Atomos's H1 server | `crates/fds-core/`, `docs/ops-tuning.md` | merged |
+## Requirements
+
+- Linux kernel 5.10 or later (io_uring reactor requires kernel 5.19 or later)
+- Rust 1.97 or later
+- x86-64 with AVX2 for the SIMD checksum path
 
 ## Quick start
 
-```sh
-# Build and test everything
-cargo test --workspace          # 96 tests, ~2 s
-cargo clippy --workspace --all-targets -- -D warnings
-
-# Run the engine (UDP + TCP echo on 127.0.0.1:7777 / 7778)
-# One worker per logical CPU (2x physical on hyperthreaded machines);
-# SO_REUSEPORT distributes flows across workers.
-cargo run -p fds-core
-
-# Measure: throughput, transport latency, engine latency
-cargo run -p fds-core --release -- --bench 5
-# Byte ceiling: one-way large-datagram throughput per direction (the 10-40+ Gbps loopback number)
-cargo run -p fds-core --release -- --bench-large 60000 5
-cargo run -p fds-core --release -- --latency 5
-# (engine running in another terminal)
-cargo run -p fds-core --release -- --latency-against 127.0.0.1:7777 5
-
-# io_uring reactor strategy, explicit worker count (default: per logical CPU)
-FDS_REACTOR_STRATEGY=io-uring FDS_CORE_THREADS=4 cargo run -p fds-core --release
-
-# Fuzz the parsers/checksums (deterministic, stable-rust)
-cargo run -p fds-core --release -- --fuzz 1000000
-```
-
-## Build tooling (sub-project 3)
-
-`build/build.sh` detects the machine (CPU uarch, SIMD features, L3 size,
-core topology, NUMA, hugepages) and injects hardware-tailored codegen flags
-via `cargo --config build.rustflags=[...]` — the highest-precedence flag
-source, so it wins over both the workspace and `~/.cargo` configs.
+Build and test:
 
 ```sh
-build/build.sh --summary          # deterministic detection facts
-build/build.sh --release          # adaptive release build
-TARGET_CPU=haswell build/build.sh --release   # portable pinned build
-build/build.sh --release --emit-config        # refresh config.json from hardware, then build
-build/build.sh --check-deps       # cargo audit + cargo deny (install: cargo install cargo-audit cargo-deny)
+cargo test --release
+cargo clippy --all-targets -- -D warnings
 ```
 
-`fds-detect` (Rust, no Python) is the cross-check and config tool: it prints
-the same facts, regenerates the single repo-root `config.json` with
-D-1-derived socket buffers, generates `config/config.schema.json`, and
-validates any `config.json`:
+Run the engine. It starts one worker per logical CPU. Each worker owns a
+SO_REUSEPORT socket pair and a connection table. The default binds are
+UDP 127.0.0.1:7777 and TCP 127.0.0.1:7778.
 
 ```sh
-cargo run -p fds-detect -- --emit-config        # writes ./config.json
-cargo run -p fds-detect -- --generate-schema    # writes ./config/config.schema.json
-cargo run -p fds-detect -- --validate-config config.json
+cargo run --release -p fds-core
 ```
 
-The engine reads the single repo-root `config.json` at startup; every field
-is optional (engine defaults apply) and overridable via `FDS_<SECTION>_<KEY>`
-env vars. Flag matrix and decision origins: `build/PROFILES.md`.
+Measure the engine:
 
-## Repo layout
-
-```
-Cargo.toml                 # workspace: profiles (release = silicon-level)
-.cargo/config.toml         # portable baseline flags
-config.json                # single repo-root runtime config (engine reads it)
-config/config.schema.json  # JSON Schema for config.json (generated by fds-detect)
-crates/mol-core/           # sub-project 2: the Mol framework (lib `mol`)
-crates/fds-core/           # sub-project 4: the engine (bin `fds`)
-crates/fds-detect/         # sub-project 3: hardware detection + config tooling
-build/                     # sub-project 3: build.sh + detect.sh + PROFILES.md
-templates/                 # authoring templates (pure/effectful/hybrid/reactor)
-docs/paper/                # sub-project 1: thesis (99 pp, NT1–NT55) + verify tools
-docs/standard/             # sub-project 1: software standard (50 policies)
-docs/ops-tuning.md         # NIC/kernel/engine tuning guide
-docs/superpowers/specs/    # design specs (one per sub-project)
-scripts/perf.sh            # perf stat/record, llvm-mca, cachegrind, iperf3 wrapper
+```sh
+# one-way byte ceiling, per direction
+cargo run --release -p fds-core -- --bench-large 60000 5
+# latency distribution of the loopback datapath
+cargo run --release -p fds-core -- --latency 5
+# echo throughput against a running engine
+cargo run --release -p fds-core -- --bench-udp-against 127.0.0.1:7777 5
+cargo run --release -p fds-core -- --bench-tcp-against 127.0.0.1:7778 5
 ```
 
-## Conventions
+### Mini project: full-duplex parallel channels
 
-- **No Python anywhere**; Rust only.
-- **The engine is lib + bin**: `fds-core` exposes the transport
-  primitives (`reactor`, `tcp`, `udp`, `conn`, `config`, `metrics`,
-  `util`) for consumers — Atomos's H1 server builds on them — while the
-  `fds` binary is a thin CLI over the built-in echo engine. Experimental
-  paths (io_uring, AF_XDP) and parser/checksum atoms stay crate-private.
-- **Zero allocation in hot paths** (enforced by tests where it matters);
-  structures are preallocated at startup.
-- **Every `unsafe` block carries a `SAFETY:` comment**.
-- **Bounds before indexing**: all network input is validated `&[u8]`.
-- **Tests are fast**: the whole workspace suite runs in ~2 s; threaded
-  stress tests are `#[ignore]`d and run serially (~2 s).
+The example `full_duplex_channels` builds a custom TCP echo server on
+the reactor and transport primitives, then opens eight parallel
+connections and streams in both directions on each. It shows the
+pattern for a custom protocol server: register fds, drain to EAGAIN,
+apply write backpressure.
 
-See `docs/engine.md` for the engine architecture and how to add a
-transport handler; `docs/ops-tuning.md` for getting the machine to
-deliver the numbers.
+```sh
+cargo run --release -p fds-core --example full_duplex_channels
+```
+
+Run the benchmark suite against other stacks with the same client,
+payload, and settings:
+
+```sh
+bash scripts/bench-all.sh
+```
+
+See [BENCHMARKS.md](BENCHMARKS.md) for the results and the method.
+
+## Features
+
+- TCP, UDP, and SCTP transports on one epoll reactor
+- One worker per logical CPU, pinned, with SO_REUSEPORT flow steering
+- recvmmsg and sendmmsg batching (64 datagrams per syscall)
+- Zero allocation in the datapath, enforced by a counting allocator
+- Preallocated per-core connection tables with hot and cold cache lines
+- Checksums in AVX2, with a scalar fallback
+- io_uring reactor (feature `io-uring`), opt-in
+- AF_XDP frame pipeline (feature `af-xdp`), device-gated
+- Runtime configuration through `config.json` and `FDS_*` environment
+  variables
+- Deterministic fuzz harness for the parsers and checksums
+
+## Documentation
+
+- [WIKI.md](WIKI.md): features, architecture, and implementation examples
+- [BENCHMARKS.md](BENCHMARKS.md): apples-to-apples measurements
+- [docs/paper/thesis.pdf](docs/paper/thesis.pdf): the algebraic model of
+  stateful transformations that the engine implements
+- [docs/ops-tuning.md](docs/ops-tuning.md): kernel and NIC settings for
+  production deployment
+
+## License
+
+MIT. Copyright (c) 2026 Alex @AscendNoosphere, XENOT Corporation.

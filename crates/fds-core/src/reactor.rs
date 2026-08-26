@@ -117,6 +117,15 @@ impl Reactor {
         Ok(n)
     }
 
+    /// One zero-timeout poll: returns the events of a single epoll batch.
+    /// Pairs with [`Reactor::delivered`]; unlike [`Reactor::poll_busy`],
+    /// it never drains multiple batches, so the delivered set is complete.
+    pub fn poll_once(&mut self) -> std::io::Result<usize> {
+        let zero = Timespec { tv_sec: 0, tv_nsec: 0 };
+        let n = epoll::wait(&self.ep, &mut self.events, Some(&zero))?;
+        Ok(n)
+    }
+
     /// Busy-poll: drain the ready list with timeout 0 until empty, then
     /// return the total number of events delivered.
     pub fn poll_busy(&mut self) -> std::io::Result<usize> {

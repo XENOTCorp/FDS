@@ -2,8 +2,8 @@
 //!
 //! Sequential composition threads `M`'s output into `N`'s input over a
 //! product state; tensor runs two molecules in parallel over a product
-//! state and pairs their outputs (thesis NT1 associativity, NT3 symmetric
-//! monoidal structure). Both are zero-allocation by construction.
+//! state and pairs their outputs (sequential associativity, tensor
+//! symmetry). Both are zero-allocation by construction.
 
 use crate::molecule::Molecule;
 
@@ -76,7 +76,7 @@ where
 }
 
 /// An array of molecules is a molecule: `[M; N]` realizes the n-fold
-/// tensor `M ⊗ ⋯ ⊗ M` (thesis NT11 batch, NT46 batching). Requires
+/// tensor `M ⊗ ⋯ ⊗ M`. Requires
 /// `Input`/`Output: Copy` so elements can be read out of the arrays
 /// without allocation.
 impl<M, const N: usize> Molecule for [M; N]
@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn interchange_law_holds_on_examples() {
-        // (f⊗g);(h⊗k) == (f;h)⊗(g;k) — thesis NT11 interchange.
+        // (f⊗g);(h⊗k) == (f;h)⊗(g;k).
         let f = Add(1);
         let g = Mul(2);
         let h = Add(3);

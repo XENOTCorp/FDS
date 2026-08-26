@@ -4,11 +4,11 @@
 //! are equivalence classes of pairs `(S, step)` with `step : S × A → B × S`
 //! (deterministic mealy machines), composed by `∘` (sequential) and
 //! `⊗` (tensor), with the subcategories PureMol, EffMol(Ctx), HybridMol
-//! (thesis NT1–NT8).
+//!.
 //!
 //! Discipline (FDS standard policies \[A\], \[MOL\], \[R\], \[ALLOC\], \[CACHE\],
 //! \[CONC\], \[TEST\]): zero allocation in declared hot paths; power-of-two
-//! lock-free rings with the in-flight ≤ capacity − 1 invariant (NT48);
+//! lock-free rings with the in-flight ≤ capacity − 1 invariant;
 //! cache-line-aligned shared structures with hot/cold separation;
 //! per-core state; no shared mutable state except lock-free rings.
 

@@ -1,4 +1,4 @@
-//! TCP transport (standard \[IO\], \[SEC\]; thesis NT38 minimal state):
+//! TCP transport (standard \[IO\], \[SEC\] minimal state):
 //! nonblocking `accept4` listeners, `readv`/`writev` scatter-gather for
 //! partial reads/writes, `sendfile`/`splice` zero-copy for file-backed
 //! responses (valid-fd discipline — no double-close), and the option set
