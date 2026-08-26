@@ -57,16 +57,16 @@
         },
         "busy_poll": {
           "type": "boolean",
-          "default": true,
-          "description": "Busy-poll the ready queue to empty before yielding.",
-          "x-trade-off": "Lowest latency at the cost of CPU spin when idle; disable on shared CPUs.",
-          "x-derived-from": "engine default (latency target)"
+          "default": false,
+          "description": "Explicit busy-poll spin (zero epoll timeout) for dedicated cores; default is event-driven.",
+          "x-trade-off": "Lowest wake latency at the cost of CPU spin when idle; on a shared machine the spin starves co-tenants.",
+          "x-derived-from": "engine default (event-driven)"
         },
         "timeout_ms": {
           "type": "integer",
           "default": 0,
           "description": "Poll timeout in milliseconds when not busy-polling.",
-          "x-trade-off": "0 with busy-poll off blocks indefinitely; a small timeout bounds wake latency at the cost of syscall rate.",
+          "x-trade-off": "0 = event-driven (block in the kernel, waking every 100 ms to observe the stop flag); a positive value bounds wake latency at the cost of syscall rate.",
           "x-derived-from": "engine default"
         },
         "io_uring_entries": {

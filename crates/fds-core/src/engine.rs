@@ -133,11 +133,13 @@ fn worker_main(
     let tcp_listener = crate::tcp::TcpListener::bind(tcp_addr, &cfg.tcp, libc::SOMAXCONN)?;
 
     // The metrics pull endpoint lives on worker 0 only; it aggregates
-    // the per-core counters of every worker.
-    let metrics_path = if cfg.metrics.socket_path.is_empty() {
-        None
-    } else {
+    // the per-core counters of every worker. Binding it on every worker
+    // races (each bind unlinks the previous worker's socket file), so
+    // workers 1..N serve no metrics endpoint.
+    let metrics_path = if id == 0 && !cfg.metrics.socket_path.is_empty() {
         Some(std::path::PathBuf::from(&cfg.metrics.socket_path))
+    } else {
+        None
     };
     let mut metrics_server = match &metrics_path {
         Some(p) => Some(crate::metrics::MetricsServer::bind(p)?),
@@ -243,20 +245,38 @@ fn worker_epoll_loop(
         None
     };
 
-    let timeout_ms = if cfg.reactor.busy_poll {
-        0
+    // Idle poll bound: the loop must wake periodically to observe the
+    // stop flag (the io_uring datapath mirrors this with a submitted
+    // ring timeout). Events still wake epoll_wait immediately; the
+    // bound only limits how long an idle worker sleeps before checking
+    // stop. Zero idle CPU, shutdown latency bounded by this value.
+    const IDLE_POLL_MS: i64 = 100;
+    let timeout = if cfg.reactor.busy_poll {
+        // Explicit spin: poll with a zero timeout so events are noticed
+        // immediately. Intended for dedicated cores; on a shared machine
+        // the spin starves co-tenants, so it is opt-in via config.
+        Some(rustix::event::Timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        })
+    } else if cfg.reactor.timeout_ms > 0 {
+        Some(rustix::event::Timespec {
+            tv_sec: (cfg.reactor.timeout_ms / 1000) as i64,
+            tv_nsec: ((cfg.reactor.timeout_ms % 1000) as i64) * 1_000_000,
+        })
     } else {
-        cfg.reactor.timeout_ms.max(0)
-    };
-    let timeout = rustix::event::Timespec {
-        tv_sec: (timeout_ms / 1000) as i64,
-        tv_nsec: ((timeout_ms % 1000) as i64) * 1_000_000,
+        // Event-driven: block in the kernel until an event is ready,
+        // waking at most every IDLE_POLL_MS to observe the stop flag.
+        Some(rustix::event::Timespec {
+            tv_sec: IDLE_POLL_MS / 1000,
+            tv_nsec: (IDLE_POLL_MS % 1000) * 1_000_000,
+        })
     };
     // Sized to max_events so a full batch is always copied out in one go.
     let mut evbuf = vec![crate::reactor::EpollEvent::default(); cfg.reactor.max_events.max(1)];
 
     while !stop() {
-        let n = reactor.poll_timeout(Some(&timeout))?;
+        let n = reactor.poll_timeout(timeout.as_ref())?;
         if n == 0 {
             continue;
         }
@@ -749,7 +769,7 @@ fn drain_tcp<'a>(
         };
         let mut close = false;
         loop {
-            let mut buf = [0u8; 8192];
+            let mut buf = [0u8; 65536];
             match stream.readv(&mut [&mut buf]) {
                 Ok(0) => {
                     close = true;

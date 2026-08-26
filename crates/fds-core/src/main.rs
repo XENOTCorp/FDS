@@ -104,9 +104,10 @@ fn load_config(path: &std::path::Path) -> Config {
             }
         },
         Err(_) => {
-            let cfg = Config::default();
+            let mut cfg = Config::default();
+            cfg.apply_env();
             eprintln!(
-                "fds: no config at {} — using defaults (epoll busy-poll, udp 127.0.0.1:7777)",
+                "fds: no config at {} — using defaults (epoll event-driven, udp 127.0.0.1:7777)",
                 path.display()
             );
             cfg

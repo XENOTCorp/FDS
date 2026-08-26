@@ -11,6 +11,12 @@ are in `bench-results/`.
 - Machine: Intel Core i5-5200U (2 physical cores, 4 logical), kernel
   7.2.0_1 (Void Linux), loopback only. This is the full hardware
   statement; the loopback path is the domain of the comparison.
+- The engine runs with its release defaults: epoll edge-triggered,
+  event-driven, one worker per logical CPU, pinned, SO_REUSEPORT flow
+  steering. The explicit busy-poll spin (`reactor.busy_poll=true`) is
+  measured separately where stated; it is not the default because on a
+  shared machine the spin starves co-tenants (see the latency note
+  below).
 - Load generators: the FDS benchmark client (windowed UDP echo, TCP
   write flood), a lockstep TCP echo client, `wrk` for HTTP/1.1,
   `h2load` for HTTP/2, and `curl` for latency percentiles.
@@ -23,6 +29,10 @@ are in `bench-results/`.
   where a row states otherwise. nginx uses `open_file_cache` (its tuned
   static path), h2o uses `num-threads: 4`, and Seastar uses
   `--smp 4` with `connection_distribution`.
+- Every row below was measured on a quiet machine (no concurrent
+  build, test, or benchmark process). Run-to-run spread on this
+  two-core box is about 5% for throughput and about 10% for latency
+  percentiles; where a value was measured twice, both are shown.
 
 ## UDP echo throughput
 
@@ -31,14 +41,15 @@ Windowed echo: four client sockets, 64 in-flight 60 KiB datagrams,
 
 | Server | Sent | Echoed | Completion |
 | --- | --- | --- | --- |
-| FDS engine (epoll) | 11.17 Gbps | 11.16 Gbps | 99.91% |
-| tokio (multi-thread) | 15.82 Gbps | 15.82 Gbps | 100.00% |
-| libuv | 18.83 Gbps | 18.83 Gbps | 100.00% |
+| FDS engine (epoll, event-driven) | 16.31 Gbps | 16.30 Gbps | 99.89% |
+| tokio (multi-thread) | 17.16 Gbps | 17.16 Gbps | 100.00% |
+| libuv | 18.69 Gbps | 18.69 Gbps | 100.00% |
 
 The FDS engine is the only row with a drop path: the engine counts a
 drop when the echo write would block and discards that burst. The
 tokio and libuv servers buffer the echo in memory, which keeps the
 completion at 100% at the cost of unbounded memory under a write flood.
+The three engines are within 13% of each other.
 
 ## TCP echo throughput
 
@@ -50,39 +61,40 @@ Write flood, four connections, 60 KiB writes, 5 s:
 
 | Server | Client to server | Notes |
 | --- | --- | --- |
-| FDS engine (epoll) | 11.85 Gbps | drops echoes on write-block; bounded memory |
-| libuv | 26.77 Gbps | buffers echoes in memory |
+| FDS engine (epoll, event-driven) | 36.49 Gbps | drops echoes on write-block; bounded memory |
+| libuv | 27.73 Gbps | buffers echoes in memory |
 | tokio | stalled | flow control halts both sides; the bench client never reads |
 
 Lockstep echo, four connections, 60 KiB frames, 5 s:
 
 | Server | Aggregate echo rate |
 | --- | --- |
-| tokio | 724.7 MiB/s |
-| libuv | 568.3 MiB/s |
-| FDS engine (epoll) | 544.2 MiB/s |
-
-The FDS engine's drop-on-write-block discipline favors the write flood
-over the lockstep pattern. The example server in
-`examples/full_duplex_channels.rs` applies write backpressure instead
-of dropping and sustains 1112 MiB/s over eight full-duplex channels
-with 8 KiB frames.
+| FDS engine (epoll, event-driven) | 2416 MiB/s (2185, 2460 in two runs) |
+| tokio | 2297 MiB/s |
+| libuv | 1987 MiB/s (1969, 2006 in two runs) |
 
 ## UDP latency percentiles
 
 Single in-flight 32 B datagram, measured from a second process
 (`--latency-against`), 3 s.
 
-| Server | p10 | p50 | p90 | p99 | p999 | mean | stdev |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| tokio | 13.4 | 13.6 | 17.5 | 29.6 | 94.3 | 15.0 | 8.4 |
-| FDS engine (epoll) | 19.4 | 21.0 | 25.7 | 2228.0 | 5978.3 | 73.2 | 441.0 |
+| Server | p50 | p90 | p99 | p999 | mean |
+| --- | --- | --- | --- | --- | --- |
+| tokio | 13.8 | 19.9 | 27.6 | 45.0 | 16.3 |
+| FDS engine (epoll, event-driven) | 14.6 | 22.3 | 25.0 | 37.6 | 17.2 |
 
-The FDS engine's tail comes from the drop path under load: the engine
-drops the echo when the write would block, and the client re-sends.
-The engine's in-process loopback latency, measured without a competing
-client process, is p50 11.8 µs, p90 17.8 µs, p99 28.3 µs, p999 53.9 µs
-(`--latency 5`).
+All values are microseconds. The engine's in-process loopback latency,
+measured without a competing client process, is p50 14.3 µs, p90
+18.7 µs, p99 30.0 µs, p999 108.1 µs (`--latency 5`).
+
+The previous release default was an explicit busy-poll spin
+(`reactor.busy_poll=true`): every worker polled with a zero timeout,
+burning about 3.4 cores while idle and starving the latency probe on
+this two-core box. Measured under that default, the same latency row
+read p50 21.1 µs with a p99 of 1521 µs and a p999 of 3806 µs, and UDP
+echo measured 11.84 Gbps. The event-driven default is now the release
+behavior; the spin remains available through configuration for
+dedicated-core deployments.
 
 ## SCTP throughput
 
@@ -98,29 +110,29 @@ p50 22.5 µs, p90 27.3 µs, p99 50.7 µs, mean 24.7 µs.
 
 ## Reactor strategies (measured on this kernel)
 
-The same engine, three polling strategies, UDP echo 4 x 60 KiB:
+The same engine, three polling strategies, UDP echo 4 x 60 KiB, with
+the event-driven default:
 
-| Strategy | UDP echo | TCP echo |
+| Strategy | UDP echo | TCP flood |
 | --- | --- | --- |
-| epoll busy-poll | 10.31 Gbps | 20.22 Gbps |
-| io_uring | 10.14 Gbps | stalled (accept/echo path) |
-| io_uring SQPOLL | 5.65 Gbps | 0.21 Gbps |
+| epoll (event-driven, default) | 17.67 Gbps | 37.91 Gbps |
+| io_uring (event-driven) | 17.83 Gbps | stalled (accept/echo path) |
+| io_uring SQPOLL | 14.60 Gbps | ~0 (stalls) |
 
 The io_uring reactor matches epoll on UDP and stalls on TCP on this
 kernel. SQPOLL's kernel thread contends with the four workers on two
 physical cores. The startup autotuner (`scripts/autotune.sh`) selects
 the strategy per machine and kernel: the lattice minimum on this
-machine is epoll busy-poll (UDP echo 13.82 Gbps in a quiet run).
+machine is epoll event-driven (17.67 Gbps UDP echo in the strategy
+run), with io_uring disqualified by the TCP soundness floor.
 
-## Verified regressions (measured)
+## Verified observations (measured)
 
-Three optimizations measured slower than the baseline on this kernel.
-Each row states the mechanism.
-
-- MSG_ZEROCOPY on UDP: 8.18 Gbps sent / 7.86 Gbps echoed, against
-  10.38 / 10.37 baseline. The kernel copies the datagram at send time
-  and never references the user pages; the feature self-disables after
-  a 5 ms grace and falls back to the copy path.
+- MSG_ZEROCOPY on UDP: the feature self-disables after a 5 ms grace and
+  falls back to the copy path; the kernel copies loopback datagrams at
+  send time and never references the user pages. With the event-driven
+  default the ZC path measures 17.19 Gbps sent against a 17.67 Gbps
+  baseline, within run variance of each other.
 - io_uring TCP: the accept/echo path stalls under the write flood.
 - io_uring SQPOLL: the kernel polling thread loses on 2C/4T.
 

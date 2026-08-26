@@ -89,7 +89,8 @@ pub struct ReactorConfig {
     pub strategy: ReactorStrategy,
     /// Preallocated event array capacity per reactor.
     pub max_events: usize,
-    /// Busy-poll the ready queue to empty before yielding.
+    /// Busy-poll the ready queue to empty before yielding (explicit
+    /// spin with a zero epoll timeout; for dedicated cores only).
     pub busy_poll: bool,
     /// Poll timeout in milliseconds when not busy-polling.
     pub timeout_ms: i32,
@@ -105,7 +106,7 @@ impl Default for ReactorConfig {
         ReactorConfig {
             strategy: ReactorStrategy::default(),
             max_events: 256,
-            busy_poll: true,
+            busy_poll: false,
             timeout_ms: 0,
             io_uring_entries: 256,
             io_uring_sq_thread: 0,

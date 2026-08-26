@@ -521,9 +521,10 @@ soundness floor (a candidate whose TCP path cannot sustain half the
 best TCP rate is disqualified, because a reactor that stalls its
 connection path is not a viable production choice), and selects the
 remaining candidate with the highest UDP throughput. On the reference
-machine the measured order is: readiness-driven busy-poll first,
-completion-driven second, completion-driven with a kernel polling
-thread last. The winner is a lattice minimum: the finite set of
+machine the measured order is: readiness-driven first, completion-driven
+second, completion-driven with a kernel polling thread last; the
+completion-driven candidates are disqualified on this kernel by the TCP
+soundness floor. The winner is a lattice minimum: the finite set of
 strategy realizations, graded by the measured boundary-enriched cost,
 with the soundness floor as the admissibility predicate.
 

@@ -1,8 +1,9 @@
 # FDS
 
 Fast Data Transmission. A Linux network engine for TCP, UDP, and SCTP,
-written in Rust. The engine is nonblocking, edge-triggered, busy-polled,
-batched, and zero-allocation on the hot path.
+written in Rust. The engine is nonblocking, edge-triggered, event-driven,
+batched, and zero-allocation on the hot path. An explicit busy-poll spin
+is available through configuration for dedicated-core deployments.
 
 FDS is the transport layer under Atomos, an HTTP server. It is also a
 library for building custom protocols. See the [paper](docs/paper/thesis.pdf)
