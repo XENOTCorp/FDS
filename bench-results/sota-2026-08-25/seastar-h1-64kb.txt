@@ -1,2 +1,0 @@
-Requests/sec:   2351.52
-Transfer/sec:    147.64MB

@@ -1,0 +1,43 @@
+[workspace]
+resolver = "2"
+members = ["crates/mol", "crates/fds", "crates/fds-engine", "crates/fds-detect"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.97.1"
+license = "Apache-2.0"
+
+# Release profile: silicon-level settings per the FDS build standard:
+# opt-level 3, fat LTO, single codegen unit, abort on panic, overflow and
+# debug assertions off. This is the final-build profile only. Iteration
+# happens in dev, where the settings below keep the loop fast.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+overflow-checks = false
+debug-assertions = false
+# Stripped symbols shrink the binary cache footprint (I-cache and d-cache
+# share the same physical cache on Broadwell). Backtraces are already
+# useless with panic=abort.
+strip = true
+
+# Dev profile: own code at opt-level 1 (still debuggable, still checks
+# overflow and assertions) with dependencies at opt-level 3 (compiled once,
+# cached): fast builds, fast test execution. On this host
+# ~/.cargo/config.toml overrides manifest profiles (cargo 1.97: home
+# config wins), pinning dev opt-level=0. This manifest stays the portable
+# baseline for machines without that config.
+[profile.dev]
+opt-level = 1
+overflow-checks = true
+debug-assertions = true
+
+[profile.dev.package."*"]
+opt-level = 3
+
+# Note: the test profile always unwinds (cargo forces it; a `panic` setting
+# here is ignored with a warning), so `cargo test --release` works even
+# though the release profile sets panic=abort.

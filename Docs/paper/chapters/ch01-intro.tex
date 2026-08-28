@@ -1,0 +1,70 @@
+\chapter{Introduction}\label{ch:intro}
+
+\section{Motivation}
+\label{sec:motivation}
+
+A network dataplane is the part of a protocol stack that moves bytes on the hot path: parsing, validating, filtering, routing, buffering, and exchanging data with the transport. In the construction of network dataplanes, two notions organize the work. An \emph{atom} is the smallest useful component: a pure or effectful transformation with no hidden state, total on its declared domain. A \emph{molecule} is a composition of atoms (sequential or tensorial) with bounded internal state; a ring buffer, a parser, and the whole receive path are molecules. The engineering target is concrete: \emph{zero allocation on the hot path}: no heap traffic, no per-packet allocation, no copy that can be fused away.
+
+The target is hard because the requirement is global (an allocation anywhere in a composed pipeline defeats the guarantee everywhere) and because the usual answers to compositionality, abstraction layers, dynamic dispatch, managed containers, are themselves the most common sources of allocation. A dataplane that must be allocation-free by construction must therefore be \emph{optimized by composition}: the object of study is a family of stateful transformations together with the rules for joining them, and the performance of a pipeline is a property of how its parts are wired.
+
+Sequential machines are the natural model: Mealy machines \citep{mealy} compute deterministically from a fixed state space, and Moore's analysis \citep{moore} established the basic shape of minimization. What is missing is a compositional, algebraic treatment: a category whose objects are types and whose morphisms are machines, closed under the two composition schemes a dataplane uses (sequential ($\circ$) and parallel ($\otimes$)) and in which engineering questions have theorem-shaped answers. Does normalization preserve behavior and cost? Is the minimal state space computable? When does a loop provably converge? When is a pipeline provably allocation-free? This thesis answers them by developing the category \textbf{Mol} of stateful transformations and proving the structure theorems that make it a foundation.
+
+\section{Thesis statement}
+\label{sec:thesis-statement}
+
+\textbf{Thesis.} The category \textbf{Mol} of stateful transformations (deterministic Mealy machines $(S, \mathit{step})$ with $\mathit{step} : S \times A \to B \times S$, quotiented by the state-space bijection condition) is a complete algebraic foundation for the construction of zero-allocation network dataplanes: every dataplane artifact is a molecule, molecules compose sequentially and in parallel within a symmetric monoidal category, and the engineering properties of dataplanes (normalization, minimization, loop convergence, batching, zero allocation, solvability of design problems) are theorems of Mol.
+
+The claim rests on three supports. \emph{Compositionality:} Mol is symmetric monoidal \citep{maclane}, with tensor the tuple product, unit $()$, and coherence from Mac Lane's theorem; results about pipelines are results about morphisms. \emph{Completeness:} the catalog \autoref{thm:1}--\autoref{thm:68} covers the category structure (\autoref{thm:1}--\autoref{thm:8}, \autoref{thm:67}, \autoref{thm:68}), equational theories and rewrite systems (\autoref{thm:9}--\autoref{thm:19}, \autoref{thm:54}), free molecules and normal forms (\autoref{thm:20}--\autoref{thm:24}), cost enrichment and optimality (\autoref{thm:25}--\autoref{thm:32}, \autoref{thm:53}), pure/effectful decomposition (\autoref{thm:33}--\autoref{thm:37}), minimal state spaces (\autoref{thm:38}--\autoref{thm:41}), loops and feedback (\autoref{thm:42}--\autoref{thm:45}), batching (\autoref{thm:46}--\autoref{thm:48}), zero allocation (\autoref{thm:49}--\autoref{thm:50}, \autoref{thm:55}), design decision problems (\autoref{thm:51}--\autoref{thm:52}), and kernel-boundary optimization (\autoref{thm:56}--\autoref{thm:66}). \emph{Honesty:} every theorem carries a complete proof; [N] statements are original and proved with elementary means, [C] statements restate classical results with provenance cited; computational claims are verified by executable Rust tools whose logs appear in \autoref{app:a}; no conjecture is presented as a theorem.
+
+\section{Contributions and theorem catalog}
+\label{sec:contributions}
+
+The theorems of this thesis are grouped by the chapter that states and
+proves each. Statements without a citation are original to this thesis;
+classical results are restated and proved inside Mol with the source
+cited. Around the theorems stand the framework (\autoref{ch:mol}),
+which recasts Mealy-style sequential machines \citep{mealy,moore} as
+morphisms, the verification of computational claims by executable Rust
+tools (logs in \autoref{app:a}), and a companion software standard that
+turns the theorems into enforceable engineering policy.
+
+\autoref{ch:mol} proves the category structure: composition,
+well-definedness of the state-space quotient, symmetric monoidal
+structure, the pure and effectful subcategories, bisimulation
+congruence, tensor closure, and determinism. \autoref{ch:lawvere}
+models rings, parsers, and transports as equational theories.
+\autoref{ch:rewrite} proves termination, confluence, and Knuth--Bendix
+completion for the rewrite engine. \autoref{ch:free} constructs free
+molecules and proves finiteness of normal forms and their completeness
+as a lookup table. \autoref{ch:enrich} proves cost optimality by
+shortest paths and the refinement order. \autoref{ch:kleisli} proves
+the decomposition of every hybrid molecule into pure, effectful, and
+pure factors, and the traced structure of loops. \autoref{ch:coalgebra}
+proves minimal state spaces and compositional bounds. \autoref{ch:trace}
+proves contraction bounds for fixed-iteration loops. \autoref{ch:operad}
+proves the batching laws. \autoref{ch:linear} proves cut elimination as
+pipeline fusion and linearity as a zero-allocation guarantee.
+\autoref{ch:situations} proves the finiteness and decidability of
+design decision problems. \autoref{ch:breakthroughs} proves the
+kernel-boundary laws, the affine crossover, the optimization lattice,
+the band contraction of the admission estimate, and the route
+automaton theorems.
+\section{Scope}
+\label{sec:scope}
+
+This thesis is a synthesis-and-application thesis with deliberately bounded scope; the boundaries are part of the argument.
+
+\textbf{In scope.} Mol and its structure theorems \autoref{thm:1}--\autoref{thm:68}, each with a complete proof; the application of the theory to dataplane engineering: normalization, dispatch, batching, minimization, loop analysis, zero-copy reasoning, kernel-boundary cost, and design decision problems; and the verification of every computational claim by executable Rust tools, with PASS logs in \autoref{app:a} and catalogs in \autoref{app:b}.
+
+\textbf{Out of scope.} This thesis does not construct a transport engine. A companion implementation of TCP, UDP, and SCTP lives in the same repository, in the \texttt{Code/} tree, and is not a substitute for the proofs. Machine-specific performance techniques (socket options, polling strategies, SIMD, syscall catalogs) appear only in the companion standard's non-normative appendix, not as theorems. A complete machine-checked formalization of the catalog is future work and is not claimed.
+
+\textbf{Methodological filter.} No conjecture is presented as a theorem; any item that cannot be proved as stated is weakened, stated precisely, or moved to future work. [C] statements restate classical results proved inside Mol, with the original cited; [N] statements are original and proved with elementary machinery. Every computational claim is discharged by an executable Rust tool; no argument relies on unverified computation.
+
+\section{Roadmap}
+\label{sec:roadmap}
+
+\textbf{Part I: Foundations} (\autoref{ch:prelim}--\autoref{ch:kleisli}). \autoref{ch:prelim} fixes the categorical machinery: monoidal, symmetric monoidal, and traced monoidal categories \citep{maclane,joyalsv}; monads and Kleisli; coalgebras; Lawvere theories \citep{lawvere}; operads and clubs \citep{leinster,kelly}; effectus theory; linear logic \citep{girard}; locally presentable categories \citep{adamek}. \autoref{ch:mol} defines Mol and its subcategories (\autoref{thm:1}--\autoref{thm:8}); \autoref{ch:lawvere} models rings, parsers, and transports as Lawvere theories (\autoref{thm:9}--\autoref{thm:12}); \autoref{ch:rewrite} develops the rewrite engine, with Knuth--Bendix completion \citep{knuthbendix} and Newman confluence \citep{newman} (\autoref{thm:13}--\autoref{thm:19}, \autoref{thm:54}); \autoref{ch:free} constructs free molecules and normal forms (\autoref{thm:20}--\autoref{thm:24}); \autoref{ch:enrich} proves cost optimality and refinement (\autoref{thm:25}--\autoref{thm:32}, \autoref{thm:53}); \autoref{ch:kleisli} proves the decomposition $M = q\circ e\circ p$ (\autoref{thm:33}--\autoref{thm:37}).
+
+\textbf{Part II: Structure theorems} (\autoref{ch:coalgebra}--\autoref{ch:linear}). \autoref{ch:coalgebra}: minimal realization and compositional bounds \citep{nerode,hopcroft} (\autoref{thm:38}--\autoref{thm:41}). \autoref{ch:trace}: feedback and fixed-iteration loops, with Banach--Dobrushin contraction bounds \citep{banach,dobroushin} (\autoref{thm:42}--\autoref{thm:45}). \autoref{ch:operad}: operadic composition and batching (\autoref{thm:46}--\autoref{thm:48}). \autoref{ch:linear}: cut elimination as fusion, linearity as zero allocation (\autoref{thm:49}--\autoref{thm:50}, \autoref{thm:55}).
+
+\textbf{Part III: Applications} (\autoref{ch:situations}--\autoref{ch:conclusion}). \autoref{ch:situations}: a situation is a triple $(A\to B, \Phi, \bar{c})$, a solution a molecule $M$ with $M \vdash \Phi$ and $\mathrm{cost} (M) \leq \bar{c}$ (\autoref{thm:51}--\autoref{thm:52}). \autoref{ch:testing}: law tests, bisimulation \citep{park}, model-based testing, fuzzing, cost regression. \autoref{ch:related}: related work. \autoref{ch:conclusion}: summary, limitations, future work. \autoref{app:a}: proof-checking scripts and PASS logs; \autoref{app:b}: optimization and testing catalogs.

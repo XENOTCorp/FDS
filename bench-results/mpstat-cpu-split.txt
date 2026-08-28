@@ -1,9 +1,0 @@
-# kernel vs user CPU split during load — 2026-08-24 19:09:02Z
-# host: xenot | cpu: Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz | kernel: 7.2.0_1
-# tool: mpstat -P ALL | params: fds --bench running | duration: 5s
-Average:     CPU    %usr   %nice    %sys %iowait    %irq   %soft  %steal  %guest  %gnice   %idle
-Average:     all    5.90    0.00   17.84    0.00    0.25    4.65    0.00    0.00    0.00   71.36
-Average:       0    6.12    0.00    9.69    0.00    0.00    2.55    0.00    0.00    0.00   81.63
-Average:       1    4.04    0.00    9.60    0.00    0.00    2.53    0.00    0.00    0.00   83.84
-Average:       2    7.00    0.00   27.50    0.00    0.50    7.00    0.00    0.00    0.00   58.00
-Average:       3    6.44    0.00   24.26    0.00    0.50    6.44    0.00    0.00    0.00   62.38

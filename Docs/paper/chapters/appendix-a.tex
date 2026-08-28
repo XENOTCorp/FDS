@@ -1,0 +1,40 @@
+\chapter{Proof-Checking Methodology}\label{app:a}
+
+Every theorem of this thesis carries a complete proof in the text. The proofs were written before finalization and are self-checked during authoring: each step is justified by an axiom, a definition, or an earlier step, and no conjecture is presented as a theorem. This appendix records the verification discipline that complements the pencil-and-paper proofs and the machinery that discharges the computational claims.
+
+\section{The Verification Discipline}
+Claims in the thesis fall into two classes, with different verification regimes.
+
+\textbf{Structural claims} (the existence, uniqueness, congruence, finiteness, and soundness statements of the catalog) are proved in full in the text and are the subject of the proofs themselves. Nothing in this class is outsourced to a tool; the tools below never substitute for a proof, they verify specific \emph{computational} consequences of one.
+
+\textbf{Computational claims} (termination of a completion procedure, exhaustiveness of a normal-form enumeration, satisfaction of a numerical bound, existence of a bisimulation witness) assert that a procedure run over finitely many cases terminates with the claimed outcome. These are claims about the execution of a finite computation, and they are verified by executable tools written in Rust, using only the standard library. The constraint is deliberate: the verification tooling must build offline with no third-party dependencies, so that the certification of a computational claim never depends on the availability or behavior of external packages. The tools live in the \texttt{verify} subdirectory of the paper sources.
+
+The output of every tool run is a \texttt{PASS} or \texttt{FAIL} line together with the evidence it produced. All verification is deterministic. A claimed \texttt{PASS} must reproduce on a clean build.
+
+\section{The Verification Tools}
+Six tools implement the computational checks. Table \ref{tab:verify-tools} lists each tool, the theorems whose computational content it verifies, and precisely what it checks. Each tool is an independent binary; the build script runs all six under its \texttt{--verify} flag and fails the paper build on any \texttt{FAIL}.
+
+\begin{table}[!htbp]
+\centering
+\caption{The proof-verification tools. Each tool is a Rust binary in \texttt{verify/}, std-only, deterministic, and prints \texttt{PASS} or \texttt{FAIL}.}
+\label{tab:verify-tools}
+\small
+\begin{tabular}{@{}llp{7.6cm}@{}}
+\toprule
+Tool & Theorems & What it checks\\
+\midrule
+\texttt{kb\_completion} & \ref{thm:15} (supports \ref{thm:13}--\ref{thm:14}, \ref{thm:19}) & Runs Knuth--Bendix completion on the ring theory of \autoref{ch:lawvere}; asserts that completion terminates in a complete system and that every critical pair generated during completion joins.\\
+\texttt{normal\_forms} & \ref{thm:22}--\ref{thm:24} & Exhaustive enumeration of normal forms on small finite signatures; asserts finiteness of hom-sets, uniqueness of normal forms, and the completeness equivalence $M \approx M' \iff \mathrm{NF} (M) = \mathrm{NF} (M')$ on all enumerated pairs.\\
+\texttt{contraction} & \ref{thm:43} & Bound arithmetic: for sampled $(\alpha, \varepsilon, d_0)$ with $\alpha < 1$, computes $k (\alpha,\varepsilon,d_0) = \lceil \ln (\varepsilon (1-\alpha)/d_0)/\ln\alpha\rceil$ and asserts the fixed-point iterate stays within $\varepsilon$ after $k$ steps.\\
+\texttt{bisim} & \ref{thm:6} & Exhaustive congruence check: enumerates small finite machines, computes behavioral equivalence, and asserts that the equivalence is preserved by composition $\circ$ and tensor $\otimes$, i.e.\ that $\approx$ is a congruence.\\
+\texttt{batch\_amort} & \ref{thm:47} & On sample batch sizes $n$, asserts the amortization bound $\mathrm{cost} (\mathrm{batch}_n) \le n\cdot\mathrm{cost} (\mathrm{single}) + \mathrm{fixed} (n)$ and that $\mathrm{fixed} (n)/n \to 0$ along the sample.\\
+\texttt{affine\_typer} & \ref{thm:55} & Linear typing of sample molecules in the affine system: asserts every variable is consumed exactly once, contraction and weakening are rejected, and evaluation preserves the leaf multiset and never increases the node count (no allocation).\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Reproducibility}
+The verification pipeline is part of the repository, not an appendix to it. The sources of all six tools, their \texttt{Cargo} manifest, and the full \texttt{PASS} logs of the runs that certify the claims of the thesis are committed at \texttt{Docs/paper/verify/}, with the logs in \texttt{Docs/paper/verify/logs/}. Each log records the tool name, the commit or source hash of the tool, the sampled inputs, and the \texttt{PASS} verdict. A reviewer reproduces the verification by building the \texttt{verify} crate and running each binary; the \texttt{--verify} flag of the build script runs all six in sequence and gates the paper build on their success.
+
+\section{Scope of the Machine Checks}
+The checks verify the \emph{computational content} of the cited theorems on the sampled or enumerated finite cases; they do not prove the theorems. The structural argument (why the finite check licenses the general statement) is always the theorem's proof in the text, and the tool is cited as evidence only for the specific run it performs. The tooling here is the minimum that makes every computational claim of the thesis reproducible, and no more.

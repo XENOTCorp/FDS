@@ -1,0 +1,27 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Code
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install datapath libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsctp-dev liburing-dev pkg-config
+        working-directory: .
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          components: clippy
+      - name: Test
+        run: cargo test --release
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings

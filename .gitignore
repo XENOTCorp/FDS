@@ -1,21 +1,28 @@
 # Build artifacts
+Code/target/
+Docs/paper/verify/target/
 target/
-*.pdf
 
-# Editor/OS noise
+# Generated bench output (published snapshot lives in Docs/benchmarks/sota-*)
+Code/bench-results/
+
+# Editor and OS noise
 *.swp
 .DS_Store
 
-# Subagent-driven development scratch (git-ignored)
+# Subagent scratch (not product)
 .superpowers/
 
-# LaTeX artifacts (scoped to docs/paper root; verify logs are committed)
-docs/paper/*.aux
-docs/paper/*.log
-docs/paper/*.out
-docs/paper/*.toc
-docs/paper/*.bbl
-docs/paper/*.blg
-docs/paper/*.fls
-docs/paper/*.fdb_latexmk
-docs/paper/verify/target/
+# LaTeX auxiliaries
+Docs/paper/*.aux
+Docs/paper/*.log
+Docs/paper/*.out
+Docs/paper/*.toc
+Docs/paper/*.bbl
+Docs/paper/*.blg
+Docs/paper/*.fls
+Docs/paper/*.fdb_latexmk
+
+# Generated PDFs except the thesis
+*.pdf
+!Docs/paper/thesis.pdf

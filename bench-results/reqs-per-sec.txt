@@ -1,6 +1,0 @@
-# requests per second (loopback) — 2026-08-24 19:08:29Z
-# host: xenot | cpu: Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz | kernel: 7.2.0_1
-# tool: wrk vs Atomos-on-FDS + fds pps | params: HTTP/1.1 keep-alive | duration: 5s
-fds echo round trips/sec: 125133
-wrk atomos cached page (5s, 4x100): 95869.66 req/s
-wrk atomos 64KB file: 26651.20 req/s

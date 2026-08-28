@@ -1,8 +1,0 @@
-# H2/H3 tokio path after zero-alloc dispatch (Atomos 3257684) — 2026-08-24
-# edits: (1) Parts borrows from the http::Request (no String/HeaderMap copies per request)
-# clean-port runs (load ~1); box-load swings the timing-sensitive mux ~2x
-
-H2 seq: 12797, 12604 req/s (pre-edit clean: 11793-12629)
-H2 mux x64: 78102, 73320 req/s (pre-edit clean: 72247-78312)
-H3 seq: 7816, 8096 req/s (pre-edit clean: 7183-8009)
-H1 cached (regression guard): 98311 req/s (unchanged)

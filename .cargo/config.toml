@@ -1,8 +1,0 @@
-# Baseline build configuration (portable). On this host, codegen flags
-# (target-cpu=native, mold linker, relocation-model=pic) live in
-# ~/.cargo/config.toml — the home config overrides this project config on
-# cargo 1.97 — so this file is the portable baseline for other machines.
-# Hardware-adaptive flags (target_feature sets, L3-derived sizes) come from
-# the build tooling (sub-project 3, build/build.sh).
-[build]
-rustflags = ["-C", "relocation-model=pic"]

@@ -1,2 +1,0 @@
-bench-udp-against: 127.0.0.1:7777 — 4 sockets x 61440B, sent 11.13 Gbps, echoed 11.12 Gbps, echo completion 99.93%
-engine latency vs 127.0.0.1:7777: 34032 samples over 2s — p10  19.8µs p20  20.3µs p30  21.3µs p40  21.7µs p50  22.8µs p60  23.0µs p70  23.2µs p80  23.4µs p90  24.3µs p95  27.1µs p99  2171.4µs p999 4595.3µs — mean 58.4µs, median 22.8µs, stdev 341.4µs, jitter(stdev/mean) 5.85

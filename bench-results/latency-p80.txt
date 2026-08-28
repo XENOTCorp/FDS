@@ -1,4 +1,0 @@
-# RTT p80 (loopback, UDP echo) — 2026-08-24 19:07:28Z
-# host: xenot | cpu: Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz | kernel: 7.2.0_1
-# tool: fds --latency | params: nearest-rank quantile, µs | duration: 5s
-p80 17.1µsµs (2026-08-24T19:07Z)

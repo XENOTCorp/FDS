@@ -1,0 +1,23 @@
+[package]
+name = "fds-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "FDS echo engine binary: workers, CLI, and loopback benches on the fds library."
+
+[[bin]]
+name = "fds"
+path = "src/main.rs"
+
+[dependencies]
+fds = { path = "../fds" }
+mol = { path = "../mol" }
+libc = "0.2"
+rustix = { version = "1", features = ["net", "event"] }
+
+[features]
+default = ["sctp", "io-uring", "af-xdp"]
+sctp = ["fds/sctp"]
+io-uring = ["fds/io-uring"]
+af-xdp = ["fds/af-xdp"]

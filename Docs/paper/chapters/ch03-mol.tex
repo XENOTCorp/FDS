@@ -1,0 +1,725 @@
+\chapter{The Category Mol}\label{ch:mol}
+
+This chapter builds the algebraic foundation of the thesis. The objects of the
+category \textbf{Mol} are types; the morphisms are \emph{stateful
+transformations}: deterministic Mealy machines
+$(S, \mathrm{step})$ with $\mathrm{step} : S \times A \to B \times S$,
+quotiented by the condition that two machines are equal exactly when their
+state spaces are in bijection and the bijection carries one transition
+structure to the other. State is then an implementation detail: a morphism is
+an input--output behavior together with its internal state space, not a
+particular machine. On this we establish the category structure (\autoref{thm:1}--\autoref{thm:2}),
+the symmetric monoidal structure (\autoref{thm:3}), the subcategories of pure, effectful,
+and hybrid molecules (\autoref{thm:4}--\autoref{thm:5}), behavioral equivalence as a congruence (\autoref{thm:6}),
+closure under the tensor (\autoref{thm:7}), and determinism (\autoref{thm:8}). Throughout, types are
+the types of the ambient universe of \autoref{ch:prelim}, $A \times B$ is the
+product type, and $()$ is the unit type.
+
+\section{Machines and Morphisms}\label{sec:mol-machines}
+
+\begin{definition}[Machine]\label{def:machine}
+Let $A$ and $B$ be types. A \emph{machine} from $A$ to $B$ is a pair
+$(S, \mathrm{step})$ consisting of a type $S$, the \emph{state space}, and a
+total function
+\[ \mathrm{step} : S \times A \to B \times S . \]
+A machine is a deterministic Mealy machine: on input $a$ in state $s$ it
+produces output $b$ and next state $s_1$ where
+$\mathrm{step} (s, a) = (b, s_1)$ \citep{mealy, moore}. Determinism is built
+in: $\mathrm{step}$ is a function, so from a given state and input exactly one
+output and one next state result.
+\end{definition}
+
+\begin{definition}[State-space isomorphism]\label{def:stiso}
+Two machines $(S, \mathrm{step})$ and $(S', \mathrm{step}')$ from $A$ to $B$
+are \emph{state-space isomorphic}, written
+$(S, \mathrm{step}) \cong (S', \mathrm{step}')$, if there exists a bijection
+$\varphi : S \to S'$ such that for all $s \in S$ and $a \in A$,
+\[ \mathrm{step} (s, a) = (b, s_1) \;\Longrightarrow\;
+   \mathrm{step}'\bigl (\varphi (s), a\bigr) = \bigl (b, \varphi (s_1)\bigr) . \]
+\end{definition}
+
+\begin{remark}
+State-space isomorphism is an equivalence relation: reflexive with
+$\varphi = \mathrm{id}_S$, symmetric with $\varphi^{-1}$, transitive by
+composing bijections. Isomorphic machines differ only in the names of their
+states: for every input they emit the same outputs and traverse matching
+states. This is the \emph{bijection quotient} announced in
+\autoref{ch:intro}: state is unobservable in Mol except through its type.
+\end{remark}
+
+\begin{definition}[The category Mol]\label{def:mol}
+The category \textbf{Mol} has the types as objects. For types $A$ and $B$, a
+morphism $f : A \to B$ of Mol is an equivalence class $[S, \mathrm{step}]$ of
+machines from $A$ to $B$ under state-space isomorphism. Composition and
+identity are defined in \autoref{def:comp} and \autoref{def:id}; that they
+are well defined on classes and satisfy the category laws is the content of
+\autoref{thm:1} and \autoref{thm:2}.
+\end{definition}
+
+\begin{definition}[Composition]\label{def:comp}
+Let $f = [S, \mathrm{step}] : A \to B$ and $g = [T, \mathrm{tstep}] : B \to C$
+be morphisms of Mol. Their \emph{composite} is the class
+\[ g \circ f = [\, T \times S,\; \mathrm{comp} \,] : A \to C , \]
+where $\mathrm{comp} : (T \times S) \times A \to C \times (T \times S)$ is given
+by
+\[ \mathrm{comp}\bigl ((t, s), a\bigr) = \bigl (c, (t_1, s_1)\bigr)
+   \quad\text{whenever}\quad (b, s_1) = \mathrm{step} (s, a),\; (c, t_1)
+   = \mathrm{tstep} (t, b) . \]
+The composite machine runs $f$ on the input, feeds $f$'s output and the
+$T$-component of the state to $g$, and records both next states; the state
+space of a composite is the product of the state spaces. That the class
+$g \circ f$ is independent of the chosen representatives is \autoref{thm:2}.
+\end{definition}
+
+\begin{definition}[Identity]\label{def:id}
+For each type $A$, the \emph{identity} morphism is
+\[ \mathrm{id}_A = [\, (),\; \mathrm{idstep} \,] : A \to A ,
+   \qquad \mathrm{idstep}\bigl ((), a\bigr) = (a, ()) . \]
+The identity machine has the unit type as state space and copies its input to
+the output.
+\end{definition}
+
+\begin{theorem}[Mol is a category (\autoref{thm:1})]\label{thm:1}
+\textbf{[N].} Composition of $(S, \mathrm{step})$ classes is associative with
+identity: Mol is a category.
+\end{theorem}
+
+\begin{proof}
+Composition on classes is well defined by \autoref{thm:2}, proved below; given
+representatives, the composite class is computed as in \autoref{def:comp}. We
+verify the category laws on representatives; the quotient inherits them.
+
+\emph{Associativity.} Let $f : A \to B$, $g : B \to C$, $h : C \to D$ be
+realized by $(S, \mathrm{step})$, $(T, \mathrm{tstep})$,
+$(R, \mathrm{rstep})$. By \autoref{def:comp}, $(h \circ g) \circ f$ and
+$h \circ (g \circ f)$ are realized by the machines with state spaces
+$(R \times T) \times S$ and $R \times (T \times S)$. Unwinding the definition,
+both machines process an input $a$ by running $f$, then $g$, then $h$ in that
+order, emitting $h$'s output and recording all three next states; the two
+machines differ only in how the state triple is bracketed. Formally, the
+canonical bijection
+\[ \varphi : (R \times T) \times S \to R \times (T \times S),
+   \qquad \varphi\bigl ((r, t), s\bigr) = \bigl (r, (t, s)\bigr) , \]
+is a state-space isomorphism: if the first machine takes
+$x = (r, t), s)$ on input $a$ to $(d, x_1) = (d, (r_1, t_1), s_1))$, then
+the second takes $\varphi (x) = (r, (t, s))$ on $a$ to
+$(d, (r_1, (t_1, s_1))) = (d, \varphi (x_1))$, because both machines run the
+same three components in the same order on the same data. Hence
+$(h \circ g) \circ f = h \circ (g \circ f)$ in Mol.
+
+\emph{Identity laws.} For $f = [S, \mathrm{step}] : A \to B$, the composite
+$\mathrm{id}_B \circ f$ is realized by $(() \times S, \mathrm{comp})$, which
+runs $f$ and then copies the output, taking $((), s)$ on input $a$ to
+$(b, (), s_1))$ when $\mathrm{step} (s, a) = (b, s_1)$. The bijection
+$\varphi ((), s) = s$ is a state-space isomorphism onto $f$, since
+$\mathrm{step} (\varphi ((), s), a) = \mathrm{step} (s, a) = (b, s_1) =
+(b, \varphi ((), s_1))$; so $\mathrm{id}_B \circ f = f$. Symmetrically,
+$f \circ \mathrm{id}_A = f$ via $\varphi (s, ()) = s$. Both laws therefore
+hold on classes.
+\end{proof}
+
+\begin{theorem}[The bijection quotient is well defined (\autoref{thm:2})]\label{thm:2}
+\textbf{[N].} The state-space bijection quotient is well defined: equivalent
+machines compose to equivalent machines. If
+$(S, \mathrm{step}) \cong (S_1, \mathrm{step}_1)$ and
+$(T, \mathrm{tstep}) \cong (T_1, \mathrm{tstep}_1)$, then
+\[ (T, \mathrm{tstep}) \circ (S, \mathrm{step})
+   \;\cong\; (T_1, \mathrm{tstep}_1) \circ (S_1, \mathrm{step}_1) , \]
+so the composite class $[g \circ f]$ is independent of the representatives.
+\end{theorem}
+
+\begin{proof}
+Let $\varphi : S \to S_1$ and $\psi : T \to T_1$ be the state-space
+isomorphisms, so that
+$\mathrm{step}_1 (\varphi (s), a) = (b, \varphi (s_1))$ whenever
+$\mathrm{step} (s, a) = (b, s_1)$, and likewise for $\psi$. The two composites
+are realized by $(T \times S, \mathrm{comp})$ and
+$(T_1 \times S_1, \mathrm{comp}_1)$ with the transition law of
+\autoref{def:comp}. Define $\Phi : T \times S \to T_1 \times S_1$ by
+$\Phi (t, s) = (\psi (t), \varphi (s))$; $\Phi$ is a bijection. Suppose
+$\mathrm{comp} ((t, s), a) = (c, (t_1, s_1))$, that is,
+$(b, s_1) = \mathrm{step} (s, a)$ and $(c, t_1) = \mathrm{tstep} (t, b)$. Then
+\[ \mathrm{comp}_1\bigl (\Phi (t, s), a\bigr)
+   = \mathrm{comp}_1\bigl (\psi (t), \varphi (s), a\bigr)
+   = \bigl (c, (\psi (t_1), \varphi (s_1))\bigr)
+   = \bigl (c, \Phi (t_1, s_1)\bigr) , \]
+where the middle equality applies the isomorphism hypotheses to the two
+component steps. Hence $\Phi$ is a state-space isomorphism of the composites,
+which is the claim.
+\end{proof}
+
+\begin{remark}
+With \autoref{thm:2} in place, composition is a genuine function on the
+hom-sets of Mol, and \autoref{thm:1} makes Mol a category. The same
+product-of-isomorphisms argument shows that the tensor product of the next
+section is well defined on classes.
+\end{remark}
+
+\section{Symmetric Monoidal Structure}\label{sec:mol-mon}
+
+The dataplane composes pipelines in two ways: sequentially, by $\circ$, and in
+parallel, by a tensor product that pairs independent subpipelines. For Mol the
+tensor is the tuple product and the unit is $()$.
+
+\begin{definition}[Tensor product]\label{def:tensor}
+On objects, $A \otimes B = A \times B$, and the unit object is
+$I = ()$. On morphisms, for $f = [S, \mathrm{step}] : A \to B$ and
+$g = [T, \mathrm{tstep}] : C \to D$,
+\[ f \otimes g = [\, S \times T,\; \mathrm{step} \otimes \mathrm{tstep} \,]
+   : A \times C \to B \times D , \]
+where
+\[ (\mathrm{step} \otimes \mathrm{tstep})\bigl ((s, t), (a, c)\bigr)
+   = \bigl ((b, d), (s_1, t_1)\bigr)
+   \quad\text{whenever}\quad (b, s_1) = \mathrm{step} (s, a),\; (d, t_1)
+   = \mathrm{tstep} (t, c) . \]
+The two machines run independently, one on each component of the input, and
+the state space of a tensor is the product of the state spaces.
+\end{definition}
+
+\begin{definition}[Braiding]\label{def:braid}
+For types $A$ and $B$, the \emph{braiding} is the pure morphism
+\[ \sigma_{A,B} = [\, (),\; \mathrm{swap} \,] : A \times B \to B \times A ,
+   \qquad \mathrm{swap}\bigl ((), (a, b)\bigr) = \bigl ((b, a), ()\bigr) . \]
+\end{definition}
+
+\begin{theorem}[Mol is symmetric monoidal (\autoref{thm:3})]\label{thm:3}
+\textbf{[C].} Mol is symmetric monoidal: the tensor product of
+\autoref{def:tensor} with unit $()$ is a bifunctor; the associator, the
+unitors, and the braiding of \autoref{def:braid} are the canonical pure
+morphisms; and they satisfy the coherence conditions of Mac Lane
+\citep{maclane}.
+\end{theorem}
+
+\begin{proof}
+\emph{Well definedness.} If $\varphi : S \to S_1$ and $\psi : T \to T_1$ are
+state-space isomorphisms of $f$ with $f_1$ and of $g$ with $g_1$, then
+$\Phi (s, t) = (\varphi (s), \psi (t))$ is a state-space isomorphism of
+$f \otimes g$ with $f_1 \otimes g_1$: the square commutes componentwise by the
+two isomorphism hypotheses, exactly as in the proof of \autoref{thm:2}. The
+tensor therefore descends to classes.
+
+\emph{Bifunctoriality.} The tensor of identity machines
+$((), \mathrm{idstep}) \otimes (), \mathrm{idstep})$ is realized by
+$() \times ()$ with the copy transition, the class
+$\mathrm{id}_{A \times B}$. It remains to check the interchange law: for
+$f : A \to B$, $f' : B \to C$, $g : A' \to B'$, $g' : B' \to C'$ with
+realizations $(S, \mathrm{step})$, $(S', \mathrm{step}')$, $(T, \mathrm{tstep})$,
+$(T', \mathrm{tstep}')$,
+\[ (f \otimes g) \circ (f' \otimes g')
+   = (f \circ f') \otimes (g \circ g') . \]
+The left-hand side is realized by the state space
+$(S' \times T') \times (S \times T)$: it runs $f'$ and $g'$ on the input pair,
+then $f$ and $g$ on the outputs. The right-hand side is realized by
+$(S \times S') \times (T \times T')$: it runs $f'$ then $f$, and $g'$ then
+$g$. Both machines apply the four transitions $f'$, $g'$, $f$, $g$ exactly
+once each, in that order, to the corresponding components, and the canonical
+bijection
+\[ \Phi\bigl ((s', t'), (s, t)\bigr) = \bigl ((s, s'), (t, t')\bigr) \]
+carries the state after the four transitions of the first machine to the
+state after the four transitions of the second; the outputs coincide
+componentwise. Hence $\Phi$ is a state-space isomorphism and the interchange
+law holds, so $\otimes$ is a bifunctor \citep{maclane}.
+
+\emph{Naturality of the braiding.} For $f : A \to A'$ and $g : B \to B'$
+with realizations $(S, \mathrm{step})$, $(T, \mathrm{tstep})$, both
+$(g \otimes f) \circ \sigma_{A,B}$ and
+$\sigma_{A',B'} \circ (f \otimes g)$ run $f$ on the first component and $g$
+on the second, then swap the outputs; their state spaces are
+$T \times S$ and $S \times T$, matched by the bijection
+$\Phi (t, s) = (s, t)$, which commutes with the transitions because the swap
+step is pure. Hence $\sigma$ is natural in both arguments.
+
+\emph{Associator and unitors.} The associator
+$\alpha_{A,B,C} : (A \times B) \times C \to A \times (B \times C)$ is the pure
+machine that reassociates the tuple,
+$\alpha ((), (a, b), c)) = (a, (b, c)), ())$; the left and right unitors
+$\lambda_A : () \times A \to A$ and $\rho_A : A \times () \to A$ are the pure
+projection machines, $\lambda ((), (), a)) = (a, ())$ and
+$\rho ((), (a, ())) = (a, ())$. Each is an isomorphism in Mol, its inverse
+being the pure machine running the same tuple manipulation backwards.
+
+\emph{Coherence.} The pentagon, triangle, and hexagon diagrams commute
+because both paths through each diagram compute the same function on tuples.
+In the pentagon, both composite paths reassociate
+$((A \otimes B) \otimes C) \otimes D$ to
+$A \otimes (B \otimes (C \otimes D))$, and reassociation of tuples is unique.
+In the triangle, both paths project $((A \otimes I) \otimes B)$ to
+$A \otimes B$; in the hexagon, both sides of
+\[ (1_B \otimes \sigma_{A,C}) \circ (\sigma_{A,B} \otimes 1_C)
+   = \sigma_{A,B \otimes C} \]
+map $(a, b, c)$ to $(b, c, a)$, since the left-hand side first swaps $a$ and
+$b$ and then swaps $a$ and $c$, and the right-hand side swaps the single
+$A$-component past the pair $B \otimes C$. Similarly
+$\sigma_{B,A} \circ \sigma_{A,B} = \mathrm{id}_{A \otimes B}$, since two
+swaps return the tuple. Hence $\sigma$ is a coherent symmetry. By Mac Lane's
+coherence theorem every diagram whose edges are built from $\alpha$, $\lambda$,
+$\rho$, and $\sigma$ commutes, so Mol is symmetric monoidal: and, since
+composition is by \autoref{thm:2}, the coherence equations hold on classes
+\citep{maclane}. This is the structure on which the free constructions of
+\autoref{ch:free} and the traced structure of \autoref{ch:trace} are built.
+\end{proof}
+
+\section{Pure Molecules}\label{sec:mol-pure}
+
+A molecule with no state at all computes a total function. The subcategory
+these form is the functional fragment of Mol.
+
+\begin{definition}[PureMol]\label{def:puremol}
+\textbf{PureMol} is the subcategory of Mol with the same objects and with
+morphisms the classes of machines representable with state space $()$: a
+morphism $f : A \to B$ of PureMol is a class $[(), \mathrm{step}]$. The
+quotient is trivial on pure machines: because the only bijection
+$() \to ()$ is the identity, two pure classes are equal exactly when their
+step functions agree pointwise.
+\end{definition}
+
+\begin{theorem}[PureMol is the category of functions (\autoref{thm:4})]\label{thm:4}
+\textbf{[N].} PureMol is equivalent to the category \textbf{Type} of types
+and total functions between them; in fact the two categories are isomorphic.
+\end{theorem}
+
+\begin{proof}
+Define $E : \mathrm{PureMol} \to \mathbf{Type}$ as the identity on objects
+and, on morphisms,
+$E[(), \mathrm{step}] = f$ where $\mathrm{step} ((), a) = (f (a), ())$. This is
+well defined by \autoref{def:stiso}: two pure machines are state-space
+isomorphic exactly when their step functions agree pointwise. It is a
+functor: by \autoref{def:comp} the composite of the pure machines for $f$ and
+$g$ runs $f$ then $g$ and hence represents $g \circ f$, and the identity
+machine represents $\mathrm{id}_A$. $E$ is full: every total function
+$f : A \to B$ is realized by the machine $((), \mathrm{step}_f)$ with
+$\mathrm{step}_f ((), a) = (f (a), ())$. $E$ is faithful: if
+$E[(), \mathrm{step}] = E[(), \mathrm{step}']$, the step functions agree, so
+the classes are equal. And $E$ is bijective on objects. Hence $E$ is an
+equivalence of categories \citep{maclane}; since the inverse on hom-sets
+sends $f$ to $[(), \mathrm{step}_f]$ and is the identity on objects, the
+equivalence is an isomorphism of categories. PureMol is the type
+theoretic shadow of Mol itself: objects as types, morphisms as functions.
+\end{proof}
+
+\section{Effectful Molecules and the Kleisli Category}\label{sec:mol-eff}
+
+A dataplane carries a fixed ambient \emph{context} $\mathrm{Ctx}$: the
+packet, the workspace, the request: through every pipeline stage. An
+effectful molecule is a machine whose only state is the context; composing
+effectful molecules threads a single context through both, which is exactly
+the bind of the state monad.
+
+\begin{definition}[EffMol]\label{def:effmol}
+Fix a type $\mathrm{Ctx}$ of contexts. \textbf{EffMol}$(\mathrm{Ctx})$ is the
+category with the same objects as Mol whose morphisms $A \to B$ are the step
+functions $\mathrm{step} : A \times \mathrm{Ctx} \to B \times \mathrm{Ctx}$
+These are machines with state space $\mathrm{Ctx}$: compared by literal equality
+of functions. The identity on $A$ is $\mathrm{id} (a, s) = (a, s)$, and the
+composite of $\mathrm{step} : A \times \mathrm{Ctx} \to B \times \mathrm{Ctx}$
+with $\mathrm{tstep} : B \times \mathrm{Ctx} \to C \times \mathrm{Ctx}$ is the
+\emph{context-threading} function
+\[ (\mathrm{tstep} \circ \mathrm{step})(a, s) = (c, s_2)
+   \quad\text{where}\quad (b, s_1) = \mathrm{step} (a, s),\; (c, s_2)
+   = \mathrm{tstep} (b, s_1) . \]
+Both machines see the same single context, threaded from first to second.
+\end{definition}
+
+\begin{remark}
+Every step function of EffMol$(\mathrm{Ctx})$ is a machine with state space
+$\mathrm{Ctx}$ and hence determines a class $[\mathrm{Ctx}, \mathrm{step}]$
+of Mol; but EffMol is not a subcategory of Mol under inherited composition.
+The Mol-composite of two context machines has state space
+$\mathrm{Ctx} \times \mathrm{Ctx}$(the contexts multiply) while the
+EffMol-composite threads one copy; and the EffMol identity is the class of a
+machine that is the Mol identity only when $\mathrm{Ctx}$ is a singleton.
+EffMol is the model of the effectful fragment; its relation to Mol is
+developed in \autoref{ch:kleisli}.
+\end{remark}
+
+\begin{theorem}[EffMol is the Kleisli category of the state monad (\autoref{thm:5})]\label{thm:5}
+\textbf{[N].} EffMol$(\mathrm{Ctx})$ is isomorphic to the Kleisli category of
+the state monad on $\mathrm{Ctx}$.
+\end{theorem}
+
+\begin{proof}
+Recall the state monad of \autoref{ch:prelim}: on the category of types,
+$T X = (X \times \mathrm{Ctx})^{\mathrm{Ctx}}$ with unit
+$\eta_X (x) = \lambda s.\,(x, s)$ and multiplication threading two state
+computations. Both EffMol$(\mathrm{Ctx})$ and the Kleisli category
+$\mathrm{Kl} (T)$ have the types as objects. A Kleisli morphism $A \to B$ is a
+function $A \to T B = (B \times \mathrm{Ctx})^{\mathrm{Ctx}}$, which by
+currying is exactly a function $A \times \mathrm{Ctx} \to B \times
+\mathrm{Ctx}$, i.e.\ a morphism of EffMol$(\mathrm{Ctx})$; this bijection
+$F$ on hom-sets is the identity on objects. The Kleisli identity is
+$\eta_A$, which under currying is the EffMol identity $(a, s) \mapsto (a, s)$.
+Kleisli composition is the bind $g \circ_T f = \mu_C \circ T g \circ f$, which
+uncurries to the context-threading law
+\[ (g \circ_T f)(a, s) = (c, s_2) \quad\text{where}\quad (b, s_1) = f (a, s),\; (c, s_2) = g (b, s_1) , \]
+matching \autoref{def:effmol} exactly. Hence $F$ preserves identity and
+composition; the inverse construction sends each step function to its
+curried form. $F$ is therefore an isomorphism of categories
+\citep{maclane, arxiv-monads-kleisli}. The parenthetical ``algebras over the
+monad'' of the catalog refers to the Eilenberg--Moore category, the other
+resolution of the same monad; the isomorphism here is with the Kleisli
+category, which is what the dataplane threads.
+\end{proof}
+
+\section{Hybrid Molecules}\label{sec:mol-hybrid}
+
+Real dataplane stages carry both an explicit pure state: a counter, a
+checksum register, a ring pointer: and the ambient context. A hybrid
+molecule is a machine whose state space splits as a product of a pure part
+and the context.
+
+\begin{definition}[HybridMol]\label{def:hybridmol}
+Fix the context type $\mathrm{Ctx}$. \textbf{HybridMol}$(\mathrm{Ctx})$ is
+the subcategory of Mol with the same objects and with morphisms the classes
+of machines $(S, \mathrm{step})$ whose state space $S$ is a singleton or is
+isomorphic to $S_{\mathrm{pure}} \times \mathrm{Ctx}$ for some type
+$S_{\mathrm{pure}}$. The singleton clause includes the pure identity and with
+it all pure morphisms, which the identity laws of \autoref{thm:1} require.
+Equivalently, a hybrid molecule is a machine with state space
+$S_{\mathrm{pure}} \times \mathrm{Ctx}$: a pure state component
+$S_{\mathrm{pure}}$ that the stage owns and a context component
+$\mathrm{Ctx}$ that it shares with the ambient pipeline.
+\end{definition}
+
+\begin{remark}
+HybridMol is closed under composition and tensor. The composite of hybrid
+machines with pure parts $S_{\mathrm{pure}}$ and $T_{\mathrm{pure}}$ is
+realized by
+\[ (T_{\mathrm{pure}} \times \mathrm{Ctx}) \times (S_{\mathrm{pure}} \times \mathrm{Ctx})
+   \;\cong\; (T_{\mathrm{pure}} \times S_{\mathrm{pure}} \times \mathrm{Ctx})
+   \times \mathrm{Ctx} , \]
+again of the form (pure part) $\times$ (context), the canonical isomorphism
+being a state-space isomorphism by the product case of \autoref{thm:2}; the
+tensor closes by the same computation, absorbing the extra context copy into
+the pure part, as recorded in \autoref{thm:7}. EffMol$(\mathrm{Ctx})$ sits
+inside HybridMol as the case $S_{\mathrm{pure}} = ()$. The decomposition of a
+hybrid molecule as $M = q \circ e \circ p$ with $p, q$ pure and $e$
+effectful is proved in \autoref{ch:kleisli}.
+\end{remark}
+
+\section{Behavioral Equivalence}\label{sec:mol-bisim}
+
+Two machines may differ in their state spaces yet compute the same
+transformation on input words. Behavioral equivalence identifies exactly
+those machines, and it is the relation under which Mol is quotiented in the
+minimization and testing chapters.
+
+\begin{definition}[Response]\label{def:response}
+For a machine $M = (S, \mathrm{step}) : A \to B$ and a state $s \in S$, the
+\emph{response} of $s$ is the function $r_{M,s} : A^{*} \to B^{*}$ defined by
+$r_{M,s} (\varepsilon) = \varepsilon$ and, for an input symbol $a$ and a word
+$w$ over $A$,
+\[ r_{M,s} (a \cdot w) = b \cdot r_{M,s_1} (w)
+   \quad\text{wherever}\quad \mathrm{step} (s, a) = (b, s_1) , \]
+with $\cdot$ word concatenation. The response is the full input--output
+behavior of the machine started in state $s$.
+\end{definition}
+
+\begin{definition}[Behavioral equivalence]\label{def:bisim}
+Machines $M, M' : A \to B$ are \emph{behaviorally equivalent}, written
+$M \approx M'$, if their sets of realized responses coincide:
+\[ \{ r_{M,s} : s \in S \} = \{ r_{M',s'} : s' \in S' \} . \]
+Each state of one machine realizes a response realized by some state of the
+other. For deterministic machines this relation coincides with bisimulation
+in the sense of Park \citep{park}.
+\end{definition}
+
+\begin{remark}
+State-space isomorphic machines are behaviorally equivalent: the isomorphism
+pairs states with equal responses, and the response of the image state is
+the response of the source state by \autoref{def:stiso}. Hence $\approx$ is
+well defined on the morphisms of Mol. It is an equivalence relation, being
+equality of sets, and it is strictly coarser than state-space isomorphism: a
+machine with an unused state realizes the same responses as the machine
+without it.
+\end{remark}
+
+\begin{theorem}[Behavioral equivalence is a congruence (\autoref{thm:6})]\label{thm:6}
+\textbf{[N].} Behavioral equivalence (bisimulation) is a congruence for
+$\circ$ and $\otimes$; the quotient category $\mathrm{Mol}/{\approx}$ is a
+symmetric monoidal category.
+\end{theorem}
+
+\begin{proof}
+\emph{Composition is a congruence.} First observe that the response of a
+state determines the responses of all its successors: if
+$r_{M,s} = r_{M,s'}$, $\mathrm{step} (s, a) = (b, s_1)$, and
+$\mathrm{step} (s', a) = (b, s_1')$, then for every word $w$,
+$b \cdot r_{M,s_1} (w) = r_{M,s} (a \cdot w) = r_{M,s'} (a \cdot w) =
+b \cdot r_{M,s_1'} (w)$, so $r_{M,s_1} = r_{M,s_1'}$. Now let $f, g$ be
+realized by $(S, \mathrm{step})$, $(T, \mathrm{tstep})$ and write
+$R_f = \{ r_{f,s} \}$, $R_g = \{ r_{g,t} \}$. Reading an input word symbol by
+symbol, the composite machine runs $f$ and threads its outputs into $g$; by
+the observation, the response of the composite at $(t, s)$ is determined by
+the pair $(r_{g,t}, r_{f,s})$ alone, through the recurrence
+\[ r_{g \circ f, (t,s)} (a \cdot w)
+   = c \cdot r_{g \circ f, (t_1, s_1)} (w) , \]
+where $(b, s_1) = \mathrm{step} (s, a)$, $(c, t_1) = \mathrm{tstep} (t, b)$,
+and the successor responses in the recursion are functions of
+$(r_{g,t}, r_{f,s})$ by the observation. Hence the response set of $g \circ f$
+depends only on $R_f$ and $R_g$; if $f \approx f'$ and $g \approx g'$ then
+$R_f = R_{f'}$ and $R_g = R_{g'}$, so the two composites have the same
+response set: $g \circ f \approx g' \circ f'$.
+
+\emph{Tensor is a congruence.} The tensor machine runs $f$ and $g$
+independently on the two components, so
+\[ r_{f \otimes g, (s,t)} (w_1, w_2) = \bigl (r_{f,s} (w_1),\, r_{g,t} (w_2)\bigr) , \]
+and the response set of $f \otimes g$ is $R_f \times R_g$. Equality of the
+component sets gives $f \otimes g \approx f' \otimes g'$. Hence $\approx$ is
+a congruence for both operations.
+
+\emph{The quotient.} A congruence is exactly what is needed for the
+operations to descend to classes: define
+$[g]_{\approx} \circ [f]_{\approx} = [g \circ f]_{\approx}$ and
+$[f]_{\approx} \otimes [g]_{\approx} = [f \otimes g]_{\approx}$, well defined
+by the two congruences. The category laws and the coherence equations of
+\autoref{thm:3} hold in Mol and are equations between morphisms, so they hold
+in the quotient; the structural morphisms of \autoref{thm:3} remain
+isomorphisms there, since e.g.
+$[\sigma_{B,A}]_{\approx} \circ [\sigma_{A,B}]_{\approx} =
+[\mathrm{id}]_{\approx}$. Hence $\mathrm{Mol}/{\approx}$ is a symmetric
+monoidal category. On small finite machines the congruence property is
+checked exhaustively by the \texttt{bisim} tool of \autoref{app:a}.
+\end{proof}
+
+\begin{theorem}[Closure under the tensor (\autoref{thm:7})]\label{thm:7}
+\textbf{[N].} PureMol and EffMol are closed under the tensor: the tensor of
+two pure molecules is pure; the tensor of an effectful molecule of
+EffMol$(\mathrm{Ctx})$ with a pure molecule, on either side, is effectful;
+and the tensor of two effectful molecules of EffMol$(\mathrm{Ctx})$ is a
+molecule of EffMol$(\mathrm{Ctx} \times \mathrm{Ctx})$, equivalently a hybrid
+molecule.
+\end{theorem}
+
+\begin{proof}
+The tensor of pure machines $((), \mathrm{step})$ and
+$((), \mathrm{tstep})$ is realized by the state space $() \times ()$ with the
+product transition; the canonical bijection $() \times () \to ()$ is a
+state-space isomorphism, so the tensor class is pure. For
+$f = [\mathrm{Ctx}, \mathrm{step}]$ in EffMol$(\mathrm{Ctx})$ and a pure
+machine $((), \mathrm{tstep})$, the tensor $f \otimes p$ is realized by
+$\mathrm{Ctx} \times ()$; the bijection $\Phi (s, ()) = s$ is a state-space
+isomorphism onto the machine with state space $\mathrm{Ctx}$ and transition
+$\mathrm{step}_1 (s, (a, c)) = (b, d), s_1)$ where $(b, s_1) =
+\mathrm{step} (s, a)$ and $d$ is the output of the pure component on $c$,
+because the pure component performs no state update. Hence
+$f \otimes p \in \mathrm{EffMol} (\mathrm{Ctx})$; the case $p \otimes f$ is
+symmetric. Finally, the tensor of two context machines is realized by
+$\mathrm{Ctx} \times \mathrm{Ctx}$, which is a morphism of
+EffMol$(\mathrm{Ctx} \times \mathrm{Ctx})$ and, being of the form
+$S_{\mathrm{pure}} \times \mathrm{Ctx}$ with $S_{\mathrm{pure}} =
+\mathrm{Ctx}$, a hybrid molecule by \autoref{def:hybridmol}.
+\end{proof}
+
+\begin{remark}
+The exact boundary of \autoref{thm:7} is worth stating: the tensor of two
+EffMol$(\mathrm{Ctx})$ molecules has state space $\mathrm{Ctx} \times
+\mathrm{Ctx}$, and since $\mathrm{Ctx} \times \mathrm{Ctx} \cong \mathrm{Ctx}$
+fails in general (for finite $\mathrm{Ctx}$ with more than one element),
+EffMol$(\mathrm{Ctx})$ is not closed under the tensor with itself in the
+strict sense. What the tensor always preserves is purity strictly and
+effectfulness in the graded sense above: contexts add, they do not vanish.
+\end{remark}
+
+\section{Atoms and Determinism}\label{sec:mol-atoms}
+
+Molecules are built from \emph{atoms}: the primitive components of a
+dataplane, total on their declared domain, with no hidden state beyond their
+declared one.
+
+\begin{definition}[Atoms]\label{def:atoms}
+An \emph{atom} is a molecule that is a generator rather than a composite:
+formally, a chosen morphism of a signature $\Sigma$, and a \emph{molecule
+over} $\Sigma$ is any morphism of the subcategory of Mol generated by
+$\Sigma$ under $\circ$ and $\otimes$ \citep{lawvere}. Concretely, the atoms
+of a dataplane are the pure atoms: total functions such as \emph{parse},
+\emph{checksum}, \emph{push}, \emph{pop}: and the effectful atoms of
+EffMol$(\mathrm{Ctx})$, such as reading and writing context fields. Every
+atom is total on its declared domain and deterministic. The theories of
+signatures are the subject of \autoref{ch:lawvere}, and their free molecules
+and normal forms of \autoref{ch:free}.
+\end{definition}
+
+\begin{theorem}[Determinism (\autoref{thm:8})]\label{thm:8}
+\textbf{[N].} Pure molecules and tensor products of pure molecules are
+deterministic; behavioral equivalence preserves determinism.
+\end{theorem}
+
+\begin{proof}
+A molecule is deterministic by construction of \autoref{def:machine}: its
+transition function is a total function, so from any state and input exactly
+one output and one next state result; no Mol morphism involves choice. In
+particular every pure molecule is deterministic, and the tensor of pure
+molecules is pure by \autoref{thm:7}, hence deterministic. The content of the
+theorem is that determinism, unlike purity, is a property of behavior: for
+every machine $M$ and state $s$, the response $r_{M,s}$ of \autoref{def:response}
+is a total single-valued function $A^{*} \to B^{*}$. Behavioral equivalence
+compares exactly these functions (\autoref{def:bisim}), so if
+$M \approx M'$ then $M'$ realizes precisely the responses of $M$: a
+deterministic machine has only deterministic equivalents, and every class of
+$\mathrm{Mol}/{\approx}$ consists of deterministic behaviors. Purity, by
+contrast, is not invariant under $\approx$: a machine with an unused state is
+behaviorally equivalent to a pure machine without it, yet is not pure. This
+is why the rewrite and minimization chapters normalize behavior first
+(\autoref{ch:rewrite}, \autoref{ch:coalgebra}): determinism is preserved by
+every equivalence the engine uses, and the same input always yields the same
+output through the same states.
+\end{proof}
+
+\section{Discussion}\label{sec:mol-concl}
+
+Mol realizes the design of \autoref{ch:intro}: a category whose objects are
+types and whose morphisms are stateful transformations, quotiented so that
+state is an implementation detail, and closed under the two composition
+schemes of the dataplane. The category laws (\autoref{thm:1}--\autoref{thm:2}) license equational
+reasoning about pipelines; the symmetric monoidal structure (\autoref{thm:3}) licenses
+parallel composition and the tuple manipulations used throughout
+\autoref{ch:lawvere}--\autoref{ch:rewrite}; the subcategories PureMol,
+EffMol$(\mathrm{Ctx})$, and HybridMol$(\mathrm{Ctx})$
+(\autoref{sec:mol-pure}--\autoref{sec:mol-hybrid}) fix the vocabulary in
+which \autoref{ch:kleisli} proves the pure/effectful decomposition; and
+behavioral equivalence (\autoref{thm:6}) is the relation under which minimization
+(\autoref{ch:coalgebra}) and testing (\autoref{ch:testing}) operate, while
+determinism (\autoref{thm:8}) is the assumption under which the feedback structure of
+\autoref{ch:trace} and the decision problems of \autoref{ch:situations} are
+stated. The next chapter adds equational theories: dataplane components are
+models of Lawvere theories, and the ring, parser, and transport equations
+become laws that molecules must satisfy \citep{lawvere}.
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}llp{9.3cm}@{}}
+\toprule
+Theorem & Tag & Statement \\
+\midrule
+\ref{thm:1} & [N] & Mol is a category: composition of $(S, \mathrm{step})$ classes is associative with identity. \\
+\ref{thm:2} & [N] & The state-space bijection quotient is well defined: equivalent machines compose to equivalent machines. \\
+\ref{thm:3} & [C] & Mol is symmetric monoidal: tensor the tuple product, unit $()$, coherent braiding \citep{maclane}. \\
+\ref{thm:4} & [N] & PureMol is equivalent to the category of types and total functions. \\
+\ref{thm:5} & [N] & EffMol$(\mathrm{Ctx})$ is isomorphic to the Kleisli category of the state monad on $\mathrm{Ctx}$. \\
+\ref{thm:6} & [N] & Behavioral equivalence is a congruence for $\circ$ and $\otimes$; Mol$/{\approx}$ is symmetric monoidal. \\
+\ref{thm:7} & [N] & PureMol and EffMol are closed under the tensor. \\
+\ref{thm:8} & [N] & Pure molecules and tensor products of pure molecules are deterministic; behavioral equivalence preserves determinism. \\
+\bottomrule
+\end{tabular}
+\caption{The theorems of this chapter; the statements reproduce the catalog of \autoref{sec:contributions}. [N] marks statements original to this thesis, proved with elementary means; [C] marks classical results restated and fully proved inside Mol, with the source cited.}
+\end{table}
+
+\section{Optimality of the model}\label{sec:mol-optimality}
+
+This section makes precise the claim that the pure, effectful, and
+hybrid classes of Mol are forced by the model rather than chosen by
+taste, and that the model excludes no application. Two theorems
+establish the claim: the classification is the unique extension of the
+atom classification that respects the algebraic structure
+(\autoref{thm:classification}), and the free construction is initial,
+so every interpretation factors through it and no application is
+rigidified (\autoref{thm:universality}).
+
+\begin{theorem}[The classification is forced]\label{thm:67}\label{thm:classification}
+Let $\Sigma = \Sigma_p \uplus \Sigma_e$ be an atom signature partitioned
+into pure and effectful atoms, and let $F(\Sigma)$ be the free
+symmetric monoidal category on $\Sigma$. There is exactly one
+assignment $c : \mathrm{Mor}(F(\Sigma)) \to \{P, E, H\}$ of the three
+classes that (i) agrees with the partition on atoms, (ii) assigns the
+structural morphisms (identities, braidings) to $P$, and (iii) is a
+congruence: the class of a composite or tensor is a function of the
+classes of the factors, with the closure rules
+$P \circ P \subseteq P$, $P \circ E \subseteq E$,
+$E \circ P \subseteq E$, $E \circ E \subseteq E$ (sequential
+composition is Kleisli-closed), $P \otimes P \subseteq P$,
+$P \otimes E \subseteq E$, $E \otimes E \subseteq H$, and
+$H \otimes \cdot \subseteq H$. The class map is
+\[
+c(f) = \begin{cases}
+P & \text{if } f \text{ is pure,}\\
+E & \text{if } f \text{ is effectful,}\\
+H & \text{otherwise.}
+\end{cases}
+\]
+Every class of the free model is one of the three; no fourth class is
+generated, and no two are identified.
+\end{theorem}
+
+\begin{proof}
+Define $c$ by induction on the syntax of morphisms of $F(\Sigma)$.
+Atoms: $c(a) = P$ for $a \in \Sigma_p$ and $c(a) = E$ for
+$a \in \Sigma_e$; structural morphisms have $c = P$. For composites,
+apply the closure rules; for tensors, apply the tensor closure rules.
+The assignment is total by induction, because every morphism of the
+free category is built from atoms, structural morphisms, $\circ$, and
+$\otimes$. It is well-defined with respect to the equational theory of
+$F(\Sigma)$: the symmetric monoidal axioms (associativity, unit,
+interchange, braiding) equate morphisms whose class assignment agrees,
+because the class of a composite is a function of the classes of its
+factors and the closure rules are closed under the structural
+equations (identities and braidings are pure, and composing or
+tensoring with a pure morphism preserves the class by the closure
+rules). Uniqueness: any assignment satisfying (i)--(iii) must agree
+with $c$ on atoms and structural morphisms, and must then agree on
+every composite by induction on its syntax, because (iii) forces the
+class of each composite to be the closure-rule value of the classes of
+its factors. The ``no fourth class'' claim is the totality of the
+three-valued map; the ``no identification'' claim follows because the
+map is well-defined, so two morphisms in different classes cannot be
+equated by the theory.
+\end{proof}
+
+\begin{theorem}[Universality: no application is excluded]\label{thm:68}\label{thm:universality}
+(1) For any symmetric monoidal category $\mathcal{C}$ and any
+interpretation of the signature $\Sigma$ in $\mathcal{C}$, there is a
+unique strict symmetric monoidal functor
+$F(\Sigma) \to \mathcal{C}$ extending the interpretation.
+(2) Every finite-state Mealy transformation is realized by a molecule
+over a finite signature. (3) Mol is closed under products, sums,
+feedback (traces), and batching. Consequently every application
+expressible as a deterministic stateful transformation is expressible
+as a molecule, and structural equality in the free model is decided by
+the coherence theorem of Mac Lane \citep{maclane}.
+\end{theorem}
+
+\begin{proof}
+(1) is the universal property of the free symmetric monoidal category:
+$F(\Sigma)$ is the initial object in the category of symmetric
+monoidal categories equipped with a $\Sigma$-indexed family of
+objects, and the unique functor is given by interpreting generators as
+generators, composites as composites, and coherence isomorphisms by
+the coherence theorem. (2) Let $(S, \mathit{step})$ with
+$\mathit{step} : S \times A \to B \times S$ be a finite-state Mealy
+machine. Take the signature $\Sigma$ with one effectful atom
+$e_s : A \to B$ for each state $s \in S$ whose step function is
+$e_s(a) = (b, s')$ where $\mathit{step}(s, a) = (b, s')$, and one
+choice atom for the initial state. The molecule $\bigotimes$-wiring of
+the atoms together with the trace construction of
+\autoref{ch:trace} realizes the machine: the state is threaded through
+the trace, and each step is the effectful atom for the current state.
+The realization is exact because Mealy determinism makes the output a
+function of the state and input alone. (3) Products and sums are
+objects of the free category over a signature extended by the
+corresponding constructors; feedback is the traced structure of
+\autoref{ch:trace}; batching is the operadic structure of
+\autoref{ch:operad}. The closure statements are theorems of those
+chapters.
+\end{proof}
+
+\begin{remark}[On the choice of language]
+The model uses categories of machines rather than the alternative
+frameworks for effectful computation. Each alternative is a proper
+substructure of the same picture: the Kleisli category of the state
+monad is exactly the effectful subcategory of Mol
+(\autoref{sec:mol-eff}); Freyd categories and Hughes arrows are
+abstract machines with a premonoidal tensor, while Mol's tensor is a
+true product, which is what licenses the interchange and coherence
+laws of \autoref{sec:mol-mon}; coalgebraic final semantics underlies
+the minimization theorems of \autoref{ch:coalgebra}; effectus theory
+targets probabilistic and quantum effects and is not needed for
+deterministic stateful transformations; and process calculi
+introduce nondeterminism, which would invalidate the cost and
+allocation theorems of \autoref{ch:enrich} and \autoref{ch:linear}.
+The trichotomy of \autoref{thm:classification} is finer than the
+deterministic/probabilistic dichotomy of effectus theory within the
+deterministic world, and \autoref{thm:universality} shows that no
+application is excluded. The choice of Mol is therefore not a
+heuristic preference; it is the minimal language in which the
+engineering properties of this thesis are theorems.
+\end{remark}

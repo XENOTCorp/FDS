@@ -1,7 +1,0 @@
-# TCP snd_cwnd / rcv_wnd sampling — 2026-08-24 19:08:49Z
-# host: xenot | cpu: Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz | kernel: 7.2.0_1
-# tool: ss -tin during iperf3 | params: auto-tuning trajectory | duration: 5s
-cwnd: 12 samples, mean 14, stdev 3, variance 11 (growth trajectory)
-rcv_wnd: 12 samples, mean 373333, stdev 466297, variance 217433105294 (auto-tuning lag indicator)
-raw cwnd samples: 13 12 16 20 14 10 13 14 16 21 14 10 
-raw rcv_wnd samples: 45056 45056 1105408 45056 45056 954368 45056 45056 1105408 45056 45056 954368 

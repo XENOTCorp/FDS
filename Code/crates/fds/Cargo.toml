@@ -1,0 +1,37 @@
+[package]
+name = "fds"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "FDS transport library: nonblocking edge-triggered TCP, UDP, and SCTP dataplane on the Mol framework (Linux)."
+
+[lib]
+name = "fds"
+path = "src/lib.rs"
+
+[dependencies]
+mol = { path = "../mol" }
+libc = "0.2"
+rustix = { version = "1", features = ["net", "mm", "process", "event", "thread"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+static_assertions = "1.1"
+
+[features]
+# Default features match the measured engine. Disable to slim a library
+# consumer that does not need SCTP, io_uring, or AF_XDP.
+# sctp: FFI declared in-crate; links libsctp (pkg-config libsctp).
+# io-uring: experimental reactor path; links liburing via the io-uring crate.
+# af-xdp: experimental raw-Ethernet path; pure libc constants, needs an
+# XDP-attached device at runtime (tests skip when unavailable).
+default = ["sctp", "io-uring", "af-xdp"]
+sctp = []
+io-uring = ["dep:io-uring"]
+af-xdp = []
+
+[dependencies.io-uring]
+version = "0.7"
+optional = true

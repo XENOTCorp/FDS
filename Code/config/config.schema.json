@@ -1,0 +1,327 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fds.local/schemas/config.schema.json",
+  "title": "FDS engine configuration",
+  "description": "The single Code/config.json consumed by the fds engine. Every field is optional: missing fields fall back to the engine defaults (crates/fds/src/config.rs). Hardware-derived defaults are produced by fds-detect (D-1 socket-buffer sizing from measured L3; worker count follows logical CPUs).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "core": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pin_cores": {
+          "type": "boolean",
+          "default": true,
+          "description": "Pin each worker thread to its own logical CPU.",
+          "x-trade-off": "Removes scheduler migration and cache thrash; consumes whole CPUs. Disable when cores are shared with other tenants.",
+          "x-derived-from": "engine default ([CONC] pin-per-core)"
+        },
+        "threads": {
+          "type": "integer",
+          "default": 0,
+          "description": "Worker thread count; 0 = one per logical CPU.",
+          "x-trade-off": "More workers give more parallelism but per-core caches and queues must fit; oversubscription adds scheduling noise (see the measured p999 tails in Docs/wiki/).",
+          "x-derived-from": "engine default (0 = one per logical CPU; 2x physical on SMT)"
+        },
+        "stack_bytes": {
+          "type": "integer",
+          "default": 1048576,
+          "description": "Worker thread stack size, in bytes.",
+          "x-trade-off": "Larger stacks waste address space; smaller risks overflow in deep call paths (pool buffers are heap-backed).",
+          "x-derived-from": "engine default"
+        }
+      }
+    },
+    "reactor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": [
+            "epoll-busy-poll",
+            "io-uring"
+          ],
+          "default": "epoll-busy-poll",
+          "description": "Polling strategy: epoll-busy-poll (classic readiness loop, busy-poll to empty) or io-uring (kernel-side submission/completion batching).",
+          "x-trade-off": "epoll is the proven baseline; io-uring amortizes syscalls at high packet rates but its SQPOLL thread needs privileges and newer kernels for best results.",
+          "x-derived-from": "D-5 (polling strategy)"
+        },
+        "max_events": {
+          "type": "integer",
+          "default": 256,
+          "description": "Preallocated event array capacity per reactor.",
+          "x-trade-off": "Too small drops events per drain; too large wastes memory per worker.",
+          "x-derived-from": "engine default"
+        },
+        "busy_poll": {
+          "type": "boolean",
+          "default": false,
+          "description": "Explicit busy-poll spin (zero epoll timeout) for dedicated cores; default is event-driven.",
+          "x-trade-off": "Lowest wake latency at the cost of CPU spin when idle; on a shared machine the spin starves co-tenants.",
+          "x-derived-from": "engine default (event-driven)"
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "default": 0,
+          "description": "Poll timeout in milliseconds when not busy-polling.",
+          "x-trade-off": "0 = event-driven (block in the kernel, waking every 100 ms to observe the stop flag); a positive value bounds wake latency at the cost of syscall rate.",
+          "x-derived-from": "engine default"
+        },
+        "io_uring_entries": {
+          "type": "integer",
+          "default": 256,
+          "description": "io_uring ring entries (strategy io-uring).",
+          "x-trade-off": "Larger rings hold more in-flight ops; entries are power-of-two and floored by the datapath (UDP slots + accept + timeout).",
+          "x-derived-from": "engine default (ring-capacity invariant)"
+        },
+        "io_uring_sq_thread": {
+          "type": "integer",
+          "default": 0,
+          "description": "io_uring SQPOLL thread CPU; 0 = no SQPOLL (plain ring).",
+          "x-trade-off": "SQPOLL removes submission syscalls but needs CAP_SYS_ADMIN; the ring falls back to a plain ring when creation is rejected.",
+          "x-derived-from": "engine default"
+        }
+      }
+    },
+    "udp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rcvbuf": {
+          "type": "integer",
+          "default": 4194304,
+          "description": "SO_RCVBUF per UDP socket, in bytes.",
+          "x-trade-off": "Larger absorbs bursts and jumbo datagrams at the cost of memory; sized from the L3 budget by fds-detect.",
+          "x-derived-from": "D-1 (L3-aware buffer sizing; fds-detect derives from measured L3)"
+        },
+        "sndbuf": {
+          "type": "integer",
+          "default": 4194304,
+          "description": "SO_SNDBUF per UDP socket, in bytes.",
+          "x-trade-off": "Larger absorbs bursts at the cost of memory; the kernel doubles the value it reports.",
+          "x-derived-from": "D-1 (L3-aware buffer sizing)"
+        },
+        "gso_segment_size": {
+          "type": "integer",
+          "default": 0,
+          "description": "UDP_SEGMENT (GSO) max segment size; 0 = off.",
+          "x-trade-off": "Fewer, larger sends amortize syscalls but the kernel must segment each; 0 keeps software segmentation.",
+          "x-derived-from": "engine default"
+        },
+        "gro": {
+          "type": "boolean",
+          "default": false,
+          "description": "UDP_GRO coalescing.",
+          "x-trade-off": "Fewer receive completions at the cost of per-flow reassembly state.",
+          "x-derived-from": "engine default"
+        },
+        "zerocopy": {
+          "type": "boolean",
+          "default": false,
+          "description": "MSG_ZEROCOPY for large UDP datagrams.",
+          "x-trade-off": "Avoids a kernel copy for big buffers at the cost of completion-notification handling and page pinning.",
+          "x-derived-from": "D-6 (copy strategy)"
+        },
+        "reuseport": {
+          "type": "boolean",
+          "default": true,
+          "description": "SO_REUSEPORT (one socket per core).",
+          "x-trade-off": "Enables per-core distribution; the option must be set before bind for reuseport-group admission (the engine does this).",
+          "x-derived-from": "engine default ([CONC] per-core distribution)"
+        },
+        "incoming_cpu": {
+          "type": "boolean",
+          "default": false,
+          "description": "SO_INCOMING_CPU steering.",
+          "x-trade-off": "Pins flows to the RX softirq CPU; on loopback that collapses every flow onto one worker; enable only with NIC RSS/IRQ affinity (Docs/wiki/).",
+          "x-derived-from": "engine ruling (loopback collapse)"
+        }
+      }
+    },
+    "tcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "nodelay": {
+          "type": "boolean",
+          "default": true,
+          "description": "TCP_NODELAY.",
+          "x-trade-off": "Disables Nagle; tiny writes become small packets, correct for a latency-bound echo.",
+          "x-derived-from": "engine default (latency target)"
+        },
+        "quickack": {
+          "type": "boolean",
+          "default": false,
+          "description": "TCP_QUICKACK.",
+          "x-trade-off": "Fewer delayed-ACK stalls at the cost of more ACK traffic.",
+          "x-derived-from": "engine default"
+        },
+        "defer_accept": {
+          "type": "boolean",
+          "default": false,
+          "description": "TCP_DEFER_ACCEPT.",
+          "x-trade-off": "Defers accept until data arrives, saving a wakeup on idle connections; can delay connection-establishment visibility.",
+          "x-derived-from": "engine default"
+        },
+        "fastopen": {
+          "type": "integer",
+          "default": 0,
+          "description": "TCP_FASTOPEN queue length; 0 = off.",
+          "x-trade-off": "Saves an RTT on repeat connections but is spoofable and needs a server-side queue budget.",
+          "x-derived-from": "engine default (SEC: spoofing caveat)"
+        },
+        "cork": {
+          "type": "boolean",
+          "default": false,
+          "description": "TCP_CORK.",
+          "x-trade-off": "Coalesces small writes into full segments at the cost of added per-write latency; wrong for streaming echo.",
+          "x-derived-from": "engine default"
+        },
+        "reuseport": {
+          "type": "boolean",
+          "default": true,
+          "description": "SO_REUSEPORT (one listener socket per core).",
+          "x-trade-off": "Enables per-core distribution; set before bind.",
+          "x-derived-from": "engine default ([CONC] per-core distribution)"
+        },
+        "rcvbuf": {
+          "type": "integer",
+          "default": 4194304,
+          "description": "SO_RCVBUF per TCP socket, in bytes.",
+          "x-trade-off": "Larger absorbs bursts at the cost of memory; the kernel doubles the value it reports.",
+          "x-derived-from": "D-1 (L3-aware buffer sizing)"
+        },
+        "sndbuf": {
+          "type": "integer",
+          "default": 4194304,
+          "description": "SO_SNDBUF per TCP socket, in bytes.",
+          "x-trade-off": "Larger absorbs bursts at the cost of memory.",
+          "x-derived-from": "D-1 (L3-aware buffer sizing)"
+        }
+      }
+    },
+    "sctp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "nodelay": {
+          "type": "boolean",
+          "default": true,
+          "description": "SCTP_NODELAY (disable Nagle per association).",
+          "x-trade-off": "Lowest latency at the cost of more small packets.",
+          "x-derived-from": "engine default"
+        },
+        "init_max_streams": {
+          "type": "integer",
+          "default": 10,
+          "description": "SCTP_INITMSG max streams (in/out).",
+          "x-trade-off": "More streams support more concurrent message flows per association at the cost of per-stream state.",
+          "x-derived-from": "engine default"
+        },
+        "partial_delivery_point": {
+          "type": "integer",
+          "default": 0,
+          "description": "SCTP_PARTIAL_DELIVERY_POINT, in bytes.",
+          "x-trade-off": "Smaller delivers partial messages sooner (latency) at the cost of fragmented reads.",
+          "x-derived-from": "engine default (0 = kernel default)"
+        },
+        "max_burst": {
+          "type": "integer",
+          "default": 0,
+          "description": "SCTP_MAX_BURST; 0 = kernel default.",
+          "x-trade-off": "Limits packet bursts per association (loss avoidance) at the cost of throughput bursts.",
+          "x-derived-from": "engine default (0 = kernel default)"
+        },
+        "reuseport": {
+          "type": "boolean",
+          "default": true,
+          "description": "SO_REUSEPORT (one socket per core).",
+          "x-trade-off": "Enables per-core distribution; set before bind.",
+          "x-derived-from": "engine default ([CONC] per-core distribution)"
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "socket_path": {
+          "type": "string",
+          "default": "/tmp/fds-metrics.sock",
+          "description": "Unix socket path for the metrics pull endpoint; empty = disabled.",
+          "x-trade-off": "Pull-based metrics avoid hot-path writes; a filesystem path is a local trust boundary.",
+          "x-derived-from": "engine default ([OBS] pull, not hot-path write)"
+        }
+      }
+    },
+    "zero_copy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "splice": {
+          "type": "boolean",
+          "default": true,
+          "description": "sendfile/splice for file-backed TCP responses.",
+          "x-trade-off": "Kernel-side copy avoids a userspace bounce for file data; costs a pipe staging when splicing between sockets.",
+          "x-derived-from": "D-6 (copy strategy)"
+        },
+        "registered_buffers": {
+          "type": "boolean",
+          "default": false,
+          "description": "io_uring registered buffers (strategy io-uring).",
+          "x-trade-off": "Avoids per-op buffer pinning at the cost of registration setup and fixed-buffer bookkeeping.",
+          "x-derived-from": "D-6 (copy strategy)"
+        },
+        "udp_zerocopy": {
+          "type": "boolean",
+          "default": false,
+          "description": "MSG_ZEROCOPY for UDP large datagrams (see also udp.zerocopy).",
+          "x-trade-off": "Avoids a kernel copy for big buffers at the cost of completion-notification handling and page pinning.",
+          "x-derived-from": "D-6 (copy strategy)"
+        }
+      }
+    },
+    "af_xdp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "device": {
+          "type": "string",
+          "default": "",
+          "description": "Device name for AF_XDP (e.g. eth0); empty = disabled.",
+          "x-trade-off": "Kernel-bypass RX/TX on a dedicated queue needs an XDP-capable NIC, CAP_NET_RAW, and a pinned XDP program; absent a device the engine logs and stays on the kernel datapath.",
+          "x-derived-from": "engine default (device-gated)"
+        },
+        "queue": {
+          "type": "integer",
+          "default": 0,
+          "description": "Queue id on the AF_XDP device.",
+          "x-trade-off": "Binding a queue dedicates it to the XDP path.",
+          "x-derived-from": "engine default"
+        }
+      }
+    },
+    "engine": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "udp_bind": {
+          "type": "string",
+          "default": "127.0.0.1:7777",
+          "description": "UDP echo bind address (ip:port).",
+          "x-trade-off": "Loopback default; bind 0.0.0.0 (or a NIC address) for external traffic.",
+          "x-derived-from": "engine default"
+        },
+        "tcp_bind": {
+          "type": "string",
+          "default": "127.0.0.1:7778",
+          "description": "TCP echo bind address (ip:port).",
+          "x-trade-off": "Loopback default; bind 0.0.0.0 for external traffic.",
+          "x-derived-from": "engine default"
+        }
+      }
+    }
+  }
+}

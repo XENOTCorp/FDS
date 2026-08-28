@@ -1,0 +1,71 @@
+# Architecture
+
+The engine runs one worker thread per logical CPU. Each worker owns its poller, its sockets, its connection table, and its counters. Nothing is shared except a metrics bundle. The hot path performs no allocation and no per-packet syscall beyond the batched transport.
+
+## One worker per logical CPU
+
+Each worker owns:
+
+- its datapath: epoll edge-triggered and event-driven with the syscall transports by default (a busy-poll spin is available for dedicated cores), or the io_uring completion-driven datapath;
+- its own SO_REUSEPORT UDP socket and TCP listener on the shared bind addresses. The kernel steers flows across workers by 4-tuple hash;
+- its own connection table, active-stream slot array, 64 KiB datagram receive batch, and per-core counters.
+
+The worker pins itself to its logical CPU with `sched_setaffinity` when `core.pin_cores` is set.
+
+## Data flow (one worker)
+
+```
+sockets (UDP/TCP)  ->  epoll: wait, copy events, drain handlers
+                          |
+                          v
+                  drain_udp / drain_accept / drain_tcp
+                  (each drains its fd until EAGAIN)
+                          |
+                          v
+                  transports: recvmmsg/sendmmsg batches,
+                  readv/writev, connection hot/cold state,
+                  per-core counters
+```
+
+The metrics listener is registered on worker 0 only. Metrics are pulled over a Unix socket.
+
+## Loop invariants
+
+- Edge-triggered with drain to EAGAIN. After an event fires, the handler must drain the fd until the syscall returns EAGAIN, or no further edge is generated and events are lost. The loop processes each poll batch fully before polling again.
+- Event-driven: `wait` blocks in the kernel until an event is ready, waking at most every 100 ms to observe the stop flag. Idle CPU is zero.
+- Busy-poll (opt-in, `reactor.busy_poll=true`): `wait(timeout 0)` repeats until the ready list is empty. The engine burns CPU when idle. That is the latency contract for a dedicated core.
+- No allocation in the hot path. Receive buffers, event arrays, echo batches, and the connection table are preallocated at startup. The only per-connection allocation is the connection-map entry created at accept and removed at close.
+
+## Cache layout
+
+- Ring `head` and `tail` each occupy a 64-byte line. Producer and consumer do not bounce one line.
+- Connection hot state (seq, activity, in-flight, fd) is one line. Cold state (peer, flags) is another line.
+- Per-worker metrics (packets, bytes, drops) share one line. Adjacent workers do not share a line.
+- Receive buffers are 64-byte aligned. The 4 MiB UDP slab is advised with `MADV_HUGEPAGE`.
+- TCP lookup is a slot index from the epoll token. There is no hash map on the hot path.
+
+## Crate map
+
+| Crate | Role |
+| --- | --- |
+| `mol` | Atoms, molecules, rings, buffers, SIMD checksums, layout |
+| `fds` | Reactor, TCP, UDP, SCTP, conn, config, metrics, parse |
+| `fds-engine` | Binary `fds`: echo loop, CLI, benches |
+| `fds-detect` | Hardware detect, emit and validate `config.json` |
+
+### `fds` modules
+
+| Module | Responsibility |
+| --- | --- |
+| `reactor` | rustix epoll, edge-triggered, preallocated event array |
+| `tcp` | nonblocking listener and stream (accept4, FASTOPEN, NODELAY, writev, splice) |
+| `udp` | recvmmsg/sendmmsg, GSO, GRO, MSG_ZEROCOPY |
+| `sctp` | libsctp FFI |
+| `conn` | hot/cold state, preallocated `ConnTable` |
+| `checksum` | crate-private IP/TCP/UDP/SCTP checksums |
+| `parse` | bounds-safe IPv4/UDP/TCP parsers |
+| `metrics` | per-core line-packed counters, Unix-socket pull |
+| `config` | `config.json` plus `FDS_*` |
+| `util` | pinning, coarse monotonic ticks |
+| `io_uring_reactor` | experimental, feature `io-uring` |
+| `af_xdp` | experimental, feature `af-xdp` |
