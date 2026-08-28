@@ -9,16 +9,22 @@
 \usepackage{natbib}
 \bibliographystyle{plainnat}
 
-% Theorem environments (numbered by chapter)
-\newtheorem{theorem}{Theorem}[chapter]
-\newtheorem{lemma}[theorem]{Lemma}
-\newtheorem{proposition}[theorem]{Proposition}
-\newtheorem{corollary}[theorem]{Corollary}
+% Catalog theorems are numbered 1--68 globally. The printed number of
+% Theorem n is n, independent of chapter order and of definitions,
+% lemmas, and remarks (which are numbered by chapter). Call
+% \setcatalog{n} immediately before \begin{theorem} for the statement
+% labelled thm:n.
+\newtheorem{theorem}{Theorem}
+\renewcommand{\thetheorem}{\arabic{theorem}}
+\newcommand{\setcatalog}[1]{\setcounter{theorem}{#1}\addtocounter{theorem}{-1}}
+\newtheorem{lemma}{Lemma}[chapter]
+\newtheorem{proposition}{Proposition}[chapter]
+\newtheorem{corollary}{Corollary}[chapter]
 \theoremstyle{definition}
-\newtheorem{definition}[theorem]{Definition}
-\newtheorem{example}[theorem]{Example}
+\newtheorem{definition}{Definition}[chapter]
+\newtheorem{example}{Example}[chapter]
 \theoremstyle{remark}
-\newtheorem{remark}[theorem]{Remark}
+\newtheorem{remark}{Remark}[chapter]
 
 \title{\textbf{Mol}: The Category of Stateful Transformations.\\ An Algebraic Theory of Zero-Allocation Dataplane Construction}
 \author{XENOT Corporation}

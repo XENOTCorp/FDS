@@ -18,6 +18,7 @@ M^{*} = \operatorname*{arg\,min}_{M \in F (\sigma)} \mathrm{cost} (M),
 \]
 returning \emph{infeasible} when $F (\sigma) = \emptyset$. Under the refinement preorder of \autoref{ch:enrich} the feasible set is a down-set: refinement preserves behavior and is cost-monotone (\autoref{thm:28}), so $M' \sqsubseteq M \models \sigma$ implies $M' \models \sigma$; the decision matrix therefore optimizes downward through the refinement poset, and by maximal refinement (\autoref{thm:29}) its output is the most-refined feasible molecule.
 
+\setcatalog{51}
 \begin{theorem}[Situation solvability (\autoref{thm:51})]\label{thm:51}
 Let $\sigma = (A \to B, \Phi, \bar c)$ be a situation with finite types $A, B$, a decidable specification $\Phi$, and a memory budget $c_M$ that bounds state size via $m (M) = |S_M|$. Then:
 \begin{enumerate}
@@ -38,6 +39,7 @@ Let $\sigma = (A \to B, \Phi, \bar c)$ be a situation with finite types $A, B$, 
 \paragraph{Well-formed domains and zero copy.}
 Let $B$ be the byte-stream type and $T$ a structured type. A parser is a molecule $\mathrm{parse} : B \to T$ and a serializer is a molecule $\mathrm{serialize} : T \to B$. A subset $D \subseteq T$ is \emph{well-formed} when the roundtrip property holds on it: $\mathrm{parse} \circ \mathrm{serialize} = \mathrm{id}$ on $D$, that is, $\mathrm{parse} (\mathrm{serialize} (t)) = t$ for every $t \in D$. The \emph{well-formed byte domain} is $W = \mathrm{serialize} (D) \subseteq B$.
 
+\setcatalog{52}
 \begin{theorem}[Zero-copy roundtrip (\autoref{thm:52})]\label{thm:52}
 Let $\mathrm{parse} : B \to T$ and $\mathrm{serialize} : T \to B$ be molecules with $\mathrm{parse} \circ \mathrm{serialize} = \mathrm{id}$ on a well-formed domain $D \subseteq T$, and let $W = \mathrm{serialize} (D)$. Then:
 \begin{enumerate}

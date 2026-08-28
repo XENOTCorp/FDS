@@ -21,8 +21,10 @@ identifies a machine. Mol is symmetric monoidal under the tuple
 product, unit $()$; sequential composition is $\circ$ and parallel
 composition is $\otimes$. Its pure subcategory is equivalent to the
 category of types and total functions, and its effectful subcategory is
-isomorphic to the Kleisli category of the state monad; every hybrid
-molecule decomposes uniquely as $q \circ e \circ p$.
+isomorphic to the Kleisli category of the state monad. The step of a
+molecule is a Kleisli morphism of its state monad, and the response on
+words is the iterate of that morphism. Two effectful molecules compose
+in Mol to a hybrid.
 
 The thesis statement is that Mol is a complete algebraic foundation for
 zero-allocation dataplane construction: every dataplane artifact is a
@@ -31,19 +33,17 @@ catalog, each with a complete proof, covers: the structure of Mol;
 equational theories for rings, parsers, and transports and their
 rewrite theories; free molecules and normal forms as a precomputable
 lookup table; cost enrichment with global optimality by shortest paths;
-Kleisli decomposition and traced feedback with Banach and Dobrushin
-bounds; operadic batching with syscall amortization; cut elimination as
-pipeline fusion, linearity as a zero-allocation guarantee, and affine
-typing; situations as finite, decidable optimization problems; and the
-optimization theory of the kernel boundary, the affine crossover, and
-the lattice method. Classical results (coherence, the Kleisli
-construction, Nerode--Hopcroft minimization, contraction theory, traced
-structure) are restated and proved inside Mol. Two optimality theorems
-anchor the model itself: the pure, effectful, and hybrid classes are
-the unique congruence-compatible extension of the atom classification,
-and the free construction is initial, so every application expressible
-as a stateful transformation is expressible as a molecule without
-rigidity.
+Kleisli iteration of step and delayed feedback with Banach and Dobrushin
+bounds; operadic batching with syscall amortization; product-state
+fusion, linearity with preallocated rings as a zero-allocation
+guarantee, and a linear combinator calculus; situations as finite,
+decidable optimization problems; and the optimization theory of the
+kernel boundary, the affine crossover, and the lattice method.
+Classical results (coherence, the Kleisli construction, Nerode--Hopcroft
+minimization, contraction theory) are restated and proved inside Mol.
+Two optimality theorems anchor the model itself: the pure, effectful,
+and hybrid classes are the unique congruence for Mol composition and
+tensor, and every Mealy machine is already a molecule.
 
 The upshot is a theory in which normalization is sound and
 cost-preserving, minimal machines are computable, loops are provably

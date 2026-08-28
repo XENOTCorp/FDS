@@ -1,63 +1,61 @@
-    Finished `release` profile [optimized] target(s) in 0.01s
-     Running `target/release/contraction`
 Iteration-bound theorem: k(alpha, eps, d0) = ceil(ln(eps*(1-alpha)/d0) / ln(alpha))
-Samples: alpha in 0.1..=0.9 (step 0.1), eps in {1e-3, 1e-6, 1e-9}, d0 in {1.0, 10.0}
+d0 = d(x0, F x0). Samples: alpha in 0.1..=0.9 (step 0.1), eps in {1e-3, 1e-6, 1e-9}, d0 in {1.0, 10.0}
 
 (a)(b) per sample:
-  alpha=0.1 eps=1e-3 d0= 1.0  k=  4  |x_k|=1.000e-4  (a) PASS  (b) PASS
-  alpha=0.2 eps=1e-3 d0= 1.0  k=  5  |x_k|=3.200e-4  (a) PASS  (b) PASS
-  alpha=0.3 eps=1e-3 d0= 1.0  k=  7  |x_k|=2.187e-4  (a) PASS  (b) PASS
-  alpha=0.4 eps=1e-3 d0= 1.0  k=  9  |x_k|=2.621e-4  (a) PASS  (b) PASS
-  alpha=0.5 eps=1e-3 d0= 1.0  k= 11  |x_k|=4.883e-4  (a) PASS  (b) PASS
-  alpha=0.6 eps=1e-3 d0= 1.0  k= 16  |x_k|=2.821e-4  (a) PASS  (b) PASS
-  alpha=0.7 eps=1e-3 d0= 1.0  k= 23  |x_k|=2.737e-4  (a) PASS  (b) PASS
-  alpha=0.8 eps=1e-3 d0= 1.0  k= 39  |x_k|=1.662e-4  (a) PASS  (b) PASS
-  alpha=0.9 eps=1e-3 d0= 1.0  k= 88  |x_k|=9.405e-5  (a) PASS  (b) PASS
-  alpha=0.1 eps=1e-6 d0= 1.0  k=  7  |x_k|=1.000e-7  (a) PASS  (b) PASS
-  alpha=0.2 eps=1e-6 d0= 1.0  k=  9  |x_k|=5.120e-7  (a) PASS  (b) PASS
-  alpha=0.3 eps=1e-6 d0= 1.0  k= 12  |x_k|=5.314e-7  (a) PASS  (b) PASS
-  alpha=0.4 eps=1e-6 d0= 1.0  k= 16  |x_k|=4.295e-7  (a) PASS  (b) PASS
-  alpha=0.5 eps=1e-6 d0= 1.0  k= 21  |x_k|=4.768e-7  (a) PASS  (b) PASS
-  alpha=0.6 eps=1e-6 d0= 1.0  k= 29  |x_k|=3.685e-7  (a) PASS  (b) PASS
-  alpha=0.7 eps=1e-6 d0= 1.0  k= 43  |x_k|=2.184e-7  (a) PASS  (b) PASS
-  alpha=0.8 eps=1e-6 d0= 1.0  k= 70  |x_k|=1.646e-7  (a) PASS  (b) PASS
-  alpha=0.9 eps=1e-6 d0= 1.0  k=153  |x_k|=9.979e-8  (a) PASS  (b) PASS
-  alpha=0.1 eps=1e-9 d0= 1.0  k= 10  |x_k|=1.000e-10  (a) PASS  (b) PASS
-  alpha=0.2 eps=1e-9 d0= 1.0  k= 14  |x_k|=1.638e-10  (a) PASS  (b) PASS
-  alpha=0.3 eps=1e-9 d0= 1.0  k= 18  |x_k|=3.874e-10  (a) PASS  (b) PASS
-  alpha=0.4 eps=1e-9 d0= 1.0  k= 24  |x_k|=2.815e-10  (a) PASS  (b) PASS
-  alpha=0.5 eps=1e-9 d0= 1.0  k= 31  |x_k|=4.657e-10  (a) PASS  (b) PASS
-  alpha=0.6 eps=1e-9 d0= 1.0  k= 43  |x_k|=2.887e-10  (a) PASS  (b) PASS
-  alpha=0.7 eps=1e-9 d0= 1.0  k= 62  |x_k|=2.489e-10  (a) PASS  (b) PASS
-  alpha=0.8 eps=1e-9 d0= 1.0  k=101  |x_k|=1.630e-10  (a) PASS  (b) PASS
-  alpha=0.9 eps=1e-9 d0= 1.0  k=219  |x_k|=9.530e-11  (a) PASS  (b) PASS
-  alpha=0.1 eps=1e-3 d0=10.0  k=  5  |x_k|=1.000e-4  (a) PASS  (b) PASS
-  alpha=0.2 eps=1e-3 d0=10.0  k=  6  |x_k|=6.400e-4  (a) PASS  (b) PASS
-  alpha=0.3 eps=1e-3 d0=10.0  k=  8  |x_k|=6.561e-4  (a) PASS  (b) PASS
-  alpha=0.4 eps=1e-3 d0=10.0  k= 11  |x_k|=4.194e-4  (a) PASS  (b) PASS
-  alpha=0.5 eps=1e-3 d0=10.0  k= 15  |x_k|=3.052e-4  (a) PASS  (b) PASS
-  alpha=0.6 eps=1e-3 d0=10.0  k= 20  |x_k|=3.656e-4  (a) PASS  (b) PASS
-  alpha=0.7 eps=1e-3 d0=10.0  k= 30  |x_k|=2.254e-4  (a) PASS  (b) PASS
-  alpha=0.8 eps=1e-3 d0=10.0  k= 49  |x_k|=1.784e-4  (a) PASS  (b) PASS
-  alpha=0.9 eps=1e-3 d0=10.0  k=110  |x_k|=9.261e-5  (a) PASS  (b) PASS
-  alpha=0.1 eps=1e-6 d0=10.0  k=  8  |x_k|=1.000e-7  (a) PASS  (b) PASS
-  alpha=0.2 eps=1e-6 d0=10.0  k= 11  |x_k|=2.048e-7  (a) PASS  (b) PASS
-  alpha=0.3 eps=1e-6 d0=10.0  k= 14  |x_k|=4.783e-7  (a) PASS  (b) PASS
-  alpha=0.4 eps=1e-6 d0=10.0  k= 19  |x_k|=2.749e-7  (a) PASS  (b) PASS
-  alpha=0.5 eps=1e-6 d0=10.0  k= 25  |x_k|=2.980e-7  (a) PASS  (b) PASS
-  alpha=0.6 eps=1e-6 d0=10.0  k= 34  |x_k|=2.865e-7  (a) PASS  (b) PASS
-  alpha=0.7 eps=1e-6 d0=10.0  k= 49  |x_k|=2.569e-7  (a) PASS  (b) PASS
-  alpha=0.8 eps=1e-6 d0=10.0  k= 80  |x_k|=1.767e-7  (a) PASS  (b) PASS
-  alpha=0.9 eps=1e-6 d0=10.0  k=175  |x_k|=9.827e-8  (a) PASS  (b) PASS
-  alpha=0.1 eps=1e-9 d0=10.0  k= 11  |x_k|=1.000e-10  (a) PASS  (b) PASS
-  alpha=0.2 eps=1e-9 d0=10.0  k= 15  |x_k|=3.277e-10  (a) PASS  (b) PASS
-  alpha=0.3 eps=1e-9 d0=10.0  k= 20  |x_k|=3.487e-10  (a) PASS  (b) PASS
-  alpha=0.4 eps=1e-9 d0=10.0  k= 26  |x_k|=4.504e-10  (a) PASS  (b) PASS
-  alpha=0.5 eps=1e-9 d0=10.0  k= 35  |x_k|=2.910e-10  (a) PASS  (b) PASS
-  alpha=0.6 eps=1e-9 d0=10.0  k= 47  |x_k|=3.742e-10  (a) PASS  (b) PASS
-  alpha=0.7 eps=1e-9 d0=10.0  k= 68  |x_k|=2.929e-10  (a) PASS  (b) PASS
-  alpha=0.8 eps=1e-9 d0=10.0  k=111  |x_k|=1.750e-10  (a) PASS  (b) PASS
-  alpha=0.9 eps=1e-9 d0=10.0  k=241  |x_k|=9.385e-11  (a) PASS  (b) PASS
+  alpha=0.1 eps=1e-3 d0= 1.0  k=  4  |x_k|=1.111e-4  (a) PASS  (b) PASS
+  alpha=0.2 eps=1e-3 d0= 1.0  k=  5  |x_k|=4.000e-4  (a) PASS  (b) PASS
+  alpha=0.3 eps=1e-3 d0= 1.0  k=  7  |x_k|=3.124e-4  (a) PASS  (b) PASS
+  alpha=0.4 eps=1e-3 d0= 1.0  k=  9  |x_k|=4.369e-4  (a) PASS  (b) PASS
+  alpha=0.5 eps=1e-3 d0= 1.0  k= 11  |x_k|=9.766e-4  (a) PASS  (b) PASS
+  alpha=0.6 eps=1e-3 d0= 1.0  k= 16  |x_k|=7.053e-4  (a) PASS  (b) PASS
+  alpha=0.7 eps=1e-3 d0= 1.0  k= 23  |x_k|=9.123e-4  (a) PASS  (b) PASS
+  alpha=0.8 eps=1e-3 d0= 1.0  k= 39  |x_k|=8.308e-4  (a) PASS  (b) PASS
+  alpha=0.9 eps=1e-3 d0= 1.0  k= 88  |x_k|=9.405e-4  (a) PASS  (b) PASS
+  alpha=0.1 eps=1e-6 d0= 1.0  k=  7  |x_k|=1.111e-7  (a) PASS  (b) PASS
+  alpha=0.2 eps=1e-6 d0= 1.0  k=  9  |x_k|=6.400e-7  (a) PASS  (b) PASS
+  alpha=0.3 eps=1e-6 d0= 1.0  k= 12  |x_k|=7.592e-7  (a) PASS  (b) PASS
+  alpha=0.4 eps=1e-6 d0= 1.0  k= 16  |x_k|=7.158e-7  (a) PASS  (b) PASS
+  alpha=0.5 eps=1e-6 d0= 1.0  k= 21  |x_k|=9.537e-7  (a) PASS  (b) PASS
+  alpha=0.6 eps=1e-6 d0= 1.0  k= 29  |x_k|=9.211e-7  (a) PASS  (b) PASS
+  alpha=0.7 eps=1e-6 d0= 1.0  k= 43  |x_k|=7.279e-7  (a) PASS  (b) PASS
+  alpha=0.8 eps=1e-6 d0= 1.0  k= 70  |x_k|=8.228e-7  (a) PASS  (b) PASS
+  alpha=0.9 eps=1e-6 d0= 1.0  k=153  |x_k|=9.979e-7  (a) PASS  (b) PASS
+  alpha=0.1 eps=1e-9 d0= 1.0  k= 10  |x_k|=1.111e-10  (a) PASS  (b) PASS
+  alpha=0.2 eps=1e-9 d0= 1.0  k= 14  |x_k|=2.048e-10  (a) PASS  (b) PASS
+  alpha=0.3 eps=1e-9 d0= 1.0  k= 18  |x_k|=5.535e-10  (a) PASS  (b) PASS
+  alpha=0.4 eps=1e-9 d0= 1.0  k= 24  |x_k|=4.691e-10  (a) PASS  (b) PASS
+  alpha=0.5 eps=1e-9 d0= 1.0  k= 31  |x_k|=9.313e-10  (a) PASS  (b) PASS
+  alpha=0.6 eps=1e-9 d0= 1.0  k= 43  |x_k|=7.218e-10  (a) PASS  (b) PASS
+  alpha=0.7 eps=1e-9 d0= 1.0  k= 62  |x_k|=8.298e-10  (a) PASS  (b) PASS
+  alpha=0.8 eps=1e-9 d0= 1.0  k=101  |x_k|=8.148e-10  (a) PASS  (b) PASS
+  alpha=0.9 eps=1e-9 d0= 1.0  k=219  |x_k|=9.530e-10  (a) PASS  (b) PASS
+  alpha=0.1 eps=1e-3 d0=10.0  k=  5  |x_k|=1.111e-4  (a) PASS  (b) PASS
+  alpha=0.2 eps=1e-3 d0=10.0  k=  6  |x_k|=8.000e-4  (a) PASS  (b) PASS
+  alpha=0.3 eps=1e-3 d0=10.0  k=  8  |x_k|=9.373e-4  (a) PASS  (b) PASS
+  alpha=0.4 eps=1e-3 d0=10.0  k= 11  |x_k|=6.991e-4  (a) PASS  (b) PASS
+  alpha=0.5 eps=1e-3 d0=10.0  k= 15  |x_k|=6.104e-4  (a) PASS  (b) PASS
+  alpha=0.6 eps=1e-3 d0=10.0  k= 20  |x_k|=9.140e-4  (a) PASS  (b) PASS
+  alpha=0.7 eps=1e-3 d0=10.0  k= 30  |x_k|=7.513e-4  (a) PASS  (b) PASS
+  alpha=0.8 eps=1e-3 d0=10.0  k= 49  |x_k|=8.920e-4  (a) PASS  (b) PASS
+  alpha=0.9 eps=1e-3 d0=10.0  k=110  |x_k|=9.261e-4  (a) PASS  (b) PASS
+  alpha=0.1 eps=1e-6 d0=10.0  k=  8  |x_k|=1.111e-7  (a) PASS  (b) PASS
+  alpha=0.2 eps=1e-6 d0=10.0  k= 11  |x_k|=2.560e-7  (a) PASS  (b) PASS
+  alpha=0.3 eps=1e-6 d0=10.0  k= 14  |x_k|=6.833e-7  (a) PASS  (b) PASS
+  alpha=0.4 eps=1e-6 d0=10.0  k= 19  |x_k|=4.581e-7  (a) PASS  (b) PASS
+  alpha=0.5 eps=1e-6 d0=10.0  k= 25  |x_k|=5.960e-7  (a) PASS  (b) PASS
+  alpha=0.6 eps=1e-6 d0=10.0  k= 34  |x_k|=7.163e-7  (a) PASS  (b) PASS
+  alpha=0.7 eps=1e-6 d0=10.0  k= 49  |x_k|=8.564e-7  (a) PASS  (b) PASS
+  alpha=0.8 eps=1e-6 d0=10.0  k= 80  |x_k|=8.834e-7  (a) PASS  (b) PASS
+  alpha=0.9 eps=1e-6 d0=10.0  k=175  |x_k|=9.827e-7  (a) PASS  (b) PASS
+  alpha=0.1 eps=1e-9 d0=10.0  k= 11  |x_k|=1.111e-10  (a) PASS  (b) PASS
+  alpha=0.2 eps=1e-9 d0=10.0  k= 15  |x_k|=4.096e-10  (a) PASS  (b) PASS
+  alpha=0.3 eps=1e-9 d0=10.0  k= 20  |x_k|=4.981e-10  (a) PASS  (b) PASS
+  alpha=0.4 eps=1e-9 d0=10.0  k= 26  |x_k|=7.506e-10  (a) PASS  (b) PASS
+  alpha=0.5 eps=1e-9 d0=10.0  k= 35  |x_k|=5.821e-10  (a) PASS  (b) PASS
+  alpha=0.6 eps=1e-9 d0=10.0  k= 47  |x_k|=9.355e-10  (a) PASS  (b) PASS
+  alpha=0.7 eps=1e-9 d0=10.0  k= 68  |x_k|=9.762e-10  (a) PASS  (b) PASS
+  alpha=0.8 eps=1e-9 d0=10.0  k=111  |x_k|=8.749e-10  (a) PASS  (b) PASS
+  alpha=0.9 eps=1e-9 d0=10.0  k=241  |x_k|=9.385e-10  (a) PASS  (b) PASS
 
 Representative k values (d0 = 1.0):
 alpha \ eps      1e-3      1e-6      1e-9

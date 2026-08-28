@@ -1,8 +1,10 @@
 \chapter{Lawvere Theories for Dataplane Components}\label{ch:lawvere}
 
 A component is a molecule governed by equations.
-The ring buffer obeys cancellation laws relating $\mathit{push}$ and
-$\mathit{pop}$; the parser obeys the laws of sequence and choice; the
+A last-in first-out buffer obeys cancellation laws relating
+$\mathit{push}$ and $\mathit{pop}$; a first-in first-out ring of
+capacity $2^{k}$ obeys an occupancy bound on a pair of monotone
+pointers; the parser obeys the laws of sequence and choice; the
 transport obeys the laws of batching. This chapter collects the operations
 and equations of each component into a \emph{Lawvere theory}~\cite{lawvere,
 arxiv-lawvere} (\S\ref{sec:prelim-lawvere}), with three consequences. First,
@@ -32,18 +34,24 @@ Equations whose two sides realize genuinely different state spaces are
 asserted in the behavioral quotient Mol/$\approx$ (\autoref{thm:6}); where
 the state spaces are in bijection, they hold in Mol itself.
 
-\section{The Ring-Buffer Theory}\label{sec:lawvere-ring}
+\section{The Stack Theory and the FIFO Ring}\label{sec:lawvere-ring}
 
-The ring buffer is the workhorse of the dataplane: a preallocated,
-fixed-capacity array, indexed by bitmask (\autoref{thm:48}), into which
-elements are written and from which they are read. Its equational content
-is exactly what the rewrite engine of \autoref{ch:rewrite} needs.
+Two buffer disciplines appear in a dataplane, and they obey different
+equations. A \emph{stack} (last-in first-out) inserts and removes at the
+same end: $\mathit{push}$ followed by $\mathit{pop}$ is the identity on
+the element and the remaining content. A \emph{FIFO ring} of capacity
+$N = 2^{k}$ inserts at a write pointer $w$ and removes at a read
+pointer $r$: $\mathit{push}$ followed by $\mathit{pop}$ returns the
+oldest stored element, which equals the element just pushed only when
+the ring was empty. The rewrite engine of \autoref{ch:rewrite} decides
+the stack fragment and the pointer fragment; occupancy of the FIFO ring
+is \autoref{thm:48}.
 
-\begin{definition}[Ring-buffer theory]
+\begin{definition}[Stack theory]
 \label{def:ring-theory}
-The \emph{ring-buffer theory} $\mathcal{R}$ is the one-sorted Lawvere theory
-over the unary signature $\{\mathit{push}, \mathit{pop}, \mathit{peek}\}$
-presented by the equations
+The \emph{stack theory} $\mathcal{R}$ (the LIFO buffer theory) is the
+one-sorted Lawvere theory over the unary signature
+$\{\mathit{push}, \mathit{pop}, \mathit{peek}\}$ presented by the equations
 \begin{align}
 \mathit{push};\mathit{pop} &= \mathit{id}, \label{eq:r1}\\
 \mathit{pop};\mathit{push} &= \mathit{id} &&\text{(when the buffer is
@@ -68,30 +76,36 @@ transformations
 \mathit{pop} (a \mathbin{::} s) = (a,s), \qquad
 \mathit{peek} (a \mathbin{::} s) = (a,\ a \mathbin{::} s),
 \]
-the last two defined on the non-empty buffers. A finite ring of capacity
-$N = 2^{k}$ realizes the same laws on the invariant states $E^{\leq N-1}$
-(\autoref{thm:48}), with $\mathit{push}$ defined while room remains. This is
-the ring-buffer molecule of the dataplane in the single-ended discipline:
-$\mathit{push}$ inserts at the write position, $\mathit{pop}$ removes the
-element most recently inserted, and the two are behavioral inverses up to
-the guards. The equations characterize exactly this discipline; under FIFO
-usage a pop after a push removes a different element, and the laws fail.
+the last two defined on the non-empty buffers. This is the LIFO
+discipline: $\mathit{push}$ inserts at the front, $\mathit{pop}$ removes
+the front element, and the two are behavioral inverses up to the guards.
+A FIFO ring of capacity $N = 2^{k}$ does \emph{not} satisfy
+\eqref{eq:r1} on nonempty states: $\mathit{push}$ writes at $w$ and
+increments $w$, $\mathit{pop}$ reads at $r$ and increments $r$, and on a
+buffer that already holds an element the pop returns that older element.
+The FIFO content model therefore lies outside $\mathcal{R}$. What a
+power-of-two FIFO ring does satisfy is the occupancy invariant
+$0 \leq w - r \leq 2^{k} - 1$ of \autoref{thm:48}, on the pointer pair
+$(w, r)$.
 
 \begin{remark}[The free ring model]
 \label{rem:free-ring}
 The free algebra of the $\{\mathit{push}, \mathit{pop}\}$ fragment on one
-generator is the \emph{ring} of positions $\mathbb{Z}$: carrier
+generator is the pointer line $\mathbb{Z}$: carrier
 $\mathbb{Z}$, $\mathit{push} (n) = n+1$, $\mathit{pop} (n) = n-1$, generator
-$0$. Every cyclic quotient $\mathbb{Z}/2^{k}$ is a finite model of the
-fragment, and $\mathbb{Z}$ is the free model for which the theory is
-complete (\autoref{thm:9}).
+$0$. This models a single ring index, not FIFO content. Every cyclic
+quotient $\mathbb{Z}/2^{k}$ is a finite model of the fragment, and
+$\mathbb{Z}$ is the free model for which the theory is complete
+(\autoref{thm:9}).
 \end{remark}
 
-\begin{theorem}[Ring theory equations (\autoref{thm:9}) [N]]\label{thm:9}
-The ring theory equations $\mathit{push}\circ\mathit{pop} = \mathit{id}$
-and $\mathit{pop}\circ\mathit{push} = \mathit{id}$ (when the buffer is
+\setcatalog{9}
+\begin{theorem}[Stack theory equations (\autoref{thm:9})]\label{thm:9}
+The stack theory equations $\mathit{push};\mathit{pop} = \mathit{id}$
+and $\mathit{pop};\mathit{push} = \mathit{id}$ (when the buffer is
 non-empty) hold in every model of $\mathcal{R}$, and the equations are
-complete for the free ring model.
+complete for the free pointer model $\mathbb{Z}$. They fail in the FIFO
+content model on every nonempty buffer.
 \end{theorem}
 
 \begin{proof}
@@ -122,9 +136,16 @@ exactly when their net exponents agree. In the free ring model
 $\mathbb{Z}$ of \autoref{rem:free-ring}, a term of net exponent $e$
 evaluates to $e$, so two terms are equal in the free ring model exactly
 when their net exponents agree. Provable equality and validity therefore
-coincide: the equations are complete for the free ring model, and the same
+coincide: the equations are complete for the free pointer model, and the same
 argument decides the word problem of the fragment by normal forms, the
-content of the ring rewrite system of \autoref{ch:rewrite}.
+content of the buffer rewrite system of \autoref{ch:rewrite}. In the FIFO
+content model on $E^{*}$, $\mathit{push}$ appends at the tail and
+$\mathit{pop}$ removes at the head, so
+$\mathit{push};\mathit{pop}$ sends $(a, s)$ to
+$\mathit{pop} (s \mathbin{+\!\!+} [a])$, which equals $(a, s)$ if and
+only if $s$ is empty. On a nonempty buffer $s = e \mathbin{::} t$ the
+composite returns $(e, t \mathbin{+\!\!+} [a])$. So \eqref{eq:r1} fails
+for FIFO content, as claimed.
 \end{proof}
 
 \section{The Parser Theory}\label{sec:lawvere-parser}
@@ -167,7 +188,8 @@ the models of $\mathcal{P}$ are the deterministic parsers of the LL(1)
 discipline, and the equations of \autoref{def:parser-theory} are identities
 of this semantics (\autoref{thm:10}).
 
-\begin{theorem}[Parser theory (\autoref{thm:10}) [N]]\label{thm:10}
+\setcatalog{10}
+\begin{theorem}[Parser theory (\autoref{thm:10})]\label{thm:10}
 In the parser theory, sequence distributes over choice, choice is
 associative, the identity laws hold, and left factoring is sound: the
 rewrite
@@ -237,7 +259,8 @@ which successive receives are independent: and the interchange law holds
 in every model.
 \end{definition}
 
-\begin{theorem}[Transport theory (\autoref{thm:11}) [N]]\label{thm:11}
+\setcatalog{11}
+\begin{theorem}[Transport theory (\autoref{thm:11})]\label{thm:11}
 In the transport theory, $\mathit{batch\_recv} = \mathit{recv} \otimes
 \cdots \otimes \mathit{recv}$, and the interchange law
 $(f \otimes g);(h \otimes k) = (f;h) \otimes (g;k)$ holds.
@@ -281,10 +304,12 @@ procedure. The central ring rule is ring cancellation: a $\mathit{push}$
 immediately followed by a $\mathit{pop}$ is behaviorally invisible and can
 be deleted.
 
-\begin{theorem}[Ring cancellation (\autoref{thm:12}) [N]]\label{thm:12}
-An adjacent pair $\mathit{push}\circ\mathit{pop}$ is removable from any ring
+\setcatalog{12}
+\begin{theorem}[Stack cancellation (\autoref{thm:12})]\label{thm:12}
+An adjacent pair $\mathit{push};\mathit{pop}$ is removable from any stack
 term with behavior preserved: for every context $C$ in the theory,
-$C[\mathit{push};\mathit{pop}] = C[\mathit{id}]$ holds in every model.
+$C[\mathit{push};\mathit{pop}] = C[\mathit{id}]$ holds in every model of
+$\mathcal{R}$. The rule does not apply to FIFO content terms.
 \end{theorem}
 
 \begin{proof}
@@ -312,12 +337,14 @@ Mol/$\approx$.}
 \toprule
 Theory & Law & Licensed rewrite rule\\
 \midrule
-Ring $\mathcal{R}$ & $\mathit{push};\mathit{pop} = \mathit{id}$
+Stack $\mathcal{R}$ & $\mathit{push};\mathit{pop} = \mathit{id}$
 (\ref{thm:9}, \ref{thm:12}) & $\mathit{push};\mathit{pop} \rightsquigarrow
-\mathit{id}$: ring cancellation.\\
-Ring $\mathcal{R}$ & $\mathit{pop};\mathit{push} = \mathit{id}$, guarded
+\mathit{id}$: LIFO cancellation.\\
+Stack $\mathcal{R}$ & $\mathit{pop};\mathit{push} = \mathit{id}$, guarded
 (\ref{thm:9}) & $\mathit{pop};\mathit{push} \rightsquigarrow
-\mathit{id}$ wherever the buffer is known non-empty.\\
+\mathit{id}$ wherever the stack is known non-empty.\\
+FIFO ring & $0 \leq w-r \leq 2^{k}-1$ (\ref{thm:48}) & occupancy invariant;
+bitmask indexing is sound exactly on this bound.\\
 Parser $\mathcal{P}$ & left distribution (\ref{thm:10}) &
 $\mathit{choice} (p;q,\ p;r) \rightsquigarrow p;\mathit{choice} (q,r)$:
 left factoring.\\

@@ -50,6 +50,7 @@ cost bounded by its userspace instruction count; one that performs one
 syscall per request pays a per-request kernel cost that dominates
 everything else on typical hardware.
 
+\setcatalog{56}
 \begin{theorem}[Boundary enrichment is well-defined]\label{thm:56}\label{thm:boundary}
 For molecules over a fixed signature, the boundary count satisfies the
 quantitative laws:
@@ -95,6 +96,7 @@ incident into a typing rule.
 
 \section{The batch fusion law}\label{sec:batch-law}
 
+\setcatalog{57}
 \begin{theorem}[Batch fusion]\label{thm:57}\label{thm:batch}
 Let $R$ be a syscall atom (receive, send, or file transfer) and let
 $\mathit{batch}_n (R)$ be the $n$-fold batch construction of
@@ -133,6 +135,7 @@ versus userspace copy; zerocopy versus copy; kernel versus userspace
 datapath). The choice is a function of payload size, and the point
 where the advantage flips is a theorem.
 
+\setcatalog{58}
 \begin{theorem}[The affine crossover]\label{thm:58}\label{thm:crossover}
 Let $R_1, R_2$ be realizations of one behavior class with
 payload-size-parameterized costs $c_i (n) = a_i n + b_i$ with
@@ -184,6 +187,7 @@ threshold.
 
 \section{The optimization lattice}\label{sec:lattice}
 
+\setcatalog{59}
 \begin{theorem}[The optimization lattice]\label{thm:59}\label{thm:lattice}
 Let $M$ be a molecule over a finite signature with bounded types, and
 let $\mathcal{R}$ be a terminating, confluent rewrite system on its
@@ -191,9 +195,12 @@ realizations (the systems of \autoref{ch:rewrite}). Then:
 (1) the set $\mathrm{NF} (M)$ of normal-form-equivalent realizations of
 $M$, those reachable from $M$ by $\mathcal{R}$-rewrites, is finite;
 (2) with the boundary-enriched cost of \autoref{def:boundary},
-$\mathrm{NF} (M)$ is a finite lattice under the componentwise cost
-order, and it has a least element: the realization of minimal boundary
-count, and among those, minimal cost;
+$\mathrm{NF} (M)$ is a finite nonempty poset under the lexicographic
+order $(\beta, c)$, and that order has a unique least element: the
+realization of minimal boundary count, and among those, of minimal
+cost. Componentwise comparison of cost vectors need not have meets
+inside $\mathrm{NF} (M)$, so the structure is a poset with a
+lexicographic minimum, not a lattice in the order-theoretic sense;
 (3) the least element is computable by enumerating the finite rewrite
 paths of $\mathcal{R}$ from $M$ and grading each by $(\beta, c)$: a
 decision procedure, not a search heuristic.
@@ -203,12 +210,13 @@ decision procedure, not a search heuristic.
 (1) is the finiteness of normal forms, restricted to the rewrites of
 $\mathcal{R}$, which are behavior-preserving. (2) and (3): the
 rewrites preserve the behavior class, so every realization in
-$\mathrm{NF} (M)$ is a candidate; the boundary count and cost vector are
-each $\mathbb{N}$-valued on a finite set, so the lexicographic minimum
-exists and is found by the finite enumeration. The enumeration
-terminates because $\mathcal{R}$ is terminating and the signature is
-finite: no infinite rewrite chains to new realizations beyond the
-finite normal forms.
+$\mathrm{NF} (M)$ is a candidate; $\beta$ and $c$ are $\mathbb{N}$-valued
+on a finite nonempty set, so the lexicographic order is a well-order
+on a finite set and has a unique least element. Componentwise min of
+two cost vectors need not be realized by any element of
+$\mathrm{NF} (M)$, so meets need not exist and we do not claim a
+lattice. The enumeration terminates because $\mathcal{R}$ is
+terminating and the signature is finite.
 \end{proof}
 
 \begin{remark}[The discovery method]
@@ -228,6 +236,7 @@ realization when the kernel's per-packet cost dominates
 
 \section{Datapath bisimulation and bypass as retraction}\label{sec:bypass}
 
+\setcatalog{60}
 \begin{theorem}[Bypass is a retraction]\label{thm:60}\label{thm:bypass}
 Let $K$ be the kernel datapath molecule (socket receive, protocol
 processing, socket send) and let $U$ be the userspace datapath
@@ -265,6 +274,7 @@ inequality. Neither claim is an engineering opinion.
 
 \section{Cache soundness as bounded staleness}\label{sec:cache}
 
+\setcatalog{61}
 \begin{theorem}[Cache soundness]\label{thm:61}\label{thm:cache}
 Let $M$ be a molecule whose behavior depends on a state $S$ that
 changes only at \emph{event} times (file writes, configuration
@@ -304,6 +314,7 @@ by 3 in the shipped code). This is the state update of the
 fixed-iteration loop of \autoref{ch:trace}; the following theorem makes
 its tuning a proof.
 
+\setcatalog{62}
 \begin{theorem}[Band contraction]\label{thm:62}\label{thm:ema}
 Let $F (x) = x + n - x/8$ on $\mathbb{N}$ with fixed demand
 $n \geq 1$. Then:
@@ -325,16 +336,16 @@ leaves a band of width $8$ instead of a point.
 $F (x) = x + n - n = x$. Conversely, $F (x) = x$ forces $n = x/8$,
 which by the meaning of integer division means $8n \leq x \leq 8n+7$,
 that is, $x \in B$.
-(2): write $x = 8n + k$ with $k$ an integer. If $x < 8n$ then $k < 0$
-and $x/8 \leq n-1$, so $F (x) = x + n - x/8 \geq x + n - (n-1) = x+1 > x$,
-and $F (x) \leq x + n \leq 8n - 1 + n = 9n - 1$; since $x/8 \geq n-1$
-is false only for $x < 8 (n-1)$, iterating eventually reaches the band
-because each step increases $x$ by at least $1$ while $x < 8n$. If
-$x > 8n+7$, then $x/8 \geq n+1$, so
-$F (x) = x + n - x/8 \leq x + n - (n+1) = x - 1 < x$, and
-$F (x) \geq x/8 \cdot 7 + n \geq 7 (n+1) + n = 8n+7$, so the iterate
-stays above the band until it enters it; each step decreases $x$ by at
-least $1$, so entry is finite.
+(2): write $x = 8q + r$ with $q = \lfloor x/8 \rfloor$ and
+$0 \leq r \leq 7$, so $F (x) = 7q + r + n$. If $x < 8n$ then
+$q \leq n-1$, hence $F (x) \leq 7(n-1) + 7 + n = 8n$, with equality at
+$x = 8n-1$. Also $q \leq n-1$ gives $\lfloor x/8 \rfloor \leq n-1$, so
+$F (x) = x + n - \lfloor x/8 \rfloor \geq x + 1 > x$. Thus below the
+band $F$ strictly increases and $F (x) \leq 8n$. If $x > 8n+7$ then
+$q \geq n+1$, so $F (x) = x + n - q \leq x - 1$, and
+$F (x) \geq 8q + n - q = 7q + n \geq 7(n+1) + n = 8n+7$. Thus above
+the band $F$ strictly decreases and stays at or above $8n+7$. Entry is
+finite because each step moves by at least $1$ on $\mathbb{N}$.
 (3): if $x \leq y$ then $x/8 \leq y/8$ (integer division is monotone),
 so $F (x) = x + n - x/8 \leq y + n - y/8 = F (y)$.
 (4): by (2), the distance to the band strictly decreases at each step
@@ -360,6 +371,7 @@ rejected set.
 
 \section{Zero-boundary loops: the hot-path effect discipline}\label{sec:zero-boundary}
 
+\setcatalog{63}
 \begin{theorem}[Zero-boundary loops]\label{thm:63}\label{thm:zero-boundary}
 Let $L_k (M)$ be the fixed-iteration loop whose body $M$ is a molecule
 typed in the affine system of \autoref{ch:linear} with no effectful
@@ -371,7 +383,7 @@ law.
 \end{theorem}
 
 \begin{proof}
-The affine typing forces exact-once consumption and no allocation; a
+The linear typing of \autoref{ch:linear} forces exact-once consumption and no allocation atom; a
 signature without syscall atoms performs no syscalls by the definition
 of the boundary count; the loop is fixed-iteration, so no boundary
 crossing occurs between iterations; the cost identity is the additive
@@ -399,6 +411,7 @@ served). The data is a regular language, and the obvious matcher, a
 linear scan over the rules, is only one of the two canonical
 realizations.
 
+\setcatalog{64}
 \begin{theorem}[Route languages are regular; the pattern trie is a deterministic automaton]\label{thm:64}\label{thm:route-dfa}
 Let $P$ be a set of disjoint patterns over the alphabet of path bytes,
 each pattern either exact or a trailing prefix. Define the
@@ -432,6 +445,7 @@ every path, including prefix boundaries, method splits, and exclude
 vetoes.
 \end{proof}
 
+\setcatalog{65}
 \begin{theorem}[The automaton is the Myhill--Nerode refinement]\label{thm:65}\label{thm:route-mn}
 The states of $T (P)$ are the distinct pattern prefixes. Under the
 Myhill--Nerode quotient of the route language, two prefixes are
@@ -461,6 +475,7 @@ practice always distinct, so the automaton is the minimal one.
 
 \section{Realization choice is a measured threshold}\label{sec:route-crossover}
 
+\setcatalog{66}
 \begin{theorem}[Hybrid matcher selection]\label{thm:66}\label{thm:hybrid}
 Let the scan cost be affine in the rule count,
 $c_{scan} (R) = aR + b$, and the automaton cost be flat in $R$. Then by
@@ -740,8 +755,8 @@ reproducible from the source distribution.
 The method of this chapter: enrich the cost model with the kernel
 boundary, prove that realization choice is a threshold, and take the
 minimum of the finite lattice of behavior-preserving rewrites. It is
-the answer to the question ``what is the last optimization?'' It is
-not a bag of tricks; it is the decision procedure that
+the answer to the question ``what is the last optimization?'' The
+method is a decision procedure that
 \autoref{thm:lattice} proves exists, applied to the molecules this
 thesis constructs. The optimizations discovered this way are exactly
 the ones the measurements confirm: fewer syscalls per request, the

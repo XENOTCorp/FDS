@@ -1,15 +1,16 @@
 //! The iteration-bound theorem: k(alpha, eps, d0) iterations suffice for a contraction mapping.
 //!
-//! For a contraction with Lipschitz constant `alpha` in (0, 1) and initial
-//! distance `d0` from the fixed point, the iteration-bound theorem gives the number of iterations
-//! needed to get within `eps` of the fixed point:
+//! For a contraction with Lipschitz constant `alpha` in (0, 1) write
+//! `d0 = d(x0, F x0)` (distance from the initial point to its image, not
+//! distance to the unknown fixed point). The iteration-bound theorem gives
+//! the number of iterations needed to get within `eps` of the fixed point:
 //!
 //!     k(alpha, eps, d0) = ceil( ln(eps * (1 - alpha) / d0) / ln(alpha) )
 //!
-//! Derivation: the orbit tail after `k` steps is bounded by the geometric sum
-//! `d0 * alpha^k / (1 - alpha)`; requiring that tail `<= eps` and solving for
-//! `k` yields the formula. `ln(alpha) < 0` for `alpha` in (0, 1), so the ratio
-//! is well defined.
+//! Derivation: the a priori tail after `k` steps is bounded by the geometric
+//! sum `d0 * alpha^k / (1 - alpha)`; requiring that tail `<= eps` and solving
+//! for `k` yields the formula. `ln(alpha) < 0` for `alpha` in (0, 1), so the
+//! ratio is well defined. The hypothesis `eps * (1 - alpha) < d0` keeps `k >= 1`.
 //!
 //! Checks performed:
 //!   (a) the bound is finite and `>= 1` for every sample;
@@ -40,10 +41,12 @@ fn bound_k(alpha: f64, eps: f64, d0: f64) -> Option<i64> {
     }
 }
 
-/// Iterate `x_{n+1} = alpha * x_n` from `x_0 = d0` for `k` steps and return
-/// the final value.
+/// Iterate `x_{n+1} = alpha * x_n` (fixed point `0`) for `k` steps.
+/// The theorem's `d0` is `d(x0, F x0) = (1 - alpha) * |x0|`, so the matching
+/// initial value is `x0 = d0 / (1 - alpha)`. The a priori bound is then
+/// tight: `|x_k| = d0 * alpha^k / (1 - alpha)`.
 fn simulate(alpha: f64, d0: f64, k: i64) -> f64 {
-    let mut x = d0;
+    let mut x = d0 / (1.0 - alpha);
     for _ in 0..k {
         x *= alpha;
     }
@@ -62,7 +65,7 @@ fn main() {
 
     println!("Iteration-bound theorem: k(alpha, eps, d0) = ceil(ln(eps*(1-alpha)/d0) / ln(alpha))");
     println!(
-        "Samples: alpha in 0.1..=0.9 (step 0.1), eps in {{1e-3, 1e-6, 1e-9}}, d0 in {{1.0, 10.0}}"
+        "d0 = d(x0, F x0). Samples: alpha in 0.1..=0.9 (step 0.1), eps in {{1e-3, 1e-6, 1e-9}}, d0 in {{1.0, 10.0}}"
     );
     println!();
 

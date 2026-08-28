@@ -14,14 +14,14 @@ The catalog lists all theorems \autoref{thm:1}--\autoref{thm:68}. The tag column
 \toprule
 Theorem & Tag & Statement & Chapter\\
 \midrule
-\ref{thm:1} & [N] & Mol is a category: composition of $(S,\mathit{step})$ classes is associative with identity. & \autoref{ch:mol}\\
-\ref{thm:2} & [N] & The state-space bijection quotient is well-defined: equivalent machines compose to equivalent machines. & \autoref{ch:mol}\\
+\ref{thm:1} & [C] & Mol is a category: composition of $(S,\mathit{step})$ classes is associative with identity. & \autoref{ch:mol}\\
+\ref{thm:2} & [C] & The state-space bijection quotient is well-defined: equivalent machines compose to equivalent machines. & \autoref{ch:mol}\\
 \ref{thm:3} & [C] & Mol is symmetric monoidal: tensor $=$ tuple product, unit $=()$, coherent braiding (Mac Lane coherence \cite{maclane}). & \autoref{ch:mol}\\
-\ref{thm:4} & [N] & PureMol is equivalent to the category of types and total functions. & \autoref{ch:mol}\\
-\ref{thm:5} & [N] & EffMol (Ctx) is isomorphic to the Kleisli category of the state monad on Ctx. & \autoref{ch:mol}\\
-\ref{thm:6} & [N] & Behavioral equivalence (bisimulation) is a congruence for $\circ$ and $\otimes$; Mol$/\!\!\approx$ is symmetric monoidal. & \autoref{ch:mol}\\
-\ref{thm:7} & [N] & PureMol and EffMol are closed under tensor. & \autoref{ch:mol}\\
-\ref{thm:8} & [N] & Pure molecules and their tensor products are deterministic; behavioral equivalence preserves determinism. & \autoref{ch:mol}\\
+\ref{thm:4} & [C] & PureMol is equivalent to the category of types and total functions. & \autoref{ch:mol}\\
+\ref{thm:5} & [C] & EffMol (Ctx) is isomorphic to the Kleisli category of the state monad on Ctx. & \autoref{ch:mol}\\
+\ref{thm:6} & [C] & Behavioral equivalence (bisimulation) is a congruence for $\circ$ and $\otimes$ on lockstep words; Mol$/\!\!\approx$ is symmetric monoidal. & \autoref{ch:mol}\\
+\ref{thm:7} & [C] & PureMol and EffMol are closed under tensor; $E \otimes E \subseteq H$ and $E \circ E \subseteq H$ in Mol. & \autoref{ch:mol}\\
+\ref{thm:8} & [C] & Pure molecules and their tensor products are deterministic; behavioral equivalence preserves determinism. & \autoref{ch:mol}\\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -35,10 +35,10 @@ Theorem & Tag & Statement & Chapter\\
 \toprule
 Theorem & Tag & Statement & Chapter\\
 \midrule
-\ref{thm:9} & [N] & Ring theory equations (push$\circ$pop $=$ id; pop$\circ$push $=$ id when non-empty) hold in every model and are complete for the free ring model. & \autoref{ch:lawvere}\\
+\ref{thm:9} & [C] & Stack equations (push;pop $=$ id; pop;push $=$ id when non-empty) hold in every LIFO model and are complete for the free pointer model $\mathbb{Z}$; they fail for FIFO content. & \autoref{ch:lawvere}\\
 \ref{thm:10} & [N] & Parser theory: sequence distributes over choice; choice is associative; identity laws; left factoring is sound. & \autoref{ch:lawvere}\\
 \ref{thm:11} & [N] & Transport theory: batch\_recv $=$ recv$\otimes\cdots\otimes$recv; the interchange law $(f\otimes g);(h\otimes k) = (f;h)\otimes (g;k)$ holds. & \autoref{ch:lawvere}\\
-\ref{thm:12} & [N] & Ring cancellation: an adjacent push$\circ$pop pair is removable with behavior preserved. & \autoref{ch:lawvere}\\
+\ref{thm:12} & [C] & Stack cancellation: an adjacent push;pop pair is removable in every model of $\mathcal{R}$; the rule does not apply to FIFO content. & \autoref{ch:lawvere}\\
 \ref{thm:13} & [N] & The ring rewrite system is terminating (lexicographic path measure). & \autoref{ch:rewrite}\\
 \ref{thm:14} & [N] & The system is locally confluent; all critical pairs join, hence it is confluent (Newman's lemma \cite{newman}). & \autoref{ch:rewrite}\\
 \ref{thm:15} & [N] & Knuth--Bendix completion of the ring theory terminates in a complete system (script-verified, \autoref{app:a}). & \autoref{ch:rewrite}\\
@@ -46,7 +46,7 @@ Theorem & Tag & Statement & Chapter\\
 \ref{thm:17} & [N] & Batch-flattening rewrites are confluent on batch trees; the flattened normal form is unique. & \autoref{ch:rewrite}\\
 \ref{thm:18} & [N] & Normalization soundness: $\mathrm{NF} (M) \approx M$ and $\mathrm{cost} (\mathrm{NF} (M)) \le \mathrm{cost} (M)$ for cost-nonincreasing rules. & \autoref{ch:rewrite}\\
 \ref{thm:19} & [N] & The runtime equational theory is decidable for finite signatures via normalization. & \autoref{ch:rewrite}\\
-\ref{thm:54} & [N] & Modular completion: adjoining a new equational theory preserves termination and confluence under the disjoint-union or hierarchical conditions; decidability is preserved. & \autoref{ch:rewrite}\\
+\ref{thm:54} & [C] & Modular completion: confluence is modular for disjoint signatures (Toyama); termination of the union requires simple/LPO termination, which the runtime systems satisfy. & \autoref{ch:rewrite}\\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -64,7 +64,7 @@ Theorem & Tag & Statement & Chapter\\
 \ref{thm:21} & [C] & Universal property: every molecule over $\Sigma$ factors uniquely (up to coherent iso) through $F (\Sigma)$. & \autoref{ch:free}\\
 \ref{thm:22} & [N] & Finiteness: finite $\Sigma$ with bounded types gives finite hom-sets in $F (\Sigma)$. & \autoref{ch:free}\\
 \ref{thm:23} & [N] & Every molecule has a unique normal form in $F (\Sigma)$ up to coherence. & \autoref{ch:free}\\
-\ref{thm:24} & [N] & Completeness: $M \approx M'$ iff $\mathrm{NF} (M) = \mathrm{NF} (M')$; normal forms form a precomputable lookup table. & \autoref{ch:free}\\
+\ref{thm:24} & [N] & Completeness for the runtime theory: $M =_R M'$ iff $\mathrm{NF} (M) = \mathrm{NF} (M')$; $=_R$ is sound for $\approx$ and strictly finer in general. & \autoref{ch:free}\\
 \ref{thm:25} & [N] & Cost enrichment is well-defined: additive composition cost, triangle inequality, tensor subadditivity. & \autoref{ch:enrich}\\
 \ref{thm:26} & [N] & Global optimality: nonnegative additive costs $\Rightarrow$ min-cost molecules are shortest paths in the finite type graph (Dijkstra complete). & \autoref{ch:enrich}\\
 \ref{thm:27} & [N] & Fusion bound: $\mathrm{cost} (\mathrm{fused}\, g\circ f) \le \mathrm{cost} (f)+\mathrm{cost} (g)$, strict when the intermediate type never materializes. & \autoref{ch:enrich}\\
@@ -87,10 +87,10 @@ Theorem & Tag & Statement & Chapter\\
 \toprule
 Theorem & Tag & Statement & Chapter\\
 \midrule
-\ref{thm:33} & [N] & Every hybrid molecule decomposes $M = q \circ e \circ p$ ($p,q$ pure, $e$ effectful), unique up to isomorphism. & \autoref{ch:kleisli}\\
-\ref{thm:34} & [C] & Sliding: Tr$(f;M) = f;\mathrm{Tr} (M)$ for pure $f$ (Joyal--Street--Verity \cite{joyalsv}). & \autoref{ch:kleisli}\\
-\ref{thm:35} & [C] & Vanishing and yanking: Tr (Tr$(M)) = \mathrm{Tr} (M)$; Tr$(\sigma) = $ id. & \autoref{ch:kleisli}\\
-\ref{thm:36} & [C] & Superposing: Tr$(M)\otimes N = \mathrm{Tr} (M\otimes N)$. & \autoref{ch:kleisli}\\
+\ref{thm:33} & [C] & The step of $M = [S,\mathit{step}]$ is a Kleisli morphism of $T_S$; the response is its iterate; conjugate under state-space isomorphism. & \autoref{ch:kleisli}\\
+\ref{thm:34} & [C] & Sliding of pure maps for the reactor loop, proved from the machine definition. & \autoref{ch:kleisli}\\
+\ref{thm:35} & [C] & Vanishing I--II for the reactor loop; Tr$(\sigma) = \Delta_U$ (delay). Yanking fails for $|U|>1$. & \autoref{ch:kleisli}\\
+\ref{thm:36} & [C] & Superposing: Tr$(M)\otimes N = \mathrm{Tr} (M\otimes N)$, proved from the machine definition. & \autoref{ch:kleisli}\\
 \ref{thm:37} & [N] & Hoisting shrinks the loop-state footprint; cache footprint of loop state is monotone in state size. & \autoref{ch:kleisli}\\
 \ref{thm:38} & [C] & Every finite-state molecule has a minimal state space, unique up to isomorphism (Nerode/Hopcroft \cite{nerode},\cite{hopcroft}). & \autoref{ch:coalgebra}\\
 \ref{thm:39} & [C] & Minimization preserves behavior (Nerode quotient equivalence). & \autoref{ch:coalgebra}\\
@@ -98,7 +98,7 @@ Theorem & Tag & Statement & Chapter\\
 \ref{thm:41} & [N] & Minimization is compatible with equivalence: $M \approx M' \Rightarrow S_{\min} (M) \cong S_{\min} (M')$. & \autoref{ch:coalgebra}\\
 \ref{thm:42} & [C] & A contraction state update (rate $\alpha < 1$) converges to a unique fixed point (Banach \cite{banach}). & \autoref{ch:trace}\\
 \ref{thm:43} & [N] & Iteration bound: $k (\alpha,\varepsilon,d_0) = \lceil \ln (\varepsilon (1-\alpha)/d_0)/\ln\alpha\rceil$ iterations suffice; the unrolled loop is within $\varepsilon$, branch-predictable. & \autoref{ch:trace}\\
-\ref{thm:44} & [N] & Contraction rates combine: $\max (\alpha_1,\alpha_2)$ under tensor; $\alpha_1+\alpha_2$ sequential (sup metric). & \autoref{ch:trace}\\
+\ref{thm:44} & [N] & Contraction rates combine: $\max (\alpha_1,\alpha_2)$ under tensor; $\alpha_1\alpha_2$ sequential (sharp). & \autoref{ch:trace}\\
 \ref{thm:45} & [C] & Markov updates: total-variation distance contracts by the Dobrushin coefficient \cite{dobroushin}. & \autoref{ch:trace}\\
 \bottomrule
 \end{tabular}
@@ -116,9 +116,9 @@ Theorem & Tag & Statement & Chapter\\
 \ref{thm:46} & [N] & Batch flattening: $\mathrm{batch} (\mathrm{batch} (a,b),\mathrm{batch} (c,d)) = \mathrm{batch} (a,b,c,d)$. & \autoref{ch:operad}\\
 \ref{thm:47} & [N] & Syscall amortization: $\mathrm{cost} (\mathrm{batch}_n) \le n\cdot\mathrm{cost} (\mathrm{single}) + \mathrm{fixed} (n)$, with $\mathrm{fixed} (n)/n \to 0$ (script-verified, \autoref{app:a}). & \autoref{ch:operad}\\
 \ref{thm:48} & [N] & Ring capacity invariant: capacity $2^k$ with bitmask indexing is correct iff in-flight $\le 2^k - 1$. & \autoref{ch:operad}\\
-\ref{thm:49} & [C] & Cut elimination $=$ deforestation: every pure pipeline fuses to a single morphism (Girard \cite{girard}, proved for Mol). & \autoref{ch:linear}\\
-\ref{thm:50} & [N] & Linearity: atoms consume input exactly once $\Rightarrow$ a well-typed hot path never allocates or deallocates. & \autoref{ch:linear}\\
-\ref{thm:55} & [N] & Affine typing: well-typed molecules consume resources exactly once and evaluate without allocation. & \autoref{ch:linear}\\
+\ref{thm:49} & [N] & Product-state fusion: every pipeline equals a single Mealy machine whose intermediate value is a register. & \autoref{ch:linear}\\
+\ref{thm:50} & [N] & Linear atoms plus preallocated rings (occupancy $\le 2^k-1$) $\Rightarrow$ zero hot-path allocation. & \autoref{ch:linear}\\
+\ref{thm:55} & [N] & Linear combinator calculus: exact-once variables, non-duplicating reduction, non-growing syntax tree (heap is \ref{thm:50}). & \autoref{ch:linear}\\
 \ref{thm:51} & [N] & Situation solvability: bounded types and additive costs $\Rightarrow$ the feasible set of $(A\to B,\Phi,\bar c)$ is finite and decidable; decision-matrix computation terminates. & \autoref{ch:situations}\\
 \ref{thm:52} & [N] & Zero-copy roundtrip: parse/serialize inverse on the well-formed domain $\Rightarrow$ parse;serialize $\approx$ id; roundtrip elimination is sound. & \autoref{ch:situations}\\
 \bottomrule
@@ -137,7 +137,7 @@ Theorem & Tag & Statement & Chapter\\
 \ref{thm:56} & [N] & Boundary enrichment: syscall count is a well-defined graded cost, lexicographic over userspace cost. & \autoref{ch:breakthroughs}\\
 \ref{thm:57} & [N] & Batch fusion: $\beta(\mathrm{batch}_n(R))=1$ for $n\ge 1$, strictly less than the unbunched tensor for $n\ge 2$. & \autoref{ch:breakthroughs}\\
 \ref{thm:58} & [N] & Affine crossover: two affine payload costs have at most one threshold; the cheaper realization is unique on each side. & \autoref{ch:breakthroughs}\\
-\ref{thm:59} & [N] & Optimization lattice: behavior-preserving rewrites of a confluent system form a finite lattice; the minimum is computable. & \autoref{ch:breakthroughs}\\
+\ref{thm:59} & [N] & Optimization poset: behavior-preserving rewrites of a confluent system form a finite poset under lexicographic $(\beta,c)$ with a unique minimum. & \autoref{ch:breakthroughs}\\
 \ref{thm:60} & [N] & Bypass is a retraction: a kernel-bypass path retracts the socket path on the supported device class. & \autoref{ch:breakthroughs}\\
 \ref{thm:61} & [N] & Cache soundness: a cached control-plane read with TTL is equivalent to the uncached read on the TTL window. & \autoref{ch:breakthroughs}\\
 \ref{thm:62} & [N] & Band contraction: the integer EMA $x\mapsto x+n-x/8$ has attracting band $[8n,8n+7]$. & \autoref{ch:breakthroughs}\\
@@ -145,8 +145,8 @@ Theorem & Tag & Statement & Chapter\\
 \ref{thm:64} & [N] & Route languages are regular; the pattern trie is a deterministic automaton. & \autoref{ch:breakthroughs}\\
 \ref{thm:65} & [C] & The route automaton is the Myhill--Nerode refinement of the pattern language. & \autoref{ch:breakthroughs}\\
 \ref{thm:66} & [N] & Hybrid matcher selection: the affine crossover decides linear scan versus automaton. & \autoref{ch:breakthroughs}\\
-\ref{thm:67} & [N] & The pure, effectful, and hybrid classes are the unique congruence-compatible extension of the atom classification. & \autoref{ch:mol}\\
-\ref{thm:68} & [N] & Universality: every application expressible as a stateful transformation is expressible as a molecule. & \autoref{ch:mol}\\
+\ref{thm:67} & [N] & The classes $P,E,H$ are the unique congruence for Mol composition and tensor with $E \circ E \subseteq H$ and $E \otimes E \subseteq H$. & \autoref{ch:mol}\\
+\ref{thm:68} & [C] & Every Mealy machine $(S,\mathit{step})$ is the molecule $[S,\mathit{step}]$; $F(\Sigma)$ is initial. & \autoref{ch:mol}\\
 \bottomrule
 \end{tabular}
 \end{table}

@@ -25,10 +25,10 @@ Tool & Theorems & What it checks\\
 \midrule
 \texttt{kb\_completion} & \ref{thm:15} (supports \ref{thm:13}--\ref{thm:14}, \ref{thm:19}) & Runs Knuth--Bendix completion on the ring theory of \autoref{ch:lawvere}; asserts that completion terminates in a complete system and that every critical pair generated during completion joins.\\
 \texttt{normal\_forms} & \ref{thm:22}--\ref{thm:24} & Exhaustive enumeration of normal forms on small finite signatures; asserts finiteness of hom-sets, uniqueness of normal forms, and the completeness equivalence $M \approx M' \iff \mathrm{NF} (M) = \mathrm{NF} (M')$ on all enumerated pairs.\\
-\texttt{contraction} & \ref{thm:43} & Bound arithmetic: for sampled $(\alpha, \varepsilon, d_0)$ with $\alpha < 1$, computes $k (\alpha,\varepsilon,d_0) = \lceil \ln (\varepsilon (1-\alpha)/d_0)/\ln\alpha\rceil$ and asserts the fixed-point iterate stays within $\varepsilon$ after $k$ steps.\\
+\texttt{contraction} & \ref{thm:43} & Bound arithmetic: $d_0 = d (x_0, F x_0)$; for sampled $(\alpha, \varepsilon, d_0)$ with $\alpha < 1$, computes $k (\alpha,\varepsilon,d_0) = \lceil \ln (\varepsilon (1-\alpha)/d_0)/\ln\alpha\rceil$ and asserts the geometric iterate stays within $\varepsilon$ after $k$ steps.\\
 \texttt{bisim} & \ref{thm:6} & Exhaustive congruence check: enumerates small finite machines, computes behavioral equivalence, and asserts that the equivalence is preserved by composition $\circ$ and tensor $\otimes$, i.e.\ that $\approx$ is a congruence.\\
 \texttt{batch\_amort} & \ref{thm:47} & On sample batch sizes $n$, asserts the amortization bound $\mathrm{cost} (\mathrm{batch}_n) \le n\cdot\mathrm{cost} (\mathrm{single}) + \mathrm{fixed} (n)$ and that $\mathrm{fixed} (n)/n \to 0$ along the sample.\\
-\texttt{affine\_typer} & \ref{thm:55} & Linear typing of sample molecules in the affine system: asserts every variable is consumed exactly once, contraction and weakening are rejected, and evaluation preserves the leaf multiset and never increases the node count (no allocation).\\
+\texttt{affine\_typer} & \ref{thm:55} & Linear combinator calculus: sequential composition of morphisms and the tensor bifunctor; every variable consumed exactly once; contraction and weakening rejected; evaluation preserves the leaf multiset and never increases the node count (syntax tree, not dataplane heap).\\
 \bottomrule
 \end{tabular}
 \end{table}

@@ -49,6 +49,7 @@ which the clauses are applied), additive over composition, and subadditive
 over tensor.
 \end{definition}
 
+\setcatalog{25}
 \begin{theorem}[Cost enrichment is well-defined]\label{thm:25}
  Fix an atom cost assignment for a signature $\Sigma$
 (Definition~\ref{def:cost}). The additive extension
@@ -116,6 +117,7 @@ sequential composite of atoms is the sum of the atom costs. Optimization is
 then graph theory: the atoms are the edges of a finite \emph{type graph}, and
 the cheapest pipeline is a shortest path in it.
 
+\setcatalog{26}
 \begin{theorem}[Global optimality via shortest paths]\label{thm:26}
  Let $\Sigma$ be a finite signature with bounded types and
 nonnegative atom costs, additively extended (\autoref{thm:25}). The \emph{type graph} $G$
@@ -191,7 +193,7 @@ shortest paths of each behavior class.
 
 \section{The fusion bound}\label{sec:enrich-fusion}
 
-Cut elimination fuses a pipeline into a single morphism (\autoref{thm:49},
+Product-state composition fuses a pipeline into a single morphism (\autoref{thm:49},
 \autoref{ch:linear}); fusion pays for itself. The naive run of $g \circ f$
 writes the intermediate value of type $B$ to memory and reads it back; the
 fused run keeps that value in registers.
@@ -209,6 +211,7 @@ charge. Any \emph{fused realization} of the behavior is a molecule $h$ with
 $h \simeq g \circ f$ and measured cost at most the canonical one.
 \end{definition}
 
+\setcatalog{27}
 \begin{theorem}[Fusion bound]\label{thm:27}
  Let $f \colon A \to B$ and $g \colon B \to C$ be molecules.
 (1) The naive composite realizes $g \circ f$ at measured cost
@@ -270,6 +273,7 @@ cost). The relation $\sqsubseteq$ is a preorder on each behavior class, and a
 partial order modulo $\equiv$.
 \end{definition}
 
+\setcatalog{28}
 \begin{theorem}[Refinement substitution]\label{thm:28}
  Refinement is preserved by substitution into compositions.
 Let $f, f' \colon A \to B$ and $g, g' \colon B \to C$ be molecules with
@@ -310,6 +314,7 @@ checked once against the general one (behavioral equivalence, \autoref{thm:6} an
 \autoref{ch:testing}), and \autoref{thm:28} lifts the guarantee to every composite.
 \end{remark}
 
+\setcatalog{29}
 \begin{theorem}[Maximal refinement]\label{thm:29}
  Let $\mathcal{C}$ be a finite set of molecules
 $A \to B$ with a common behavior (a \emph{behavior class}), ordered by
@@ -367,6 +372,7 @@ The complexity of the dataplane is decided by its atoms: whatever resource
 class the atoms belong to, and which the two compositions preserve, belongs to
 every molecule built from them.
 
+\setcatalog{30}
 \begin{theorem}[Complexity closure]\label{thm:30}
  (1) \emph{Structural closure.} Let $P$ be a property of
 molecules preserved by the composition operations: if $f$ and $g$ have $P$
@@ -426,6 +432,7 @@ by $M$ is $L (M) = \{w \in A^{*} : \text{the run of } M \text{ on } w \text{ end
 in } F\}$; the \emph{transduction computed} by $M$ from $s_0$ is the
 input--output map of \autoref{ch:mol}.
 
+\setcatalog{31}
 \begin{theorem}[Descriptive complexity of Mol]\label{thm:31}
  (1) \emph{Regularity.} Every finite-state molecule
 recognizes a regular language, and its transduction is a deterministic Mealy
@@ -509,6 +516,7 @@ step function reads the state only through a projection, the state space can
 be replaced by the projection's image without changing behavior and without
 losing minimality.
 
+\setcatalog{32}
 \begin{theorem}[Projection reduction]\label{thm:32}
  Let $M = (S, \mathit{step})$ be a finite-state molecule and
 let $\pi \colon S \to P$ be a surjection such that the step function factors
@@ -594,7 +602,8 @@ $\pi_i$ in cycles. The \emph{grade} of $f$ is $g (f) = (L (f), F (f),
 B (f)) \in M$.
 \end{definition}
 
-\begin{theorem}[Resource-graded cost enrichment, \autoref{thm:53} [N]]\label{thm:53}
+\setcatalog{53}
+\begin{theorem}[Resource-graded cost enrichment, \autoref{thm:53}]\label{thm:53}
 The assignment $f \mapsto g (f)$ of \autoref{def:grades} is a
 well-defined enrichment of Mol over the monoidal category $(M, +)$:
 \begin{enumerate}

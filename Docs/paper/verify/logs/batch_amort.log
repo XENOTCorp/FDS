@@ -1,5 +1,3 @@
-    Finished `release` profile [optimized] target(s) in 0.01s
-     Running `target/release/batch_amort`
 Syscall-amortization theorem
 
 Cost model: per-datagram cost d, per-syscall overhead h.

@@ -165,10 +165,20 @@ satisfying the following axioms~\cite{joyalsv, arxiv-traced-monoidal}:
   \item \emph{Yanking}: $\mathrm{Tr}^{U}_{U,U} (\sigma_{U,U}) = 1_U$.
 \end{itemize}
 A \emph{traced monoidal category} is a symmetric monoidal category equipped
-with a trace. The trace internalizes feedback: a morphism
+with a trace. The trace internalizes instantaneous feedback: a morphism
 $f \colon A \otimes U \to B \otimes U$ computes a transformation $A \to B$
-while threading the feedback object $U$ through the loop. This is the
-structure underlying the fixed-iteration loops of \autoref{ch:trace}.
+while threading the feedback object $U$ through the loop.
+
+The reactor loop of \autoref{def:reactor} is a \emph{delayed} feedback
+operator on Mol: it satisfies vanishing I, vanishing II, superposing, and
+sliding of pure maps (\autoref{thm:34}--\autoref{thm:36}), and it sends
+the braiding to the one-step delay $\Delta_U$ rather than to $1_U$
+(\autoref{thm:35}). The yanking axiom recorded above is the classical
+Joyal--Street--Verity axiom that delayed feedback fails. Mol is therefore
+used as a symmetric monoidal category with a delayed trace, and is not
+claimed to be a JSV traced monoidal category \citep{joyalsv}. The
+fixed-iteration loops of \autoref{ch:trace} are iterates of this delayed
+trace.
 \end{definition}
 
 \section{Monads, Algebras over Monads, and Kleisli Categories}\label{sec:prelim-monads}

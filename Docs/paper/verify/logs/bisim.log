@@ -1,8 +1,6 @@
-    Finished `release` profile [optimized] target(s) in 0.01s
-     Running `target/release/bisim`
 PASS: congruence (a) reflexive: M ≈ M for all 2260 machines
 PASS: congruence (a) symmetric: equivalent(a,b) == equivalent(b,a) on 10,000 sampled ordered pairs
-PASS: congruence (a) transitive: same-class membership consistent on 580 sampled triples
+PASS: congruence (a) transitive: same-class membership consistent on 573 sampled triples
 PASS: congruence (b) M∘N ≈ M'∘N: 486360 congruence checks
 PASS: congruence (c) N∘M ≈ N∘M': 486360 congruence checks
 PASS: congruence (d) M⊗N ≈ M'⊗N: 486360 congruence checks

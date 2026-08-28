@@ -80,12 +80,42 @@ if [ "${1:-}" = "--verify" ]; then
         exit 1
     fi
     (cd verify && cargo build --quiet --release)
+    mkdir -p verify/logs
     summary=verify/logs/SUMMARY.log
-    if [ ! -f "$summary" ] || grep -q 'FAIL' "$summary"; then
+    : > "$summary"
+    for b in kb_completion normal_forms contraction bisim batch_amort affine_typer; do
+        bin=verify/target/release/"$b"
+        log=verify/logs/"$b".log
+        if [ ! -x "$bin" ]; then
+            echo "FAIL: $b" >> "$summary"
+            echo "FAIL: missing binary $bin" >&2
+            exit 1
+        fi
+        if ! "$bin" > "$log" 2>&1; then
+            echo "FAIL: $b" >> "$summary"
+            echo "FAIL: verification tool $b; see $log" >&2
+            exit 1
+        fi
+        echo "PASS: $b" >> "$summary"
+    done
+    if grep -q 'FAIL' "$summary"; then
         echo "FAIL: verification tools report failures; see $summary" >&2
         exit 1
     fi
     echo "PASS: verification tools all PASS ($(grep -c 'PASS' "$summary") tools)"
 fi
+
+# --- Gate 9: catalog theorems print as Theorems 1--68 ---
+missing=0
+for n in $(seq 1 68); do
+    if ! grep -E "\\\\newlabel\\{thm:${n}\\}\\{\\{${n}\\}" thesis.aux >/dev/null 2>&1; then
+        echo "FAIL: thm:$n does not print as Theorem $n; see thesis.aux" >&2
+        missing=1
+    fi
+done
+if [ "$missing" -ne 0 ]; then
+    exit 1
+fi
+echo "PASS: catalog labels thm:1--thm:68 print as Theorems 1--68"
 
 echo "OK: thesis.pdf ready ($pages pages)"

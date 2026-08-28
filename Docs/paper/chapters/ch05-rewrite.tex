@@ -5,8 +5,8 @@ rewrite engine: the runtime's equational theories, directed so that the
 engine applies them in one direction only, replacing redundant or expensive
 subexpressions by cheaper ones and reducing every expression to a unique
 normal form. This chapter formalizes that machinery. The equational theories
-of \autoref{ch:lawvere}: the ring theory of bounded buffers
-(\autoref{thm:9}--\autoref{thm:12}), the parser theory of sequence and choice
+of \autoref{ch:lawvere}: the stack theory of LIFO buffers and its pointer
+fragment (\autoref{thm:9}--\autoref{thm:12}), the parser theory of sequence and choice
 (\autoref{thm:10}), and the transport theory of batched I/O
 (\autoref{thm:11}): become term rewrite systems; monoidal coherence is
 absorbed into the representation by Mac Lane's strictification, so coherence
@@ -64,9 +64,10 @@ cancellation rules
 \mathit{push}\bigl (\mathit{pop} (x)\bigr) \to x, \qquad
 \mathit{pop}\bigl (\mathit{push} (x)\bigr) \to x ,
 \]
-which read, in the composition notation of \autoref{thm:9}, as
-$\mathit{push}\circ\mathit{pop} = \mathrm{id}$ and
-$\mathit{pop}\circ\mathit{push} = \mathrm{id}$. The non-emptiness guard on
+which read, in the pipeline notation of \autoref{thm:9}, as
+$\mathit{push};\mathit{pop} = \mathrm{id}$ and
+$\mathit{pop};\mathit{push} = \mathrm{id}$ on stacks (and on the pointer
+line $\mathbb{Z}$). The non-emptiness guard on
 the second equation of \autoref{thm:9} is satisfied by the pattern itself:
 $\mathit{pop} (\mathit{push} (x))$ denotes a buffer that has just received
 the element pushed by the inner $\mathit{push}$ and is non-empty by
@@ -103,6 +104,7 @@ from $w$, they are joinable, $w_1 \to^{*} z$, $w_2 \to^{*} z$. Then
 $u \to^{*} z$ and $v \to^{*} z$: $u$ and $v$ join, and induction gives
 confluence.
 
+\setcatalog{13}
 \begin{theorem}[The ring rewrite system is terminating (\autoref{thm:13})]\label{thm:13}
 \textbf{[N].} The ring rewrite system $\mathit{push} (\mathit{pop} (x)) \to x$
 and $\mathit{pop} (\mathit{push} (x)) \to x$ is terminating: in the
@@ -126,6 +128,7 @@ symbols than its right-hand side, so $|\mathit{push} (\mathit{pop} (x))| =
 |x| + 2 > |x|$, and similarly for the second rule.
 \end{proof}
 
+\setcatalog{14}
 \begin{theorem}[Local confluence of the ring system (\autoref{thm:14})]\label{thm:14}
 \textbf{[N].} The ring rewrite system of \autoref{thm:13} is locally
 confluent: every critical pair is joinable. It is therefore confluent, by
@@ -161,6 +164,7 @@ $\mathit{push} (\mathit{pop} (\cdot))$ and
 $\mathit{pop} (\mathit{push} (\cdot))$ has all its operation symbols equal.
 \end{proof}
 
+\setcatalog{15}
 \begin{theorem}[Knuth--Bendix completion of the ring theory (\autoref{thm:15})]\label{thm:15}
 \textbf{[N].} Knuth--Bendix completion of the ring theory, with the
 equations of \autoref{thm:9} oriented by the size-lexicographic order,
@@ -195,6 +199,7 @@ system decides the theory on sample terms, and it prints \texttt{PASS}. The
 run is recorded in \autoref{app:a} \cite{knuthbendix}.
 \end{proof}
 
+\setcatalog{16}
 \begin{theorem}[Parser left factoring (\autoref{thm:16})]\label{thm:16}
 \textbf{[N].} The parser rewrite system with the single left-factoring rule
 $(x \cdot a) \oplus (x \cdot b) \to x \cdot (a \oplus b)$ is confluent and
@@ -224,6 +229,7 @@ and since the runtime stores each alternative as a sequence, atom branches
 are sequences of length one and atom prefixes are factored as well.
 \end{proof}
 
+\setcatalog{17}
 \begin{theorem}[Batch-flattening rewrites (\autoref{thm:17})]\label{thm:17}
 \textbf{[N].} The batch rewrite system with the single rule
 $\mathrm{batch} (\mathrm{batch} (x,y), z) \to
@@ -259,6 +265,7 @@ the term with no redex, i.e.\ a right spine of $\mathrm{batch}$
 applications, the flattened batch of \autoref{thm:46}.
 \end{proof}
 
+\setcatalog{18}
 \begin{theorem}[Normalization soundness (\autoref{thm:18})]\label{thm:18}
 \textbf{[N].} Suppose every rule of the three systems is sound: the
 equation it encodes holds as behavioral equivalence of molecules: and
@@ -293,6 +300,7 @@ factoring parses a shared prefix once instead of once per branch, and
 flattening replaces a nested batch by a flat one with the same I/O count.
 \end{proof}
 
+\setcatalog{19}
 \begin{theorem}[Decidability of the runtime equational theory (\autoref{thm:19})]\label{thm:19}
 \textbf{[N].} Let $E$ be the full runtime equational theory: the union of
 the ring theory (\autoref{thm:13}--\autoref{thm:15}), the parser theory
@@ -361,9 +369,10 @@ new equational theories (new rewrite rules) to the systems of
 this section proves the conditions under which adjoining a theory
 preserves termination and confluence, so that the normal forms, the
 decision procedure \ref{thm:19}, and the lookup table of \autoref{ch:free}
-survive the addition. The disjoint-union part is the classical modularity
-theorem of Toyama \citep{toyama}; the hierarchical part restates the
-standard non-interference conditions and makes their content explicit.
+survive the addition. Confluence of a disjoint union is Toyama's
+modularity theorem \citep{toyama}; termination of a disjoint union is
+not modular in general, and is recovered here from simple/LPO
+termination of the components.
 
 \begin{definition}[Disjoint signatures and commuting systems]\label{def:modular}
 Two rewrite systems $(\Sigma_1, E_1, \to_1)$ and $(\Sigma_2, E_2, \to_2)$
@@ -379,77 +388,66 @@ of a term under a disjoint union is the term obtained by reducing each
 $\Sigma_i$-colored subterm to its $\to_i$-normal form.
 \end{definition}
 
-\begin{theorem}[Modular completion, \autoref{thm:54} [N]]\label{thm:54}
-Let $(\Sigma_1, E_1, \to_1)$ and $(\Sigma_2, E_2, \to_2)$ be terminating
-rewrite systems, each locally confluent.
+\setcatalog{54}
+\begin{theorem}[Modular completion, \autoref{thm:54}]\label{thm:54}
+Let $(\Sigma_1, E_1, \to_1)$ and $(\Sigma_2, E_2, \to_2)$ be rewrite
+systems, each locally confluent.
 \begin{enumerate}
-\item[(i)] If the signatures are disjoint, the union
-$\to_1 \cup \to_2$ is terminating and confluent, hence complete for
-$E_1 \cup E_2$; the normal form of a term is its componentwise normal
-form, and the union decides $E_1 \cup E_2$.
-\item[(ii)] If the systems commute, the union is terminating and
-confluent, hence complete for $E_1 \cup E_2$.
-\item[(iii)] Under either combination, the equational theory of the
-union is decidable whenever the theories of both components are.
+\item[(i)] \emph{Confluence is modular for disjoint signatures}
+\citep{toyama}. If $\Sigma_1 \cap \Sigma_2 = \emptyset$ and each system
+is confluent, then $\to_1 \cup \to_2$ is confluent.
+\item[(ii)] \emph{Termination is not modular in general.} There exist
+disjoint terminating systems whose union does not terminate
+\citep{toyama}. If, additionally, each system is simply terminating
+(admitted by a simplification order, in particular by an LPO), then the
+union is simply terminating under any combined precedence that extends
+both component precedences, and is therefore terminating.
+\item[(iii)] Consequently, if the signatures are disjoint, each system
+is LPO-terminating and locally confluent, the union is terminating and
+confluent, hence complete for $E_1 \cup E_2$; the normal form of a term
+is its componentwise normal form, and the union decides $E_1 \cup E_2$.
+The three runtime systems of this chapter (stack, parser, batch) satisfy
+the hypotheses, so their union is complete.
 \end{enumerate}
 \end{theorem}
 
 \begin{proof}
-\emph{(i) Termination.} We first prove the commuting lemma: with
-disjoint signatures, the two systems commute. Let $t \to_1 u$ and
-$t \to_2 v$. A $\to_1$-redex is a term whose root symbol lies in
-$\Sigma_1$; by disjointness it contains no $\to_2$-redex at its root,
-and symmetrically a $\to_2$-redex contains no $\to_1$-redex at its
-root. If the two redexes are disjoint, contract both, obtaining the
-common reduct $w$ directly. If they are nested, the outer redex has the
-inner redex strictly below its root: contracting the outer first, then
-the inner inside the result, or the inner first and then the outer,
-yields the same term $w$, because the two contractions act on disjoint
-positions of the term tree. Hence the systems commute. Now let $t_0 \to
-t_1 \to \cdots$ be a $\to_1 \cup \to_2$-reduction. By commutation, the
-steps can be rearranged into a $\to_1$-reduction followed by a
-$\to_2$-reduction: every $\to_2$-step can be commuted leftward past
-every subsequent $\to_1$-step without changing the final term of any
-finite prefix. Each phase is finite by termination of the component
-systems, so the union is terminating (this is the disjoint-union
-theorem of Toyama \citep{toyama}, obtained here from the commuting
-lemma and the termination of the components).
-\emph{Confluence.} By Newman's lemma \ref{thm:14}, local confluence and
-termination give confluence. Let $t \to_1 u$ and $t \to_2 v$; by the
-commuting lemma $u \to_2^* w$ and $v \to_1^* w$ for a common $w$, so the
-two steps are joinable; single-system peaks are joinable by local
-confluence of the components. Hence the union is locally confluent and,
-by termination, confluent.
-\emph{Normal forms.} By disjointness, a normal form of the union is a
-term with no $\to_1$-redex and no $\to_2$-redex, i.e.\ the componentwise
-normal form; confluence makes it unique.
+\emph{(i).} This is Toyama's modularity theorem for confluence: the
+disjoint union of confluent term rewrite systems is confluent
+\citep{toyama}. We record the statement rather than reproducing the
+full argument; the engine uses it as a black box for the three
+runtime systems, whose signatures $\{\mathit{push},\mathit{pop}\}$,
+$\{\cdot,\oplus\}$, and $\{\mathrm{batch}\}$ are pairwise disjoint.
 
-\emph{(ii)} Commutation gives the same rearrangement: any reduction
-reorders to $\to_1^* \to_2^*$, both phases finite, so the union
-terminates. For confluence, it suffices again to join the mixed peaks:
-by commutation $u \to_2^* w$ and $v \to_1^* w$; single-system peaks
-join by local confluence of the components. Termination plus local
-confluence yield confluence by \ref{thm:14}. Completeness follows.
+\emph{(ii).} Toyama also showed that termination is not a modular
+property: there are disjoint terminating systems whose union admits an
+infinite reduction \citep{toyama}. Simple termination is modular. A
+reduction order that is a simplification order (closed under contexts
+and substitutions, and containing the embedding relation) remains a
+simplification order on the disjoint union of signatures when the
+precedence is the disjoint union of the component precedences. LPO is
+a simplification order. If each system is LPO-terminating, the union
+is LPO-terminating under the combined precedence, hence terminating.
 
-\emph{(iii)} By (i) or (ii) the union is complete, so by the argument
-of \ref{thm:19} two terms are equal in $E_1 \cup E_2$ if and only if
-their (unique, computable) union normal forms coincide. Each component
-normal form is computable by the decidability of the component theory;
-computing the componentwise normal form therefore decides the union
-theory.
+\emph{(iii).} The stack, parser, and batch systems are pairwise
+signature-disjoint. Each is LPO-terminating (\autoref{thm:13},
+\autoref{thm:16}, \autoref{thm:17}) and locally confluent, hence
+confluent by Newman's lemma. By (ii) the union is terminating; by (i)
+it is confluent. A terminating confluent system is complete for its
+equational theory: $s =_{E_1 \cup E_2} t$ if and only if
+$\mathrm{NF} (s) = \mathrm{NF} (t)$. By disjointness a normal form of
+the union is a term with no $\to_1$-redex and no $\to_2$-redex, the
+componentwise normal form. Each component normal form is computable
+because each component theory is decidable (\autoref{thm:19}), so the
+union decides $E_1 \cup E_2$.
 \end{proof}
 
 \begin{remark}
-The hypotheses are the content. Disjoint signatures make the systems
-commute, which is exactly the non-interference that modularity needs;
-the hierarchical case (ii) relaxes disjointness to commutation, whose
-natural sufficient conditions: $\to_2$-rules $\to_1$-normal on both
-sides and $\to_1$-rules $\to_2$-normal on both sides, in a non-deleting
-signature: are the engine's extension contract: a new theory may add
-rules over existing symbols provided it neither creates nor destroys the
-old theory's redexes. The engine's rule-addition API is therefore safe
-by construction: adding a theory whose rules satisfy the conditions
+The engine's extension contract is therefore LPO-termination plus
+signature disjointness (or, more generally, simple termination plus
+Toyama confluence), not bare termination of the components. Adding a
+theory whose rules are LPO-decreasing on a disjoint signature
 preserves the normal forms, the decision procedure, and the lookup
 table, so the guarantees of \ref{thm:13}--\ref{thm:19} and
-\autoref{ch:free} hold for the extended system unchanged.
+\autoref{ch:free} hold for the extended system.
 \end{remark}

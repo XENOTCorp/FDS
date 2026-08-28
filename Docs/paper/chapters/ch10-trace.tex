@@ -1,6 +1,6 @@
-\chapter{Traced Monoidal Structure, Feedback, and Fixed-Iteration Loops}\label{ch:trace}
+\chapter{Delayed Feedback and Fixed-Iteration Loops}\label{ch:trace}
 
-The symmetric monoidal structure of \autoref{ch:mol} describes how molecules are joined; the traced monoidal structure of \S\ref{sec:prelim-trace} describes how a molecule is turned back on itself. This chapter develops the traced structure of Mol and its engineering content: the reactor loop, the feedback laws of Joyal--Street--Verity \citep{joyalsv} (yanking, vanishing, sliding, superposing), and the \emph{fixed-iteration loops} of a dataplane: loops whose trip count is decided in advance, unrolled, and therefore branch-predictable.
+The symmetric monoidal structure of \autoref{ch:mol} describes how molecules are joined; delayed feedback describes how a molecule is turned back on itself by a register. This chapter develops that operator and its engineering content: the reactor loop of \autoref{def:reactor}, the laws proved from the machine definition in \autoref{ch:kleisli} (vanishing, sliding of pure maps, superposing, and delay in place of yanking), and the \emph{fixed-iteration loops} of a dataplane: loops whose trip count is decided in advance, unrolled, and therefore branch-predictable.
 
 The quantitative heart of the chapter is contraction. A loop whose state update shrinks distances converges to a unique fixed point at a geometric rate (\autoref{thm:42}, Banach \citep{banach}); the iteration bound \autoref{thm:43} bounds the number of unrolled iterations needed to guarantee a tolerance $\varepsilon$; \autoref{thm:44} shows how contraction rates combine under the two composition schemes of Mol, tensor and sequential; and \autoref{thm:45} extends the analysis to stochastic state updates, where total-variation distance contracts by the Dobrushin coefficient \citep{dobroushin}. The chapter closes with the information-geometric reading of coordinate choice, recorded as future work.
 
@@ -15,7 +15,7 @@ The $U$-component is the \emph{loop-carried register}: the register value consum
 \end{definition}
 
 \begin{remark}
-The construction is total and deterministic, hence a well-defined morphism of Mol. It realizes the trace operation of \S\ref{sec:prelim-trace}; the Joyal--Street--Verity axioms \citep{joyalsv} (vanishing, superposing, sliding, yanking) are stated and proved for it as \autoref{thm:34}--\autoref{thm:36} in \autoref{ch:kleisli}. Sliding is the hoisting law: a pure transformation moves across the feedback boundary and out of the loop.
+The construction is total and deterministic, hence a well-defined morphism of Mol. Vanishing, superposing, and sliding of pure maps are proved from this definition as \autoref{thm:34}--\autoref{thm:36} in \autoref{ch:kleisli}; the same proofs show $\mathrm{Tr} (\sigma_{U,U}) = \Delta_U$, the one-step delay, so yanking fails. Sliding is the hoisting law: a pure transformation moves across the feedback boundary and out of the loop.
 \end{remark}
 
 A dataplane loop rarely runs to convergence. The loop is \emph{unrolled} for a number of iterations fixed in advance: the trip count is a compile-time constant, there is no convergence test, and the branch predictor always predicts correctly.
@@ -32,6 +32,7 @@ The fixed-iteration loop is total and deterministic for every $k$: fixed trip co
 
 The register update $T_a$ of a fixed-iteration loop is a map on a metric space; when it shrinks distances the loop converges, and at a geometric rate. This is the classical Banach fixed-point principle \citep{banach}, restated for the loop semantics of Mol.
 
+\setcatalog{42}
 \begin{theorem}[Contraction state update, \autoref{thm:42} {[}C{]}]\label{thm:42}
 Let $(S,d)$ be a complete metric space and let $F \colon S \to S$ satisfy $d (Fx,Fy) \leq \alpha\,d (x,y)$ for some rate $\alpha < 1$ and all $x,y \in S$. Then $F$ has a unique fixed point $x^{*}$, and for every $x_0 \in S$ the iterates $x_n = F^n x_0$ converge to $x^{*}$, with the tail bound
 \[ d (x_n,x^{*}) \leq \frac{\alpha^n}{1-\alpha}\,d (x_0,Fx_0) \qquad (n \geq 0). \]
@@ -45,6 +46,7 @@ Existence: put $x_n = F^n x_0$ and $d_0 = d (x_0,Fx_0)$. By induction $d (x_n,x_
 as $n \to \infty$; the sequence $(x_n)$ is Cauchy, and completeness yields a limit $x^{*}$. Since $F$ is Lipschitz, $Fx^{*} = \lim Fx_n = \lim x_{n+1} = x^{*}$. Letting $m \to \infty$ in the displayed inequality gives the tail bound.
 \end{proof}
 
+\setcatalog{43}
 \begin{theorem}[Iteration bound, \autoref{thm:43} {[}N{]}]\label{thm:43}
 Let $(S,d)$, $F$, $\alpha < 1$, and $x^{*}$ be as in \autoref{thm:42}. Let $x_0 \in S$ with $d_0 = d (x_0,Fx_0) > 0$ and let $\varepsilon > 0$ with $\varepsilon (1-\alpha) < d_0$. Define
 \[ k (\alpha,\varepsilon,d_0) = \left\lceil \frac{\ln\bigl (\varepsilon (1-\alpha)/d_0\bigr)}{\ln \alpha} \right\rceil. \]
@@ -60,18 +62,19 @@ the ceiling of the right-hand side satisfies this, so $d (x_k,x^{*}) \leq \varep
 \end{proof}
 
 \begin{remark}[Script verification]\label{rem:thm43-verified}
-The bound arithmetic of \autoref{thm:43} is \emph{script-verified}: the executable Rust tool \texttt{contraction} of \autoref{app:a} computes $k (\alpha,\varepsilon,d_0)$ and simulates the worst-case geometric model $x_{n+1} = \alpha x_n$ on the line (fixed point $0$, initial value $x_0 = d_0$), in which the residual-based bound of the proof is conservative. For all samples ($\alpha \in \{0.1,\ldots,0.9\}$, $\varepsilon \in \{10^{-3},10^{-6},10^{-9}\}$, $d_0 \in \{1,10\}$) it asserts $\lvert x_k \rvert \leq \varepsilon$ (relative tolerance $10^{-12}$), and it asserts the monotonicity of $k$ in $\alpha$ and in the tightening of $\varepsilon$. All 54 samples pass; the log is \texttt{verify/logs/contraction.log}.
+The bound arithmetic of \autoref{thm:43} is \emph{script-verified}: the executable Rust tool \texttt{contraction} of \autoref{app:a} computes $k (\alpha,\varepsilon,d_0)$ with $d_0 = d (x_0, F x_0)$ and simulates the geometric model $x_{n+1} = \alpha x_n$ on the line (fixed point $0$, so $d (x_0, F x_0) = (1-\alpha) \lvert x_0 \rvert$ and $x_0 = d_0 / (1-\alpha)$). For this map the a priori bound is tight: $\lvert x_k \rvert = d_0\,\alpha^k/(1-\alpha)$. For all samples ($\alpha \in \{0.1,\ldots,0.9\}$, $\varepsilon \in \{10^{-3},10^{-6},10^{-9}\}$, $d_0 \in \{1,10\}$) it asserts $\lvert x_k \rvert \leq \varepsilon$ (relative tolerance $10^{-12}$), and it asserts the monotonicity of $k$ in $\alpha$ and in the tightening of $\varepsilon$. All 54 samples pass; the log is \texttt{verify/logs/contraction.log}.
 \end{remark}
 
 \section{Contraction Rates under Composition}\label{sec:trace-compose}
 
 Loops are joined by the two composition schemes of Mol; a bound on the combined contraction rate is what makes the iteration bound \autoref{thm:43} compositional.
 
+\setcatalog{44}
 \begin{theorem}[Contraction rates combine, \autoref{thm:44} {[}N{]}]\label{thm:44}
 Let $F_1$ and $F_2$ be state updates of fixed-iteration loops, contractions with rates $\alpha_1,\alpha_2 \in (0,1)$ in metrics $d_1$ and $d_2$.
 \begin{enumerate}
 \item[(i)] \emph{Tensor.} On the product state space $S_1 \times S_2$ with the sup metric $d_\infty\bigl ((s_1,s_2),(t_1,t_2)\bigr) = \max\bigl (d_1 (s_1,t_1),d_2 (s_2,t_2)\bigr)$, the tensor update $F_1 \otimes F_2$ is a contraction with rate $\max (\alpha_1,\alpha_2)$, and its fixed point is the pair of fixed points $(x_1^{*},x_2^{*})$.
-\item[(ii)] \emph{Sequential.} On a common state space $S$ with metric $d$, the composite $F_2 \circ F_1$ is a contraction with rate at most $\alpha_1\alpha_2 \leq \alpha_1 + \alpha_2$; the additive rate $\alpha_1 + \alpha_2$ is therefore a valid, conservative sequential rate in the sup metric.
+\item[(ii)] \emph{Sequential.} On a common state space $S$ with metric $d$, the composite $F_2 \circ F_1$ is a contraction with rate $\alpha_1\alpha_2$. The product is sharp: affine maps $x \mapsto \alpha_i x$ compose to rate exactly $\alpha_1\alpha_2$. The sum $\alpha_1 + \alpha_2$ may exceed $1$ even when both factors are contractions (e.g.\ $\alpha_1 = \alpha_2 = 0.6$), and is therefore discarded as a sequential rate.
 \end{enumerate}
 \end{theorem}
 
@@ -87,7 +90,7 @@ The bound is sharp: for $F_i (x) = \alpha_i x$ on $\mathbb{R}$ with the sup metr
 
 (ii) For all $x,y \in S$,
 \[ d (F_2F_1x,F_2F_1y) \leq \alpha_2\,d (F_1x,F_1y) \leq \alpha_2\alpha_1\,d (x,y), \]
-so $F_2 \circ F_1$ is an $\alpha_1\alpha_2$-contraction, and $\alpha_1\alpha_2 \leq \alpha_1 + \alpha_2$ makes the additive rate a valid bound. Sharpness: for $\alpha_1 = \alpha_2 = \alpha$, affine maps compose to $F_2 \circ F_1 (x) = \alpha^2 x + c$ with rate exactly $\alpha^2$, strictly below $\alpha_1 + \alpha_2$; the product, not the sum, is the sharp sequential rate.
+so $F_2 \circ F_1$ is an $\alpha_1\alpha_2$-contraction. Sharpness: for $\alpha_1 = \alpha_2 = \alpha$, affine maps compose to $F_2 \circ F_1 (x) = \alpha^2 x + c$ with rate exactly $\alpha^2$. The catalog sequential rate is therefore the product $\alpha_1\alpha_2$.
 \end{proof}
 
 \begin{remark}
@@ -98,6 +101,7 @@ By \autoref{thm:43}, the combined loop is within $\varepsilon$ after $k (\alpha,
 
 The analysis so far is deterministic. A molecule whose register update is stochastic (a Markov kernel, modeling input-distribution uncertainty, randomized rounding, or probabilistic scheduling) falls under the classical contraction theory of Markov chains \citep{dobroushin}: distances between state distributions contract by the Dobrushin coefficient, and the iteration bound of \autoref{thm:43} applies with the coefficient in place of $\alpha$.
 
+\setcatalog{45}
 \begin{theorem}[Markov state updates, \autoref{thm:45} {[}C{]}]\label{thm:45}
 Let $S$ be a finite set and let $K$ be a Markov kernel on $S$, viewed as a stochastic state update. Let
 \[ \delta (K) = \max_{x,y \in S} \lVert K (x,\cdot) - K (y,\cdot) \rVert_{\mathrm{TV}} \]
@@ -129,4 +133,4 @@ The contraction rate of a state update is a property of the chosen metric: resca
 
 \section{Summary}\label{sec:trace-summary}
 
-Feedback in Mol is the reactor loop of \S\ref{sec:trace-reactor}: the trace of \S\ref{sec:prelim-trace}, with the Joyal--Street--Verity laws \citep{joyalsv} proved as \autoref{thm:34}--\autoref{thm:36} in \autoref{ch:kleisli}. A dataplane loop does not run to convergence; it is unrolled for a fixed trip count, and this chapter proves the trip count is a theorem: convergence to a unique fixed point (\autoref{thm:42}); the closed form $k (\alpha,\varepsilon,d_0) = \lceil \ln (\varepsilon (1-\alpha)/d_0)/\ln\alpha \rceil$ for any tolerance, script-verified (\autoref{thm:43}); the composed rates $\max (\alpha_1,\alpha_2)$ under tensor and $\alpha_1\alpha_2 \leq \alpha_1+\alpha_2$ sequentially (\autoref{thm:44}); and Dobrushin contraction for stochastic updates (\autoref{thm:45}). A fixed-iteration loop is branch-predictable by construction, within a provable tolerance of its converged value, and closed under the composition of molecules: the engineering practice of unrolled dataplane loops, expressed as a theorem.
+Feedback in Mol is the reactor loop of \S\ref{sec:trace-reactor}: a delayed trace, with vanishing, superposing, sliding of pure maps, and delay-in-place-of-yanking proved as \autoref{thm:34}--\autoref{thm:36} in \autoref{ch:kleisli}. A dataplane loop is unrolled for a fixed trip count, and this chapter proves the trip count is a theorem: convergence to a unique fixed point (\autoref{thm:42}); the closed form $k (\alpha,\varepsilon,d_0) = \lceil \ln (\varepsilon (1-\alpha)/d_0)/\ln\alpha \rceil$ with $d_0 = d (x_0, F x_0)$, script-verified (\autoref{thm:43}); the composed rates $\max (\alpha_1,\alpha_2)$ under tensor and $\alpha_1\alpha_2$ sequentially (\autoref{thm:44}); and Dobrushin contraction for stochastic updates (\autoref{thm:45}). A fixed-iteration loop is branch-predictable by construction, within a provable tolerance of its converged value, and closed under the composition of molecules.

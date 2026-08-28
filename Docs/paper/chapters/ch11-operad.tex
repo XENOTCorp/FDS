@@ -13,6 +13,7 @@ Thus $f^{(n)}$ reads its inputs in order, threading the state of $f$ through the
 \paragraph{Batching is an operad.}
 An operad is a family of $n$-ary operations with a composition law that plugs a $k_j$-ary operation into the $j$-th slot of an $m$-ary operation to obtain a $(k_1 + \cdots + k_m)$-ary operation, subject to associativity and unit laws \citep{leinster}. For batching the composition is \emph{flattening}: a batch of $m$ batches, the $j$-th of size $k_j$, is reassociated to a single batch of size $k_1 + \cdots + k_m$, with unit $f^{(1)} = f$. The associativity of this composition is exactly the flattening theorem, \autoref{thm:46}.
 
+\setcatalog{46}
 \begin{theorem}[Batch flattening (\autoref{thm:46})]\label{thm:46}
 Let $f : A \to B$ be a molecule and let $m, k \geq 1$. Under the canonical coherence isomorphisms $\alpha : (A^{k})^{m} \cong A^{km}$ and $\beta : (B^{k})^{m} \cong B^{km}$ of the symmetric monoidal structure of Mol (the reassociation of tuples), the square
 \[
@@ -38,6 +39,7 @@ This associativity makes batched pipelines reassociable without behavioral chang
 \paragraph{Cost accounting.}
 The cost model of \autoref{ch:enrich} assigns each molecule a vector (time, memory, cache misses), additive under composition (\autoref{thm:25}); here only the time component is needed. Let $t_s$ be the fixed cost of one system call (trap, dispatch, return) and $t_p$ the per-item cost of processing one element once the batch has crossed the boundary. These are constants of the platform and of the atom $f$, independent of the batch size as long as the batch fits in a preallocated buffer; the exact bound is fixed by \autoref{thm:48}.
 
+\setcatalog{47}
 \begin{theorem}[Syscall amortization (\autoref{thm:47})]\label{thm:47}
 Let a single I/O item cost $\mathrm{cost} (\mathrm{single}) = t_s + t_p$ (one system call plus per-item processing). Then the $n$-batch satisfies
 \[
@@ -56,6 +58,7 @@ By construction $f^{(n)}$ crosses the boundary exactly once, with the whole tupl
 \paragraph{Rings.}
 Batches move through preallocated ring buffers. A ring of capacity $N = 2^k$ is an array of $N$ slots addressed by a read pointer $r$ and a write pointer $w$, kept as unbounded monotone counters and mapped into the array by the mask $i \mapsto i \bmod N$; because $N$ is a power of two the mask is a single bitwise-and instruction $i \mathbin{\&} (N-1)$, which is why ring capacities are powers of two. With $w - r \geq 0$ items in flight, a read removes one item at $r$ and a write inserts one item at $w$, refusing accesses that would exceed the occupancy bound. The only bookkeeping question is whether the masked pointers alone distinguish \emph{empty} from \emph{full}.
 
+\setcatalog{48}
 \begin{theorem}[Ring capacity invariant (\autoref{thm:48})]\label{thm:48}
 Let a ring have $N = 2^k$ slots, $k \geq 1$, indexed by the bitmask $i \mapsto i \bmod N$. Bitmask indexing is correct (the predicate $\mathrm{empty} \iff r \bmod N = w \bmod N$ is sound, and the full state is distinguishable from the empty state) if and only if the number of items in flight satisfies $w - r \leq N - 1 = 2^k - 1$ at all times.
 \end{theorem}

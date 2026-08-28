@@ -1,5 +1,3 @@
-    Finished `release` profile [optimized] target(s) in 0.01s
-     Running `target/release/kb_completion`
 Completion theorem: the ring-buffer equational theory admits a complete rewrite
 system, verified by Knuth-Bendix completion (std-only Rust).
 

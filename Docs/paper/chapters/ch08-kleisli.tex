@@ -1,193 +1,242 @@
-\chapter{Kleisli Adjunction and Pure/Effectful Decomposition}\label{ch:kleisli}
+\chapter{Kleisli Iteration and Delayed Feedback}\label{ch:kleisli}
 
-\paragraph{Two regimes, one category.}
-The subcategories of \autoref{ch:mol} divide molecules by what they carry.
-A \emph{pure} molecule has unit state space, hence is a total function
-between types, and $\mathbf{PureMol}$ is equivalent to the category of
-types and total functions (\autoref{thm:4}). An \emph{effectful} molecule
-over a context type $\mathit{Ctx}$ has state space $\mathit{Ctx}$, and
-$\mathbf{EffMol} (\mathit{Ctx})$ is isomorphic to the Kleisli category of
-the state monad on $\mathit{Ctx}$ (\autoref{thm:5},
-\autoref{sec:prelim-monads}). A \emph{hybrid} molecule is any molecule of
-Mol: an arbitrary state space with an arbitrary transition.
+\paragraph{Step as a Kleisli morphism.}
+A morphism $M = [S, \mathrm{step}] : A \to B$ of Mol is a Mealy machine
+with state space $S$. The function
+$\mathrm{step} : S \times A \to B \times S$ is, under the curry
+isomorphism, a Kleisli morphism of the state monad $T_S$ on $S$
+(\autoref{thm:5}, \autoref{sec:prelim-monads}). The response of $M$ on
+input words is the iterate of that Kleisli morphism
+(\autoref{thm:33}). Sequential composition in Mol is the product of
+state spaces (\autoref{def:comp}); it coincides with Kleisli
+composition of $T_S$ precisely when one factor is pure.
 
-Dataplane stages are hybrids: a parser keeps a position, a checksummer an
-accumulator, a transport sequence numbers, and around each piece of state
-there is pure work (masking, scaling, reformatting) that must not
-itself hold state. This chapter proves that the two regimes coexist
-canonically: every hybrid molecule $M$ factors, uniquely up to
-isomorphism, as $M = q \circ e \circ p$ with $p$ and $q$ pure and $e$
-effectful (\autoref{thm:33}); the effectful core carries exactly the state
-and the pure wings carry exactly the stateless work. This is the Kleisli
-decomposition of Mol: every morphism is a Kleisli morphism of the state
-monad (\autoref{sec:prelim-monads}) read between two pure maps.
+\paragraph{Classes.}
+A molecule is \emph{pure} when its state space is isomorphic to $()$
+(\autoref{def:puremol}), \emph{effectful over} $\mathrm{Ctx}$ when its
+state space is isomorphic to $\mathrm{Ctx}$ (\autoref{def:effmol}), and
+\emph{hybrid} otherwise (\autoref{def:hybridmol}). Hybrid is the
+residual class: Mol composition of two effectful molecules has state
+space $\mathrm{Ctx} \times \mathrm{Ctx}$ and is therefore hybrid
+(\autoref{thm:67}).
 
-\paragraph{Loops and hoisting.}
-Mol is a traced monoidal category: the trace $\mathrm{Tr}^{U}_{A,B}$,
-constructed in \autoref{ch:trace}, feeds the $U$-output of a loop body back
-into its $U$-input and satisfies the axioms of \autoref{sec:prelim-trace}
-\citep{joyalsv}. The trace laws: sliding (\autoref{thm:34}), vanishing
-and yanking (\autoref{thm:35}), superposing (\autoref{thm:36}): govern
-where computation may live relative to a feedback loop, and together with
-the decomposition theorem they license \emph{hoisting}: pure work is moved
-out of loops, and loop state that is purely determined by the rest of the
-state is compressed away. Hoisting shrinks the loop-state footprint, and
-the cache footprint of loop state is monotone in the size of that state
-(\autoref{thm:37}). These are the theorems behind the engineering rule :
-state in one place, pure work outside the loop: that
-\autoref{ch:coalgebra} quantifies by minimization and \autoref{ch:trace}
-by iteration bounds, and that the software standard turns into policy.
+\paragraph{Delayed feedback.}
+The reactor loop $\mathrm{Tr}^{U}_{A,B}$ of \autoref{def:reactor} feeds
+the $U$-output of a body back into its $U$-input as a register. The
+construction satisfies vanishing, superposing, and sliding of pure maps,
+proved from the machine definition as \autoref{thm:34}--\autoref{thm:36}.
+It fails the Joyal--Street--Verity yanking axiom: $\mathrm{Tr} (\sigma)$
+is the one-step delay on $U$, not the identity. Mol therefore carries a
+\emph{delayed trace}, not a JSV traced monoidal structure. Hoisting
+(\autoref{thm:37}) uses sliding of pure maps to shrink loop-carried
+state.
 
-\begin{theorem}[Kleisli decomposition (\autoref{thm:33})]\label{thm:33}
-Every hybrid molecule $M : A \to B$ decomposes as $M = q \circ e \circ p$
-with $p, q$ pure and $e$ effectful, uniquely up to isomorphism. Given a
-Mealy presentation $(S, s_0, \mathrm{step})$ of $M$, with
-$\mathrm{step} : S \times A \to B \times S$ \citep{mealy}, the canonical
-factorization is
+\setcatalog{33}
+\begin{theorem}[Kleisli iteration of step (\autoref{thm:33})]\label{thm:33}
+\textbf{[C].} Let $M = [S, \mathrm{step}] : A \to B$ be a morphism of
+Mol, and let $T_S$ be the state monad $T_S X = (X \times S)^{S}$ of
+\autoref{sec:prelim-monads}.
+\begin{enumerate}
+\item[(i)] Under the curry isomorphism,
+$\mathrm{step}^{\sharp} : A \to T_S B$ is a Kleisli morphism of $T_S$.
+\item[(ii)] The response $r_{M,s} : A^{*} \to B^{*}$ of
+\autoref{def:response} is the unique stream map obtained by iterating
+that Kleisli morphism from $s$: $r_{M,s} (\varepsilon) = \varepsilon$
+and
 \[
-p : A \to A \otimes S,\quad p (a) = (a, s_0),
-\qquad
-q : B \otimes S \to B,\quad q (b, s) = b ,
+r_{M,s} (a \cdot w) = b \cdot r_{M,s'} (w)
+\quad\text{where}\quad (b, s') = \mathrm{step} (s, a).
 \]
-and $e : A \otimes S \to B \otimes S$ is the effectful molecule with state
-space $S$ and initial state $s_0$ whose transition runs one step of $M$
-from its own state and writes the successor state to its output wire:
-\[
-\delta_e\bigl (s, (a, s')\bigr) = \bigl ((b, s''), s''\bigr),
-\qquad (b, s'') = \mathrm{step} (s, a) .
-\]
-Uniqueness is twofold. \emph{(i)} The effectful core is invariant: if
-$M = q' \circ e' \circ p'$ is any factorization with $p', q'$ pure and
-$e'$ effectful with state space $S'$, then $S' \cong S$. \emph{(ii)} The
-canonical triple is well defined on presentations: if $(S_1, s_1,
-\mathrm{step}_1)$ and $(S_2, s_2, \mathrm{step}_2)$ present the same
-morphism through the state bijection $\varphi$, then $p_2 = (1_A \otimes
-\varphi) \circ p_1$, $q_1 = q_2 \circ (1_B \otimes \varphi)$, and $e_2$ is
-the $\varphi$-conjugate of $e_1$; hence the decomposition is unique up to
-isomorphism.
+\item[(iii)] Conversely, every Kleisli morphism $A \to T_S B$ determines
+a unique Mol class with representative $(S, \mathrm{step})$.
+\item[(iv)] If $\varphi : S \to S'$ is a state-space isomorphism of two
+representatives of the same Mol morphism, the corresponding Kleisli
+morphisms are conjugate by $\varphi$.
+\end{enumerate}
+The state space of a Mol morphism is well defined up to bijection by
+\autoref{def:mol}; behavioral equivalence (\autoref{def:bisim}) may
+identify machines with non-bijective state spaces, and minimization
+(\autoref{ch:coalgebra}) produces a generally smaller state space with
+the same responses.
 \end{theorem}
 
 \begin{proof}
-\emph{Existence.} Compose the three machines. The composite
-$q \circ e \circ p$ has state space $() \otimes S \otimes ()$, initial
-state $s_0$ up to the canonical identification, and transition: on input
-$a$, $p$ emits $(a, s_0)$; $e$ in state $s$ computes
-$(b, s'') = \mathrm{step} (s, a)$, emits $(b, s'')$, and advances to
-$s''$; $q$ projects to $b$. Hence the composite transitions
-$(s, a) \mapsto (b, s'')$ with $(b, s'') = \mathrm{step} (s, a)$, which is
-exactly the transition of the presentation $(S, s_0, \mathrm{step})$
-(\autoref{thm:1}): the machines are equal in Mol, so $M = q \circ e \circ p$.
+\emph{(i).} A Kleisli morphism $A \to T_S B$ is a function
+$A \to (B \times S)^{S}$, which by uncurrying is a function
+$S \times A \to B \times S$. That is exactly $\mathrm{step}$.
 
-\emph{(i).} In Mol, equality of morphisms is equality up to state-space
-bijection (\autoref{thm:2}). The composite $q' \circ e' \circ p'$ has state
-space $() \otimes S' \otimes () \cong S'$ (\autoref{thm:1}); since it equals
-$M$, presented by the state space $S$, the two state spaces are
-isomorphic: $S' \cong S$.
+\emph{(ii).} The clauses are the definition of response
+(\autoref{def:response}). Uniqueness of the stream map is induction on
+word length: the empty word is fixed, and each letter determines a
+unique output letter and a unique successor state because
+$\mathrm{step}$ is a total function (\autoref{def:machine}).
 
-\emph{(ii).} The bijection $\varphi$ satisfies $\varphi (s_1) = s_2$ and
-$\mathrm{step}_2 (\varphi (s), a) = (b, \varphi (s'))$ whenever
-$(b, s') = \mathrm{step}_1 (s, a)$. Then
-$p_2 (a) = (a, s_2) = (a, \varphi (s_1)) = (1_A \otimes \varphi)(p_1 (a))$,
-and $q_2 \circ (1_B \otimes \varphi)(b, s) = q_2 (b, \varphi (s)) = b =
-q_1 (b, s)$. For $e$, writing $\delta_e^i$ for the transition of $e_i$,
-\[
-\delta_e^2\bigl (\varphi (s), (a, s')\bigr)
-= \bigl ((b, \varphi (s'')), \varphi (s'')\bigr),
-\qquad (b, s'') = \mathrm{step}_1 (s, a) ,
-\]
-which is exactly the $\varphi$-conjugate of $\delta_e^1$: the machines
-$e_1$ and $e_2$ are the same morphism of Mol (\autoref{thm:2}), and the
-canonical triples are carried to each other by $\varphi$.
+\emph{(iii).} Given a Kleisli morphism $k : A \to T_S B$, uncurry to a
+step function and take the class $[S, \mathrm{uncurry} (k)]$. Two Kleisli
+morphisms that uncurry to state-space isomorphic machines determine the
+same class (\autoref{thm:2}); if they uncurry to the same function they
+are equal.
+
+\emph{(iv).} The isomorphism hypothesis is
+$\mathrm{step}' (\varphi (s), a) = (b, \varphi (s'))$ whenever
+$\mathrm{step} (s, a) = (b, s')$. Currying both sides yields
+$k' (a) (\varphi (s)) = (b, \varphi (s'))$ whenever $k (a) (s) = (b, s')$,
+which is conjugacy of the Kleisli morphisms by $\varphi$.
 \end{proof}
 
-\begin{theorem}[Sliding (\autoref{thm:34})]\label{thm:34}
-Let $M : A \otimes U \to B \otimes U$ be the body of a feedback loop and let
-$f : B \to B'$ be pure. Then
+\paragraph{Remark (dummy-wire factorization).}
+One may write a representative $(S, \mathrm{step})$ as a Mol composite
+$q \circ e \circ p$ in which $p : A \to A \otimes S$ is the pure map
+$a \mapsto (a, s_0)$, $q : B \otimes S \to B$ is the pure projection, and
+$e$ is a machine with state $S$ that ignores its $S$-input wire and
+writes the successor state onto its $S$-output wire. The construction
+equals $M$ because $e$ ignores the dummy wire. It does not give a
+canonical dataflow of the state, and it does not identify $S$ among
+behavioral equivalents. The Kleisli reading of (i)--(ii) is the one used
+below.
+
+\setcatalog{34}
+\begin{theorem}[Sliding of pure maps (\autoref{thm:34})]\label{thm:34}
+\textbf{[C].} Let $M : A \otimes U \to B \otimes U$ be a molecule with
+state space $S$ and let $f : B \to B'$ and $g : A' \to A$ be pure. Then
 \[
 \mathrm{Tr}^{U}_{A,B'}\bigl ((f \otimes 1_U) \circ M\bigr)
-= f \circ \mathrm{Tr}^{U}_{A,B} (M) ,
-\]
-written in the catalog as $\mathrm{Tr} (f;M) = f;\mathrm{Tr} (M)$: a pure
-computation applied inside every iteration may be slid out of the loop and
-applied exactly once after it \citep{joyalsv}.
-\end{theorem}
-
-\begin{proof}
-The trace of \autoref{ch:trace} makes Mol a traced monoidal category in the
-sense of \autoref{sec:prelim-trace}, whose axioms are the laws of
-\citet{joyalsv}; in particular the trace is natural in the output object
-$B$: for every morphism $g : B \to B'$,
-$\mathrm{Tr}^{U}_{A,B'} ((g \otimes 1_U) \circ M) = g \circ
-\mathrm{Tr}^{U}_{A,B} (M)$. Instantiating $g = f$, which is pure, gives the
-equation. The machine-level content is direct: the feedback register
-evolves by the loop body's transition alone, and $f \otimes 1_U$ touches
-only the feed-forward output factor, so the register trajectory is
-unchanged whether $f$ runs inside every iteration or once after the loop;
-the accumulated effect is the single application of $f$ to the loop's
-output.
-\end{proof}
-
-\begin{theorem}[Vanishing and yanking (\autoref{thm:35})]\label{thm:35}
-The trace on Mol satisfies the vanishing and yanking laws of
-\citet{joyalsv}:
-\[
-\mathrm{Tr}^{I}_{A,B} (M) = M ,
+= f \circ \mathrm{Tr}^{U}_{A,B} (M),
 \qquad
-\mathrm{Tr}^{U \otimes U}_{A,B} (M)
-= \mathrm{Tr}^{U}_{A,B}\Bigl (
-  \mathrm{Tr}^{U}_{A \otimes U,\, B \otimes U} (M) \Bigr),
+\mathrm{Tr}^{U}_{A',B}\bigl (M \circ (g \otimes 1_U)\bigr)
+= \mathrm{Tr}^{U}_{A,B} (M) \circ g.
 \]
-the second written in the catalog as $\mathrm{Tr} (\mathrm{Tr} (M)) =
-\mathrm{Tr} (M)$: tracing over a doubled feedback register is iterating the
-trace; and
-\[
-\mathrm{Tr}^{U}_{U,U} (\sigma_{U,U}) = 1_U ,
-\]
-where $\sigma_{U,U} : U \otimes U \to U \otimes U$ is the symmetry
-(\autoref{sec:prelim-mon}): a feedback loop on a swap is the identity.
+A pure map on the feed-forward wires of a delayed trace may be slid
+completely out of the loop.
 \end{theorem}
 
 \begin{proof}
-These are axioms of a traced monoidal category (\autoref{sec:prelim-trace}),
-and the trace on Mol satisfies them by construction (\autoref{ch:trace}).
-The machine-level readings are immediate: tracing over the unit object adds
-no register, so the machine is unchanged; tracing over $U \otimes U$ adds
-two coupled registers, which is the same as adding one register and feeding
-it back once more; and $\mathrm{Tr} (\sigma)$ closes the loop on the pure
-swap, which absorbs the input into the register and returns it on the next
-step, so on stabilized loop values the loop is the identity.
+Write $\mathit{step}_M (s, (a, u)) = ((b, u'), s')$. The reactor loop
+$\mathrm{Tr}^{U}_{A,B} (M)$ has state $S \times U$ and
+\[
+\mathit{step}'\bigl ((s, u), a\bigr) = \bigl (b, (s', u')\bigr)
+\]
+(\autoref{def:reactor}).
+
+\emph{Output sliding.} The machine $(f \otimes 1_U) \circ M$ has state
+$() \times S \cong S$. On input $(a, u)$ in state $s$ it runs $M$,
+obtaining $((b, u'), s')$, then applies the pure map $f$ to $b$,
+obtaining $((f (b), u'), s')$. Its reactor loop therefore has state
+$S \times U$ and emits $f (b)$ while advancing to $(s', u')$. The
+composite $f \circ \mathrm{Tr}^{U}_{A,B} (M)$ has state
+$() \times (S \times U) \cong S \times U$ and, on the same input, emits
+$f (b)$ after the same register update. The canonical bijection of state
+spaces is a state-space isomorphism (\autoref{def:stiso}), so the two
+morphisms are equal in Mol.
+
+\emph{Input sliding.} The machine $M \circ (g \otimes 1_U)$ has state
+$S \times ()$. On input $(a', u)$ it applies $g$ to $a'$ and then $M$.
+The reactor loop emits the same $b$ and stores the same $u'$ as
+$\mathrm{Tr} (M)$ run on $g (a')$. The composite
+$\mathrm{Tr} (M) \circ g$ does the same, up to the unit-state bijection.
 \end{proof}
 
+\setcatalog{35}
+\begin{theorem}[Vanishing and delay (\autoref{thm:35})]\label{thm:35}
+\textbf{[C].} Let $\mathrm{Tr}$ be the reactor loop of
+\autoref{def:reactor}. Then:
+\begin{enumerate}
+\item[(i)] \emph{Vanishing I.} For $M : A \otimes I \to B \otimes I$,
+$\mathrm{Tr}^{I}_{A,B} (M) = M$ in Mol, via $S \times () \cong S$.
+\item[(ii)] \emph{Vanishing II.} For
+$M : A \otimes (U \otimes V) \to B \otimes (U \otimes V)$,
+\[
+\mathrm{Tr}^{U \otimes V}_{A,B} (M)
+= \mathrm{Tr}^{U}_{A,B}\Bigl (
+  \mathrm{Tr}^{V}_{A \otimes U,\, B \otimes U} (M) \Bigr)
+\]
+in Mol, via $S \times (U \times V) \cong (S \times V) \times U$.
+\item[(iii)] \emph{Delay, in place of yanking.} Let
+$\sigma_{U,U} : U \otimes U \to U \otimes U$ be the braiding of
+\autoref{def:braid}, and let $\Delta_U : U \to U$ be the \emph{delay}
+molecule with state space $U$ and
+$\mathit{step}_{\Delta} (u, x) = (u, x)$. Then
+$\mathrm{Tr}^{U}_{U,U} (\sigma_{U,U}) = \Delta_U$. In particular
+$\mathrm{Tr} (\sigma_{U,U})$ equals the identity on $U$ if and only if
+$U$ is a singleton, so the reactor loop fails the Joyal--Street--Verity
+yanking axiom whenever $|U| > 1$ \citep{joyalsv}.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+\emph{(i).} The reactor loop of $M$ has state $S \times ()$ and, writing
+$\mathit{step}_M (s, (a, ())) = ((b, ()), s')$, its transition is
+$((s, ()), a) \mapsto (b, (s', ()))$. The bijection
+$\varphi (s, ()) = s$ is a state-space isomorphism onto $M$.
+
+\emph{(ii).} Direct trace: $\mathrm{Tr}^{U \otimes V} (M)$ has state
+$S \times (U \times V)$. On input $a$ in state $(s, (u, v))$ it runs one
+step of $M$ on $(a, (u, v))$, obtaining $((b, (u', v')), s')$, and
+advances to $(s', (u', v'))$.
+
+Inner-then-outer: view $M$ as a body
+$(A \otimes U) \otimes V \to (B \otimes U) \otimes V$. The inner loop
+$\mathrm{Tr}^{V} (M)$ has state $S \times V$; on input $(a, u)$ in state
+$(s, v)$ it emits $(b, u')$ and stores $v'$. The outer loop
+$\mathrm{Tr}^{U}$ of that machine has state $(S \times V) \times U$; on
+input $a$ in state $((s, v), u)$ it emits $b$ and stores
+$((s', v'), u')$. The bijection
+$\Phi (s, (u, v)) = ((s, v), u)$ carries the direct-trace transition to
+the inner-then-outer transition, and both emit $b$. Hence the two
+machines are state-space isomorphic.
+
+\emph{(iii).} The braiding is pure:
+$\mathit{swap} ((), (x, y)) = ((y, x), ())$. Taking $A = B = U$ and
+feeding the second factor back, the reactor loop has state $() \times U
+\cong U$. On input $x$ in register $u$,
+\[
+\mathit{swap} ((), (x, u)) = ((u, x), ()),
+\]
+so the loop emits $u$ (the old register) and stores $x$ (the current
+input). That is the transition of $\Delta_U$. If $|U| > 1$, pick
+distinct $u, x \in U$; delay started at $u$ emits $u$ on input $x$,
+while $\mathrm{id}_U$ emits $x$. The two responses differ, so
+$\Delta_U \neq \mathrm{id}_U$ in Mol.
+\end{proof}
+
+\setcatalog{36}
 \begin{theorem}[Superposing (\autoref{thm:36})]\label{thm:36}
-Let $M : A \otimes U \to B \otimes U$ and let $N : C \to D$ be any molecule.
-Then
+\textbf{[C].} Let $M : A \otimes U \to B \otimes U$ and let
+$N : C \to D$ be any molecule. Then
 \[
 \mathrm{Tr}^{U}_{A \otimes C,\, B \otimes D} (M \otimes N)
-= \mathrm{Tr}^{U}_{A,B} (M) \otimes N ,
+= \mathrm{Tr}^{U}_{A,B} (M) \otimes N
 \]
-written in the catalog as $\mathrm{Tr} (M) \otimes N = \mathrm{Tr} (M \otimes
-N)$: a feedback loop running beside an independent molecule is the loop
-and the molecule side by side.
+in Mol. A delayed trace running beside an independent molecule is the
+loop and the molecule side by side.
 \end{theorem}
 
 \begin{proof}
-This is the superposing axiom of a traced monoidal category
-(\autoref{sec:prelim-trace}), satisfied by Mol's trace by construction
-(\autoref{ch:trace}). At the machine level, tensoring $N$ beside $M$
-places the state space of $N$ beside that of $M$, and the feedback register
-couples only to the $M$-factor, so closing the loop leaves the dynamics of
-$N$ untouched; the state space of the loop is $S_M \otimes U \otimes S_N$,
-which is exactly the tensor of $\mathrm{Tr} (M)$ with $N$
-(\autoref{thm:3}).
+Let $M$ have state $S$ and $N$ have state $T$. The tensor
+$M \otimes N : (A \otimes U) \otimes C \to (B \otimes U) \otimes D$
+reassociates to a body of type $(A \otimes C) \otimes U \to
+(B \otimes D) \otimes U$ with state $S \times T$
+(\autoref{def:tensor}). Its reactor loop has state
+$(S \times T) \times U$ and, on input $(a, c)$ in state
+$((s, t), u)$, runs $M$ on $(a, u)$ and $N$ on $c$ independently,
+emitting $(b, d)$ and storing $((s', t'), u')$.
+
+The tensor $\mathrm{Tr} (M) \otimes N$ has state $(S \times U) \times T$.
+On input $(a, c)$ in state $((s, u), t)$ it runs the loop of $M$ on $a$
+and $N$ on $c$, emitting $(b, d)$ and storing $((s', u'), t')$. The
+bijection $\Phi ((s, t), u) = ((s, u), t)$ is a state-space isomorphism
+of the two machines.
 \end{proof}
 
+\setcatalog{37}
 \begin{theorem}[Hoisting and loop-state footprint (\autoref{thm:37})]\label{thm:37}
-Let $M : A \otimes U \to B \otimes U$ be the body of a feedback loop,
-presented by a machine $(S, \mathrm{step})$, and suppose the loop state
-carries purely redundant information: $U = U' \otimes U''$ with a pure map
-$h : U' \to U''$ such that the register is initialized in the graph
-$i = \langle 1_{U'}, h\rangle : U' \to U$ and every register value in the
-run lies in that graph, and the loop body preserves the graph:
+\textbf{[N].} Let $M : A \otimes U \to B \otimes U$ be the body of a
+reactor loop, presented by a machine $(S, \mathrm{step})$, and suppose
+the loop state carries purely redundant information: $U = U' \otimes U''$
+with a pure map $h : U' \to U''$ such that the register is initialized
+in the graph $i = \langle 1_{U'}, h\rangle : U' \to U$ and every register
+value in the run lies in that graph, and the loop body preserves the
+graph:
 $M \circ (1_A \otimes i) = (1_B \otimes i) \circ M'$ for the compressed
 body $M' : A \otimes U' \to B \otimes U'$. Then:
 \emph{(a) Hoisting.} $\mathrm{Tr}^{U} (M) \simeq \mathrm{Tr}^{U'} (M')$
@@ -230,17 +279,19 @@ monotone in state size.
 
 \paragraph{Hoisting in practice.}
 Together the theorems give the operational shape of a hot loop. By
-\autoref{thm:33} a hybrid stage $M = q \circ e \circ p$ runs as pure
-initiation $p$, the effectful core $e$, pure completion $q$; the state of
-the stage is exactly the state of $e$, and pure work holds none. By
-\autoref{thm:34}--\autoref{thm:36} any feedback loop over such a stage can be
-rearranged so that pure work and independent side computations live outside
-the loop, and by \autoref{thm:37} loop state that is purely determined by
-the remainder of the loop state is compressed away. The loop that runs on
-the hot path is therefore the one with the smallest resident state: the
-state of $e$ alone, after compression. This is what the software standard's
-policies [ALLOC] and [CACHE] enforce: no allocation in the hot path, the
-loop state small enough to stay resident: and what the following
-chapters quantify: \autoref{ch:coalgebra} makes the state minimal among
-behavioral equivalents (\autoref{thm:38}), and \autoref{ch:trace} bounds
-the number of iterations such a loop needs (\autoref{thm:42}).
+\autoref{thm:33} the step of a stage is a Kleisli morphism of its own
+state monad, iterated on the input stream; pure stages have unit state
+and hold none. By \autoref{thm:34} and \autoref{thm:36} a delayed
+feedback loop can be rearranged so that pure work and independent side
+computations live outside the loop, and by \autoref{thm:37} loop state
+that is purely determined by the remainder of the loop state is
+compressed away. Yanking is unavailable: closing a swap produces a
+delay (\autoref{thm:35}), so a register that is swapped onto a
+feed-forward wire is emitted one step late. The loop that runs on the
+hot path is the one with the smallest resident state after compression.
+This is what the software standard's policies [ALLOC] and [CACHE]
+enforce: no allocation in the hot path, the loop state small enough to
+stay resident. The following chapters quantify the rest:
+\autoref{ch:coalgebra} makes the state minimal among behavioral
+equivalents (\autoref{thm:38}), and \autoref{ch:trace} bounds the
+number of iterations such a loop needs (\autoref{thm:42}).

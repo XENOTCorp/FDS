@@ -32,18 +32,18 @@ turns the theorems into enforceable engineering policy.
 well-definedness of the state-space quotient, symmetric monoidal
 structure, the pure and effectful subcategories, bisimulation
 congruence, tensor closure, and determinism. \autoref{ch:lawvere}
-models rings, parsers, and transports as equational theories.
+models stacks, parsers, and transports as equational theories, and records the FIFO occupancy bound.
 \autoref{ch:rewrite} proves termination, confluence, and Knuth--Bendix
 completion for the rewrite engine. \autoref{ch:free} constructs free
 molecules and proves finiteness of normal forms and their completeness
 as a lookup table. \autoref{ch:enrich} proves cost optimality by
 shortest paths and the refinement order. \autoref{ch:kleisli} proves
-the decomposition of every hybrid molecule into pure, effectful, and
-pure factors, and the traced structure of loops. \autoref{ch:coalgebra}
+that the step of a molecule is a Kleisli morphism iterated on the input
+stream, and the delayed-feedback laws of the reactor loop. \autoref{ch:coalgebra}
 proves minimal state spaces and compositional bounds. \autoref{ch:trace}
 proves contraction bounds for fixed-iteration loops. \autoref{ch:operad}
-proves the batching laws. \autoref{ch:linear} proves cut elimination as
-pipeline fusion and linearity as a zero-allocation guarantee.
+proves the batching laws. \autoref{ch:linear} proves product-state fusion and linearity as a
+zero-allocation guarantee given preallocated rings.
 \autoref{ch:situations} proves the finiteness and decidability of
 design decision problems. \autoref{ch:breakthroughs} proves the
 kernel-boundary laws, the affine crossover, the optimization lattice,
@@ -63,8 +63,8 @@ This thesis is a synthesis-and-application thesis with deliberately bounded scop
 \section{Roadmap}
 \label{sec:roadmap}
 
-\textbf{Part I: Foundations} (\autoref{ch:prelim}--\autoref{ch:kleisli}). \autoref{ch:prelim} fixes the categorical machinery: monoidal, symmetric monoidal, and traced monoidal categories \citep{maclane,joyalsv}; monads and Kleisli; coalgebras; Lawvere theories \citep{lawvere}; operads and clubs \citep{leinster,kelly}; effectus theory; linear logic \citep{girard}; locally presentable categories \citep{adamek}. \autoref{ch:mol} defines Mol and its subcategories (\autoref{thm:1}--\autoref{thm:8}); \autoref{ch:lawvere} models rings, parsers, and transports as Lawvere theories (\autoref{thm:9}--\autoref{thm:12}); \autoref{ch:rewrite} develops the rewrite engine, with Knuth--Bendix completion \citep{knuthbendix} and Newman confluence \citep{newman} (\autoref{thm:13}--\autoref{thm:19}, \autoref{thm:54}); \autoref{ch:free} constructs free molecules and normal forms (\autoref{thm:20}--\autoref{thm:24}); \autoref{ch:enrich} proves cost optimality and refinement (\autoref{thm:25}--\autoref{thm:32}, \autoref{thm:53}); \autoref{ch:kleisli} proves the decomposition $M = q\circ e\circ p$ (\autoref{thm:33}--\autoref{thm:37}).
+\textbf{Part I: Foundations} (\autoref{ch:prelim}--\autoref{ch:kleisli}). \autoref{ch:prelim} fixes the categorical machinery: monoidal and symmetric monoidal categories \citep{maclane}; the classical JSV trace, recorded as background and distinguished from Mol's delayed feedback \citep{joyalsv}; monads and Kleisli; coalgebras; Lawvere theories \citep{lawvere}; operads and clubs \citep{leinster,kelly}; effectus theory; linear logic \citep{girard}; locally presentable categories \citep{adamek}. \autoref{ch:mol} defines Mol and its subcategories (\autoref{thm:1}--\autoref{thm:8}); \autoref{ch:lawvere} models stacks, parsers, and transports as Lawvere theories, and records the FIFO occupancy bound (\autoref{thm:9}--\autoref{thm:12}); \autoref{ch:rewrite} develops the rewrite engine, with Knuth--Bendix completion \citep{knuthbendix} and Newman confluence \citep{newman} (\autoref{thm:13}--\autoref{thm:19}, \autoref{thm:54}); \autoref{ch:free} constructs free molecules and normal forms (\autoref{thm:20}--\autoref{thm:24}); \autoref{ch:enrich} proves cost optimality and refinement (\autoref{thm:25}--\autoref{thm:32}, \autoref{thm:53}); \autoref{ch:kleisli} proves Kleisli iteration of step and delayed-feedback laws (\autoref{thm:33}--\autoref{thm:37}).
 
-\textbf{Part II: Structure theorems} (\autoref{ch:coalgebra}--\autoref{ch:linear}). \autoref{ch:coalgebra}: minimal realization and compositional bounds \citep{nerode,hopcroft} (\autoref{thm:38}--\autoref{thm:41}). \autoref{ch:trace}: feedback and fixed-iteration loops, with Banach--Dobrushin contraction bounds \citep{banach,dobroushin} (\autoref{thm:42}--\autoref{thm:45}). \autoref{ch:operad}: operadic composition and batching (\autoref{thm:46}--\autoref{thm:48}). \autoref{ch:linear}: cut elimination as fusion, linearity as zero allocation (\autoref{thm:49}--\autoref{thm:50}, \autoref{thm:55}).
+\textbf{Part II: Structure theorems} (\autoref{ch:coalgebra}--\autoref{ch:linear}). \autoref{ch:coalgebra}: minimal realization and compositional bounds \citep{nerode,hopcroft} (\autoref{thm:38}--\autoref{thm:41}). \autoref{ch:trace}: feedback and fixed-iteration loops, with Banach--Dobrushin contraction bounds \citep{banach,dobroushin} (\autoref{thm:42}--\autoref{thm:45}). \autoref{ch:operad}: operadic composition and batching (\autoref{thm:46}--\autoref{thm:48}). \autoref{ch:linear}: product-state fusion, linearity as zero allocation given preallocated rings (\autoref{thm:49}--\autoref{thm:50}, \autoref{thm:55}).
 
 \textbf{Part III: Applications} (\autoref{ch:situations}--\autoref{ch:conclusion}). \autoref{ch:situations}: a situation is a triple $(A\to B, \Phi, \bar{c})$, a solution a molecule $M$ with $M \vdash \Phi$ and $\mathrm{cost} (M) \leq \bar{c}$ (\autoref{thm:51}--\autoref{thm:52}). \autoref{ch:testing}: law tests, bisimulation \citep{park}, model-based testing, fuzzing, cost regression. \autoref{ch:related}: related work. \autoref{ch:conclusion}: summary, limitations, future work. \autoref{app:a}: proof-checking scripts and PASS logs; \autoref{app:b}: optimization and testing catalogs.

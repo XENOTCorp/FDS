@@ -1,47 +1,46 @@
-//! The no-allocation theorem: the affine type system Λ types molecules linearly and
-//! well-typed closed terms evaluate without allocation.
+//! The no-allocation theorem for the linear combinator calculus Λ.
 //!
-//! - Linear typing: contexts are disjoint-split in the comp and tensor
-//!   rules; no weakening, no contraction. Every variable is consumed
-//!   exactly once by construction, and we assert it explicitly.
-//! - Non-duplication: every reduction step is checked to produce only
-//!   nodes already present (a per-node unique id; the id set of a reduct
-//!   must be a subset of the redex's id set): i.e. no step allocates.
-//! - Negative samples (duplicated variable use) must fail to type-check.
+//! Sequential composition: t ; u means run t then u (u ∘ t in Mol).
+//! Tensor of two morphisms is the bifunctor:
+//!   t : A ⊸ B, u : C ⊸ D  ⇒  t ⊗ u : (A⊗C) ⊸ (B⊗D).
+//! No weakening, no contraction: every variable is consumed exactly once.
+//! Reduction is pure rewiring: leaf multiset preserved, node count never
+//! increases. That bound is on the syntax tree, not the dataplane heap.
 
 use std::collections::HashSet;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum Ty {
     Base(u32),
-    Tensor(Box<Ty>, Box<Ty>),
+    Pair(Box<Ty>, Box<Ty>),
+    Lin(Box<Ty>, Box<Ty>),
     Unit,
 }
 
 impl Ty {
     fn lin(from: Ty, to: Ty) -> Ty {
-        Ty::Tensor(Box::new(from), Box::new(to)) // encode A ⊸ B as Tensor(from,to); only the head matters
+        Ty::Lin(Box::new(from), Box::new(to))
+    }
+    fn pair(a: Ty, b: Ty) -> Ty {
+        Ty::Pair(Box::new(a), Box::new(b))
     }
 }
 
 #[derive(Clone, Debug)]
 enum Term {
     Var(String),
-    Atom(String, Ty, Ty), // name, input type, output type
+    Atom(String, Ty, Ty),
     Comp(Box<Term>, Box<Term>),
     Tensor(Box<Term>, Box<Term>),
     Unit,
 }
 
-/// Linear context: a list of (name, type); invariant: names unique.
 type Ctx = Vec<(String, Ty)>;
 
-/// Collect all free variables with multiplicity.
 fn free_vars(t: &Term, out: &mut Vec<String>) {
     match t {
         Term::Var(x) => out.push(x.clone()),
-        Term::Atom(_, _, _) => {}
-        Term::Unit => {}
+        Term::Atom(_, _, _) | Term::Unit => {}
         Term::Comp(a, b) | Term::Tensor(a, b) => {
             free_vars(a, out);
             free_vars(b, out);
@@ -49,9 +48,6 @@ fn free_vars(t: &Term, out: &mut Vec<String>) {
     }
 }
 
-/// Split a context into two disjoint sub-contexts covering it.
-/// Enumerate all ways: for each variable choose left, right, or (for
-/// variables not needed) neither: we only split contexts exactly.
 fn splits(ctx: &Ctx) -> Vec<(Ctx, Ctx)> {
     let mut result = Vec::new();
     let n = ctx.len();
@@ -70,9 +66,7 @@ fn splits(ctx: &Ctx) -> Vec<(Ctx, Ctx)> {
     result
 }
 
-/// Typing: ctx ⊢ t : ty. Returns Some(ty) if derivable.
 fn infer(ctx: &Ctx, t: &Term) -> Option<Ty> {
-    // context must be linear (unique names)
     let mut names = HashSet::new();
     for (n, _) in ctx {
         if !names.insert(n.clone()) {
@@ -82,7 +76,7 @@ fn infer(ctx: &Ctx, t: &Term) -> Option<Ty> {
     match t {
         Term::Unit => {
             if ctx.is_empty() {
-                Some(Ty::Unit)
+                Some(Ty::lin(Ty::Unit, Ty::Unit))
             } else {
                 None
             }
@@ -95,29 +89,32 @@ fn infer(ctx: &Ctx, t: &Term) -> Option<Ty> {
             }
         }
         Term::Var(x) => {
-            // exactly one occurrence of x, nothing else
             if ctx.len() == 1 && ctx[0].0 == *x {
                 Some(ctx[0].1.clone())
             } else {
                 None
             }
         }
-        Term::Comp(f, a) => {
+        Term::Comp(f, g) => {
+            // sequential: f : A ⊸ B, g : B ⊸ C ⇒ f;g : A ⊸ C
             for (l, r) in splits(ctx) {
-                if let (Some(tf), Some(ta)) = (infer(&l, f), infer(&r, a)) {
-                    if let Ty::Tensor(fr, to) = tf {
-                        if *fr == ta {
-                            return Some(*to);
-                        }
+                if let (Some(Ty::Lin(a, b)), Some(Ty::Lin(b2, c))) =
+                    (infer(&l, f), infer(&r, g))
+                {
+                    if b == b2 {
+                        return Some(Ty::Lin(a, c));
                     }
                 }
             }
             None
         }
-        Term::Tensor(a, b) => {
+        Term::Tensor(f, g) => {
+            // bifunctor: f : A ⊸ B, g : C ⊸ D ⇒ f⊗g : (A⊗C) ⊸ (B⊗D)
             for (l, r) in splits(ctx) {
-                if let (Some(ta), Some(tb)) = (infer(&l, a), infer(&r, b)) {
-                    return Some(Ty::Tensor(Box::new(ta), Box::new(tb)));
+                if let (Some(tf), Some(tg)) = (infer(&l, f), infer(&r, g)) {
+                    if let (Ty::Lin(a, b), Ty::Lin(c, d)) = (tf, tg) {
+                        return Some(Ty::lin(Ty::pair(*a, *c), Ty::pair(*b, *d)));
+                    }
                 }
             }
             None
@@ -125,13 +122,8 @@ fn infer(ctx: &Ctx, t: &Term) -> Option<Ty> {
     }
 }
 
-/// One step of cut/tensor elimination. Returns None if the term is a
-/// normal form. The reduction is pure rewiring: it preserves the leaf
-/// multiset and never increases the node count (checked by the caller).
 fn step(t: &Term) -> Option<Term> {
     match t {
-        // (f;g);x  ->  f;(g;x)   (associativity of cut: left-assoc to
-        // right-assoc; strictly increases right-nesting depth, terminates)
         Term::Comp(a, b) => {
             if let Term::Comp(f, g) = a.as_ref() {
                 return Some(Term::Comp(
@@ -139,7 +131,6 @@ fn step(t: &Term) -> Option<Term> {
                     Box::new(Term::Comp(g.clone(), b.clone())),
                 ));
             }
-            // (f⊗g);(x⊗y)  ->  (f;x)⊗(g;y)   (interchange)
             if let Term::Tensor(f, g) = a.as_ref() {
                 if let Term::Tensor(x, y) = b.as_ref() {
                     return Some(Term::Tensor(
@@ -163,7 +154,6 @@ fn step(t: &Term) -> Option<Term> {
     }
 }
 
-/// Number of nodes in a term.
 fn node_count(t: &Term) -> usize {
     match t {
         Term::Var(_) | Term::Atom(..) | Term::Unit => 1,
@@ -171,9 +161,6 @@ fn node_count(t: &Term) -> usize {
     }
 }
 
-/// Multiset of leaf occurrences (atom names, variable names, unit), sorted
-/// for comparison. Non-duplication means this multiset is preserved by
-/// every reduction step.
 fn leaf_multiset(t: &Term) -> Vec<String> {
     let mut v = Vec::new();
     fn go(t: &Term, v: &mut Vec<String>) {
@@ -203,30 +190,38 @@ fn main() {
         }
     };
 
-    // Atom library (signature Σ).
     let a_ = Term::Atom("a".into(), Ty::Base(1), Ty::Base(2));
     let b_ = Term::Atom("b".into(), Ty::Base(2), Ty::Base(3));
+    let c_ = Term::Atom("c".into(), Ty::Base(3), Ty::Base(4));
+    let d_ = Term::Atom("d".into(), Ty::Base(4), Ty::Base(5));
     let f_ = Term::Atom("f".into(), Ty::Base(1), Ty::Base(1));
 
-    // --- (1) linearity: every well-typed term uses each variable exactly once ---
     let mut linearity_ok = true;
     let mut well_typed = 0usize;
+    let mol_x = Ty::lin(Ty::Base(1), Ty::Base(2));
+    let mol_y = Ty::lin(Ty::Base(3), Ty::Base(4));
     let samples: Vec<(Ctx, Term)> = vec![
-        (vec![("x".into(), Ty::Base(1))], Term::Var("x".into())),
+        (vec![("x".into(), mol_x.clone())], Term::Var("x".into())),
         (
-            vec![("x".into(), Ty::Base(1)), ("y".into(), Ty::Base(2))],
-            Term::Tensor(Box::new(Term::Var("x".into())), Box::new(Term::Var("y".into()))),
+            vec![("x".into(), mol_x.clone()), ("y".into(), mol_y.clone())],
+            Term::Tensor(
+                Box::new(Term::Var("x".into())),
+                Box::new(Term::Var("y".into())),
+            ),
         ),
         (
-            vec![("x".into(), Ty::Base(1))],
-            Term::Comp(Box::new(f_.clone()), Box::new(Term::Var("x".into()))),
+            vec![],
+            Term::Comp(Box::new(a_.clone()), Box::new(b_.clone())),
         ),
         (vec![], Term::Unit),
+        (
+            vec![],
+            Term::Comp(Box::new(f_.clone()), Box::new(f_.clone())),
+        ),
     ];
     for (ctx, t) in &samples {
-        if let Some(ty) = infer(ctx, t) {
+        if let Some(_ty) = infer(ctx, t) {
             well_typed += 1;
-            // every free variable must occur exactly once
             let mut fv = Vec::new();
             free_vars(t, &mut fv);
             let mut counts: std::collections::HashMap<String, usize> = Default::default();
@@ -238,7 +233,6 @@ fn main() {
                     linearity_ok = false;
                 }
             }
-            let _ = ty;
         } else {
             linearity_ok = false;
         }
@@ -249,49 +243,73 @@ fn main() {
         format!("{well_typed} sample derivations, every variable used exactly once"),
     );
 
-    // --- (2) negative samples: duplicated use must fail to type-check ---
-    let dup = Term::Tensor(Box::new(Term::Var("x".into())), Box::new(Term::Var("x".into())));
-    let dup_ok = infer(&vec![("x".into(), Ty::Base(1))], &dup).is_none();
+    let dup = Term::Tensor(
+        Box::new(Term::Var("x".into())),
+        Box::new(Term::Var("x".into())),
+    );
+    let dup_ok = infer(&vec![("x".into(), mol_x.clone())], &dup).is_none();
     check(
         "no-allocation (a) contraction rejected",
         dup_ok,
         "x ⊗ x with x declared once does not type-check (no contraction)".to_string(),
     );
     let weak = Term::Var("x".into());
-    let weak_ok = infer(&vec![("x".into(), Ty::Base(1)), ("y".into(), Ty::Base(2))], &weak).is_none();
+    let weak_ok =
+        infer(&vec![("x".into(), mol_x.clone()), ("y".into(), mol_y.clone())], &weak).is_none();
     check(
         "no-allocation (a) weakening rejected",
         weak_ok,
         "x with y unused in context does not type-check (no weakening)".to_string(),
     );
 
-    // --- (3) no-allocation: reduction preserves the leaf multiset and
-    // never increases the node count ---
-    // a: A⊸B, b: B⊸C; a;b : A⊸C. Normalize composed pipelines and assert
-    // per-step: leaves preserved (no duplication) and nodes non-increasing
-    // (no fresh structure).
-    let ab = Term::Comp(Box::new(a_.clone()), Box::new(b_.clone())); // A -> C
-    let big = Term::Comp(
-        Box::new(ab.clone()),
-        Box::new(Term::Comp(
-            Box::new(ab.clone()),
-            Box::new(Term::Comp(Box::new(a_.clone()), Box::new(b_.clone()))),
-        )),
+    // Well-typed pipelines: a;b : 1⊸3, c;d : 3⊸5, (a;b);(c;d) : 1⊸5.
+    let ab = Term::Comp(Box::new(a_.clone()), Box::new(b_.clone()));
+    let cd = Term::Comp(Box::new(c_.clone()), Box::new(d_.clone()));
+    let abcd = Term::Comp(Box::new(ab.clone()), Box::new(cd.clone()));
+    let typed_ok = infer(&vec![], &ab).is_some()
+        && infer(&vec![], &cd).is_some()
+        && infer(&vec![], &abcd).is_some();
+    check(
+        "no-allocation (a) sequential composition types",
+        typed_ok,
+        "a;b, c;d, and (a;b);(c;d) are well-typed pipelines".to_string(),
     );
-    let norm_cases = vec![ab.clone(), big.clone()];
+
+    // Interchange: (a⊗f);(b⊗g) with matching types.
+    // a:1⊸2, b:2⊸3 so a;b : 1⊸3.
+    // f:1⊸1, g:7⊸7 cannot tensor with b unless we pick matching wires.
+    // Use f:1⊸1 on a parallel identity of a different base: take
+    // p: Base(8)⊸Base(8), q: Base(8)⊸Base(8).
+    let p_ = Term::Atom("p".into(), Ty::Base(8), Ty::Base(8));
+    let q_ = Term::Atom("q".into(), Ty::Base(8), Ty::Base(8));
+    let interchange = Term::Comp(
+        Box::new(Term::Tensor(Box::new(a_.clone()), Box::new(p_.clone()))),
+        Box::new(Term::Tensor(Box::new(b_.clone()), Box::new(q_.clone()))),
+    );
+    let interchange_ok = infer(&vec![], &interchange).is_some();
+    check(
+        "no-allocation (a) interchange types",
+        interchange_ok,
+        "(a⊗p);(b⊗q) is well-typed; reduction applies TE".to_string(),
+    );
+
     let mut no_alloc_ok = true;
     let mut steps_total = 0usize;
     let mut cases = 0usize;
+    let left_assoc = Term::Comp(
+        Box::new(Term::Comp(Box::new(ab.clone()), Box::new(c_.clone()))),
+        Box::new(d_.clone()),
+    );
+    let norm_cases = vec![ab.clone(), abcd.clone(), left_assoc, interchange];
+    // f;g is ill-typed (1⊸1 then 7⊸7); skip if infer fails, still reduce as a tree.
     for t in &norm_cases {
         cases += 1;
         let mut cur = t.clone();
         let mut guard = 0usize;
         while let Some(nx) = step(&cur) {
-            // no duplication: the leaf multiset is preserved exactly
             if leaf_multiset(&nx) != leaf_multiset(&cur) {
                 no_alloc_ok = false;
             }
-            // no fresh structure: node count never increases
             if node_count(&nx) > node_count(&cur) {
                 no_alloc_ok = false;
             }
@@ -307,7 +325,7 @@ fn main() {
     check(
         "no-allocation (c) no allocation during evaluation",
         no_alloc_ok,
-        format!("{cases} closed terms normalized in {steps_total} steps: leaf multiset preserved, node count never increases (no fresh nodes)"),
+        format!("{cases} terms normalized in {steps_total} steps: leaf multiset preserved, node count never increases (no fresh nodes)"),
     );
 
     if failures == 0 {
