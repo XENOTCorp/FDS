@@ -1,5 +1,6 @@
-//! Completion theorem: the ring-buffer equational theory admits a complete rewrite system
+//! Completion theorem: the stack/pointer fragment admits a complete rewrite
 //! system, verified by Knuth-Bendix completion (std-only Rust, no crates).
+//! These equations are LIFO/pointer identities; they fail for FIFO content.
 //!
 //! Single sort; two unary operations `push` and `pop`. Terms are trees over
 //! {push, pop} and variables (x, y, ...). The equations, oriented left->right:
@@ -379,7 +380,7 @@ fn main() {
         Rule::new(Term::pop(Term::push(x.clone())), x.clone()),
     ];
 
-    println!("Completion theorem: the ring-buffer equational theory admits a complete rewrite");
+    println!("Completion theorem: the stack/pointer fragment admits a complete rewrite");
     println!("system, verified by Knuth-Bendix completion (std-only Rust).");
     println!();
     println!("Signature: single sort; unary operations {{push, pop}}; variables x, y, ...");
@@ -582,7 +583,7 @@ fn main() {
     println!("  i.e. the system is complete. Normal forms are the alternating-free stacks");
     println!("  x, push(x), push(push(x)), ..., pop(x), pop(pop(x)), ..., and two terms are");
     println!("  equal in the theory iff their normal forms coincide, so the system decides");
-    println!("  the ring-buffer equational theory.");
+    println!("  the stack/pointer fragment. The equations fail for FIFO content.");
     if capped {
         println!("  Note: completion stopped at the 100-rule cap; checks ran on the capped set.");
     }

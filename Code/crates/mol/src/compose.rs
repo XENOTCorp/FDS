@@ -1,20 +1,34 @@
-//! Composition combinators: `then` (sequential `∘`) and `par` (tensor `⊗`).
+//! Composition combinators: `then` (Mol sequential), `kleisli_then`
+//! (EffMol bind), and `par` (tensor `⊗`).
 //!
-//! Sequential composition threads `M`'s output into `N`'s input over a
-//! product state; tensor runs two molecules in parallel over a product
-//! state and pairs their outputs (sequential associativity, tensor
-//! symmetry). Both are zero-allocation by construction.
+//! `then(m, n)` is the pipeline `m; n`, i.e. the Mol composite `n ∘ m`.
+//! Its representative state is `(M::State, N::State) = S × T`. The
+//! thesis writes the representative as `T × S`; the swap is a
+//! state-space bijection, so the two machines are equal in Mol.
+//! `kleisli_then` threads one context (`E ∘_K E ⊆ E`) and is not Mol
+//! composition (`E ∘ E ⊆ H`). Tensor runs two molecules in parallel
+//! over a product state. All three are zero-allocation by construction.
 
 use crate::molecule::Molecule;
 
-/// Sequential composition `g ∘ f`: run `m` on the input, feed its output
-/// to `n`. State is `(M::State, N::State)`.
+/// Sequential Mol composition in pipeline order: `then(m, n)` is `m; n`
+/// (categorical `n ∘ m`). Representative state `(M::State, N::State)`.
 pub fn then<M, N>(m: M, n: N) -> Compose<M, N>
 where
     M: Molecule,
     N: Molecule<Input = M::Output>,
 {
     Compose { m, n }
+}
+
+/// Kleisli composition of two EffMol machines: one state is threaded
+/// through both steps. Distinct from [`then`], which products the states.
+pub fn kleisli_then<M, N>(m: M, n: N) -> KleisliCompose<M, N>
+where
+    M: Molecule,
+    N: Molecule<State = M::State, Input = M::Output>,
+{
+    KleisliCompose { m, n }
 }
 
 /// Tensor `f ⊗ g`: run `m` and `n` in parallel on paired inputs, producing
@@ -27,8 +41,14 @@ where
     Par { m, n }
 }
 
-/// The sequential composite `M; N` (pipeline order: `m` first, then `n`).
+/// The sequential Mol composite `M; N` (pipeline order: `m` first, then `n`).
 pub struct Compose<M, N> {
+    m: M,
+    n: N,
+}
+
+/// Kleisli composite of two machines that share one state space.
+pub struct KleisliCompose<M, N> {
     m: M,
     n: N,
 }
@@ -49,6 +69,22 @@ where
     }
 }
 
+impl<M, N> Molecule for KleisliCompose<M, N>
+where
+    M: Molecule,
+    N: Molecule<State = M::State, Input = M::Output>,
+{
+    type State = M::State;
+    type Input = M::Input;
+    type Output = N::Output;
+
+    #[inline(always)]
+    fn step(&self, state: &mut M::State, input: M::Input) -> N::Output {
+        let b = self.m.step(state, input);
+        self.n.step(state, b)
+    }
+}
+
 /// The tensor `M ⊗ N`.
 pub struct Par<M, N> {
     m: M,
@@ -65,7 +101,11 @@ where
     type Output = (M::Output, N::Output);
 
     #[inline(always)]
-    fn step(&self, state: &mut (M::State, N::State), input: (M::Input, N::Input)) -> (M::Output, N::Output) {
+    fn step(
+        &self,
+        state: &mut (M::State, N::State),
+        input: (M::Input, N::Input),
+    ) -> (M::Output, N::Output) {
         // Sequential evaluation in pipeline order: m's state transition
         // happens-before n's, matching the tensor's product-state
         // semantics (the compiler may interleave at the instruction level).
@@ -98,7 +138,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::molecule::{Molecule, tests::{Add, Mul, Not, Sub}};
+    use crate::molecule::{
+        tests::{Add, Mul, Not, Sub},
+        Molecule,
+    };
 
     #[test]
     fn sequential_composition_threads_output() {
@@ -142,5 +185,36 @@ mod tests {
         let arr = [Add(1), Add(2), Add(3)];
         let mut s = [(), (), ()];
         assert_eq!(arr.step(&mut s, [1, 1, 1]), [2, 3, 4]);
+    }
+
+    /// Shared-context increment: each step adds 1 to the one context.
+    struct IncCtx;
+
+    impl Molecule for IncCtx {
+        type State = u32;
+        type Input = u32;
+        type Output = u32;
+        fn step(&self, s: &mut u32, x: u32) -> u32 {
+            *s = s.wrapping_add(1);
+            x.wrapping_add(*s)
+        }
+    }
+
+    #[test]
+    fn kleisli_then_threads_one_context() {
+        let k = kleisli_then(IncCtx, IncCtx);
+        let mut c = 0u32;
+        // First step: c=1, out=1; second: c=2, out=3.
+        assert_eq!(k.step(&mut c, 0), 3);
+        assert_eq!(c, 2);
+    }
+
+    #[test]
+    fn mol_then_of_effectful_products_states() {
+        let m = then(IncCtx, IncCtx);
+        let mut s = (0u32, 0u32);
+        // First machine: s.0=1, out=1; second: s.1=1, out=2.
+        assert_eq!(m.step(&mut s, 0), 2);
+        assert_eq!(s, (1, 1));
     }
 }

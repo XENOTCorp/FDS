@@ -4,9 +4,10 @@
 //!
 //! Default mode is a UDP + TCP echo server on the addresses from
 //! [`fds::config::EngineConfig`], run by **one worker thread per
-//! logical CPU** (config `core.threads`; default 0 = auto, which is 2x
-//! the physical core count on hyperthreaded machines). Each worker owns
-//! its readiness/datapath (epoll busy-poll by default, the io_uring
+//! logical CPU** (config `core.threads`; default 0 = auto). When the
+//! worker count fits on the physical cores, each worker pins to a
+//! distinct physical core (SMT siblings share L1/L2). Each worker owns its
+//! readiness/datapath (epoll event-driven by default, the io_uring
 //! completion-driven datapath as the `io-uring` strategy), its own
 //! SO_REUSEPORT socket pair, connection table, receive batch and
 //! per-core counters; the kernel steers traffic across workers, so the
@@ -16,14 +17,14 @@
 //! Limitation (documented): on an echo-write `WouldBlock` the engine
 //! counts a drop and keeps draining the read side to EAGAIN; a
 //! per-connection send ring (the spec's design) is the production
-//! replacement.
+//! replacement. The data path never blocks (IO-01).
 
 use fds::config::Config;
 use fds::conn::{ConnTable, Connection, ConnectionId, CONN_CAP};
 use fds::metrics::Metrics;
 use fds::reactor::{Interest, Reactor};
 use crate::signals;
-use fds::util::{now_ticks, pin_to_core};
+use fds::util::{now_ticks, physical_cpus, pin_to_core};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -69,8 +70,10 @@ fn run_until(
     let threads = worker_count(&cfg.core);
     let metrics = Arc::new(Metrics::new(threads));
     eprintln!(
-        "fds: starting {threads} workers (core.threads={}, pin_cores={})",
-        cfg.core.threads, cfg.core.pin_cores
+        "fds: starting {threads} workers (core.threads={}, pin_cores={}, udp_rx_slots={})",
+        cfg.core.threads,
+        cfg.core.pin_cores,
+        udp_rx_slots()
     );
 
     // Each worker owns its poller, sockets, conn table and counters;
@@ -114,8 +117,7 @@ fn run_until(
     Ok(())
 }
 
-/// Worker thread count: the configured value, or one per logical CPU
-/// (2x the physical core count on hyperthreaded machines).
+/// Worker thread count: the configured value, or one per logical CPU.
 fn worker_count(core: &fds::config::CoreConfig) -> usize {
     if core.threads > 0 {
         core.threads
@@ -123,6 +125,33 @@ fn worker_count(core: &fds::config::CoreConfig) -> usize {
         std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1)
+    }
+}
+
+/// UDP recvmmsg/sendmmsg slot count (D-1, D-4). The 60 KiB echo
+/// payload is larger than L1 and a 64-slot batch (3.75 MiB) does not
+/// fit this CPU's 3 MiB L3; syscall amortization saturates at small n
+/// because per-datagram copy dominates `t_s`. Override with
+/// `FDS_UDP_RX_SLOTS` (clamped to 1..=64). Default is chosen by the
+/// lattice measurement on this machine.
+fn udp_rx_slots() -> usize {
+    const DEFAULT: usize = 4;
+    std::env::var("FDS_UDP_RX_SLOTS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT)
+        .clamp(1, 64)
+}
+
+/// Logical CPU for worker `id`: the first SMT thread of a distinct
+/// physical core when the worker count fits on the physical cores,
+/// otherwise logical index `id` (explicit oversubscription).
+fn worker_cpu(id: usize, nworkers: usize) -> usize {
+    let phys = physical_cpus();
+    if nworkers <= phys.len() {
+        phys[id]
+    } else {
+        id
     }
 }
 
@@ -135,8 +164,10 @@ fn worker_main(
     stop: &(dyn Fn() -> bool + Send + Sync),
 ) -> std::io::Result<()> {
     if cfg.core.pin_cores {
-        match pin_to_core(id) {
-            Ok(()) => eprintln!("fds: worker {id} pinned to cpu {id}"),
+        let nworkers = worker_count(&cfg.core);
+        let cpu = worker_cpu(id, nworkers);
+        match pin_to_core(cpu) {
+            Ok(()) => eprintln!("fds: worker {id} pinned to cpu {cpu}"),
             Err(e) => eprintln!("fds: worker {id} pinning unavailable ({e}), unpinned"),
         }
     }
@@ -241,13 +272,17 @@ fn worker_epoll_loop(
     // Preallocated receive batch (hot path allocates nothing). Buffers
     // are sized to the IPv4 UDP wire maximum (65535), so ANY datagram,
     // including loopback GSO/GRO jumbo, is received whole, never
-    // truncated: 64 x 64 KiB = 4 MiB, allocated once per worker. The
+    // truncated. Slot count is D-1/D-4 (`udp_rx_slots`): default 4 so
+    // 4 × 60 KiB stays in this CPU's 256 KiB L2. A 64-slot batch is
+    // 3.75 MiB and misses the 3 MiB L3. The
     // MSG_ZEROCOPY path keeps its own doubled set (the kernel references
     // send pages until the error-queue notification, so a set cannot be
     // reused until then); rx_bufs stays as the auto-disable fallback.
-    let mut rx_bufs: Vec<mol::Buffer<{ fds::udp::MAX_DATAGRAM }>> = vec![mol::Buffer::new(); 64];
+    let slots = udp_rx_slots();
+    let mut rx_bufs: Vec<mol::Buffer<{ fds::udp::MAX_DATAGRAM }>> =
+        vec![mol::Buffer::new(); slots];
     advise_hugepage(&rx_bufs);
-    let mut rx_out: Vec<fds::udp::RecvResult> = (0..64)
+    let mut rx_out: Vec<fds::udp::RecvResult> = (0..slots)
         .map(|_| fds::udp::RecvResult {
             len: 0,
             src: "0.0.0.0:0".parse().unwrap(),
@@ -535,7 +570,10 @@ fn spawn_xdp_thread(
 }
 
 /// Drain the UDP socket to EAGAIN, echoing every datagram back to its
-/// source via one `sendmmsg` batch per receive batch. No allocation.
+/// source via one `sendmmsg` batch per receive batch. Nonblocking
+/// (IO-01): a short send buffer retries the unsent tail once the
+/// kernel accepted a prefix; remaining EAGAIN is a counted drop, not a
+/// blocking wait. No allocation.
 fn drain_udp(
     udp: &fds::udp::UdpSocket,
     bufs: &mut [mol::Buffer<{ fds::udp::MAX_DATAGRAM }>],
@@ -550,7 +588,13 @@ fn drain_udp(
         }
         // Echo batch: (payload slice, source) pairs referencing the
         // receive buffers; sendmmsg copies before returning.
-        let mut echo: [(&[u8], SocketAddr); 64] = [(&[], "0.0.0.0:0".parse().unwrap()); 64];
+        let mut echo: [(&[u8], SocketAddr); 64] = [(
+            &[],
+            SocketAddr::V4(std::net::SocketAddrV4::new(
+                std::net::Ipv4Addr::UNSPECIFIED,
+                0,
+            )),
+        ); 64];
         let mut m = 0;
         for (idx, r) in out.iter().take(n).enumerate() {
             if r.truncated {
@@ -562,8 +606,16 @@ fn drain_udp(
             echo[m] = (&bufs[idx].as_slice()[..r.len], r.src);
             m += 1;
         }
-        if m > 0 {
-            let _ = udp.send_batch(&echo[..m]);
+        let mut sent = 0;
+        while sent < m {
+            match udp.send_batch(&echo[sent..m]) {
+                Ok(0) => {
+                    metrics.add_drops(core, (m - sent) as u64);
+                    break;
+                }
+                Ok(k) => sent += k,
+                Err(e) => return Err(e),
+            }
         }
     }
     Ok(())
@@ -834,6 +886,22 @@ mod tests {
     use std::io::{Read, Write};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn udp_rx_slots_clamps() {
+        assert!((1..=64).contains(&udp_rx_slots()));
+    }
+
+    #[test]
+    fn worker_cpu_uses_physical_when_it_fits() {
+        let phys = physical_cpus();
+        assert!(!phys.is_empty());
+        for (i, cpu) in phys.iter().copied().enumerate() {
+            assert_eq!(worker_cpu(i, phys.len()), cpu);
+        }
+        // Oversubscription falls back to logical index.
+        assert_eq!(worker_cpu(0, phys.len() + 1), 0);
+    }
 
     /// Multi-worker engine smoke: run `run_until` with 2 workers on
     /// ephemeral-ish loopback ports, verify UDP echo (SO_REUSEPORT

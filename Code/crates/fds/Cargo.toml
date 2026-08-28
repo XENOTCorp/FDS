@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+authors.workspace = true
 description = "FDS transport library: nonblocking edge-triggered TCP, UDP, and SCTP dataplane on the Mol framework (Linux)."
 
 [lib]

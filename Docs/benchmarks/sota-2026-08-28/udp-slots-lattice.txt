@@ -1,0 +1,8 @@
+FDS UDP recvmmsg slot lattice vs same client (4 sockets x 61440B, 5s).
+1:  sent 18.31 Gbps, echoed 18.28 Gbps, echo completion 99.83%
+2:  sent 20.72 Gbps, echoed 20.69 Gbps, echo completion 99.86%
+4:  sent 21.14 Gbps, echoed 21.12 Gbps, echo completion 99.89%
+8:  sent 19.84 Gbps, echoed 19.82 Gbps, echo completion 99.87%
+16: sent 17.93 Gbps, echoed 17.91 Gbps, echo completion 99.88%
+32: sent 17.58 Gbps, echoed 17.55 Gbps, echo completion 99.80%
+64: sent 17.72 Gbps, echoed 17.70 Gbps, echo completion 99.89%

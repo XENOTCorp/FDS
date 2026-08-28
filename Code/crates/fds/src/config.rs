@@ -53,10 +53,11 @@ impl Default for EngineConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CoreConfig {
-    /// Pin each worker thread to its own logical CPU.
+    /// Pin each worker. When the worker count fits on the physical
+    /// cores, pin to the first SMT sibling of a distinct core; otherwise
+    /// pin worker `i` to logical CPU `i`.
     pub pin_cores: bool,
-    /// Worker thread count; 0 = one per logical CPU (on hyperthreaded
-    /// machines that is 2x the physical core count; the default).
+    /// Worker thread count; 0 = one per logical CPU.
     pub threads: usize,
     /// Stack size for worker threads, in bytes.
     pub stack_bytes: usize,

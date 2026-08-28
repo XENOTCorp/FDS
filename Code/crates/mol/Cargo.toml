@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+authors.workspace = true
 description = "Mol: the category of stateful transformations. Atom and molecule framework for zero-allocation dataplanes (FDS)."
 
 [lib]

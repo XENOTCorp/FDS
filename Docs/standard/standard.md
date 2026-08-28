@@ -41,11 +41,11 @@ Terms used in this document have the meanings fixed here, which agree with the t
 
 **State space and step function.** A stateful transformation is a pair `(S, step)` with `step : S × A → B × S` (the category axioms): given state `s ∈ S` and input `a ∈ A`, it produces output `b ∈ B` and next state `s′ ∈ S`. The state space S is the complete, declared memory of the transformation; there is no other state (policy A-02).
 
-**Molecules.** A *molecule* is a stateful transformation `M : A → B`, i.e., a morphism of the category Mol: formally, an equivalence class of pairs `(S, step)` quotiented by the state-space bijection condition (the bijection-quotient theorem). A **pure molecule** lives in PureMol and computes without effects; pure molecules and tensor products of pure molecules are deterministic (the pure-molecules-as-functions theorem, the determinism theorem). An **effectful molecule** acts within a context Ctx (the Kleisli characterization). A **hybrid molecule** mixes pure and effectful steps; every hybrid molecule decomposes uniquely as `M = q ∘ e ∘ p`, where `p` and `q` are pure and `e` is effectful (Kleisli decomposition). Molecules compose sequentially by **∘** and in parallel by **⊗** (the tensor is the tuple product; unit is `()`; the symmetric monoidal structure). Composition is associative (the category axioms), preserves behavioral equivalence (the congruence of behavioral equivalence), and lifts refinement with cost monotonicity (refinement substitution).
+**Molecules.** A *molecule* is a stateful transformation `M : A → B`, i.e., a morphism of the category Mol: formally, an equivalence class of pairs `(S, step)` quotiented by the state-space bijection condition (the bijection-quotient theorem). Classes are read off any representative's state space. A **pure molecule** lives in PureMol (`S ≅ ()`) and computes without effects; pure molecules and tensor products of pure molecules are deterministic (the pure-molecules-as-functions theorem, the determinism theorem). An **effectful molecule** has `S ≅ Ctx` and is a morphism of EffMol(Ctx), the Kleisli category of the state monad on Ctx (the Kleisli characterization); Kleisli composition threads one copy of Ctx. A **hybrid molecule** is the residual class: neither pure nor effectful over Ctx. Product state `Spure × Ctx` is a common representative. Mol composition of two effectful machines has state `Ctx × Ctx` and is hybrid (`E ∘ E ⊆ H`); Kleisli composition is a different operator (`E ∘_K E ⊆ E`). A dummy-wire factorization `q ∘ e ∘ p` of a *representative* exists and does not uniquely identify `S` among behavioral equivalents. Molecules compose sequentially in Mol by **∘** (pipeline `;`) and in parallel by **⊗** (the tensor is the tuple product; unit is `()`; the symmetric monoidal structure). Delayed feedback `Tr` is the reactor loop (delay in place of yanking). Composition is associative (the category axioms), preserves behavioral equivalence (the congruence of behavioral equivalence), and lifts refinement with cost monotonicity (refinement substitution).
 
 **Behavioral equivalence.** Two molecules are *behaviorally equivalent*, written `M ≈ M′`, when they produce indistinguishable input/output behavior: bisimulation, a congruence for ∘ and ⊗ (the congruence of behavioral equivalence). Every molecule has a **normal form** `NF(M)` under the runtime's equational theory: `NF(M) ≈ M`, `NF(M)` is unique up to coherence, and equivalence is decidable by comparing normal forms (unique normal forms, the normal-form lookup table; the full theory is decidable for finite signatures, the decidability of the equational theory). **Refinement**, written `f ⊑ f′`, means `f′` preserves the behavior of `f` at no greater cost (refinement substitution); maximal refinement of a behavior class is unique and its dispatcher is cost-minimal (maximal refinement). **Minimization** replaces M by its minimal-state realization `S_min(M)`, unique up to isomorphism, behavior-preserving, with compositional state bounds (minimal state spaces–minimization and equivalence).
 
-**Rings and buffers.** A *ring* is a bounded, first-in-first-out buffer with `push` and `pop` operations that obey the ring equations `push ∘ pop = id` and `pop ∘ push = id` (on a non-empty ring) in every model (the ring equations); the ring rewrite system is terminating, locally confluent, and complete (the rewrite theorems), so ring traffic can be normalized. A ring of capacity `2^k` indexed by bitmask is correct iff the number of in-flight elements is at most `2^k − 1` (the ring-capacity invariant). A *buffer* is any preallocated, bounded storage region used by a data path. Rings and buffers are allocated and sized before the hot path begins and are never resized on it (policy R-01).
+**Rings, stacks, and buffers.** A *ring* is a bounded first-in-first-out buffer. `push` writes at a write pointer `w` and `pop` reads at a read pointer `r`. FIFO content does not satisfy the stack equations `push; pop = id` on nonempty buffers: `pop` returns the oldest stored element, which equals the element just pushed only when the ring was empty (the stack-theory equations). A ring of capacity `2^k` indexed by bitmask is correct iff the number of in-flight elements satisfies `0 ≤ w − r ≤ 2^k − 1` (the ring-capacity invariant). A protocol that uses sequence-number epochs (Vyukov MPMC) may hold `2^k` items; that protocol is outside the bitmask-only occupancy bound. A *stack* is a last-in-first-out buffer: it is a model of the stack theory, so `push; pop = id` and (on nonempty stacks) `pop; push = id`. The rewrite system of the stack/pointer fragment is terminating, locally confluent, and complete (the rewrite theorems). A *buffer* is any preallocated, bounded storage region used by a data path. Rings, stacks, and buffers are allocated and sized before the hot path begins and are never resized on it (policy R-01).
 
 **Situations.** A *situation* is a triple `(A→B, Φ, c̄)`:
 - `A → B` is the interface: the input type and output type of the work to be done;
@@ -158,7 +158,7 @@ Cells use MUST, SHOULD, MAY, and "n/a" (not applicable). Rows are policy identif
 | A-02 No hidden state | MUST | MUST | MUST | MUST | n/a |
 | A-03 Totality on declared domain | MUST | MUST | MUST | MUST | n/a |
 | A-04 Domain declaration | MUST | SHOULD | SHOULD | SHOULD | n/a |
-| MOL-01 Composition by ∘ and ⊗ | MUST | MUST | n/a | n/a | n/a |
+| MOL-01 Composition by ∘, ⊗, ∘_K, and Tr | MUST | MUST | n/a | n/a | n/a |
 | MOL-02 No dynamic dispatch on the hot path | MUST | n/a | n/a | n/a | n/a |
 | MOL-03 Dense-integer dispatch | MUST | n/a | n/a | n/a | n/a |
 | MOL-04 Minimal state | MUST | SHOULD | n/a | n/a | n/a |
@@ -166,7 +166,7 @@ Cells use MUST, SHOULD, MAY, and "n/a" (not applicable). Rows are policy identif
 | R-01 Preallocation before the hot path | MUST | SHOULD | SHOULD | n/a | n/a |
 | R-02 Power-of-two capacity, bitmask indexing | MUST | SHOULD | n/a | n/a | n/a |
 | R-03 Bounded in-flight invariant | MUST | MUST | n/a | SHOULD | n/a |
-| R-04 Ring laws hold in every model | MUST | MUST | n/a | n/a | n/a |
+| R-04 FIFO order; stack laws on stacks | MUST | MUST | n/a | n/a | n/a |
 | ALLOC-01 Zero allocation in declared hot paths | MUST | n/a | n/a | n/a | n/a |
 | ALLOC-02 Statically sized or preallocated collections | MUST | SHOULD | SHOULD | n/a | n/a |
 | ALLOC-03 Initialized memory | MUST | MUST | MUST | MUST | n/a |
@@ -222,7 +222,7 @@ The categories:
 
 - **[A] Atoms**: atoms are pure or effectful, have no hidden state, and are total on their declared domain.
 - **[MOL] Molecules**: composition via ∘ and ⊗; hot paths avoid dynamic dispatch; dense-integer dispatch over chained conditionals.
-- **[R] Rings & buffers**: preallocation before the hot path; power-of-two capacity with bitmask indexing; bounded in-flight invariant.
+- **[R] Rings, stacks & buffers**: preallocation before the hot path; power-of-two FIFO capacity with bitmask indexing; bounded in-flight occupancy; FIFO order on rings; LIFO equations on stacks only.
 - **[ALLOC] Allocation**: zero allocation in declared hot paths; statically sized or startup-preallocated collections; initialized memory.
 - **[CACHE] Cache & layout**: cache-line alignment; hot/cold separation; false-sharing avoidance; layout justified by access pattern.
 - **[SIMD] SIMD**: vector ops never out of bounds; alignment satisfied; feature-gated with fallback.
@@ -240,7 +240,7 @@ The categories:
 
 **Statement.** Every atom is declared either pure or effectful. A pure atom is a total function with no observable effect. An effectful atom acts only through the declared effect context Ctx of its situation, and its effects are limited to the capabilities that context contains. No atom is both; no atom performs an undeclared effect.
 
-**Rationale.** The thesis splits Mol into PureMol (total functions, the pure-molecules-as-functions theorem) and EffMol(Ctx) (the Kleisli category of the state monad, the Kleisli characterization), and proves that every hybrid molecule factors uniquely as `q ∘ e ∘ p` with p and q pure and e effectful (Kleisli decomposition). The classification is what makes that decomposition possible, and with it the zero-allocation data path (linearity and zero allocation) and the determinism of pure fragments (the determinism theorem). An atom that is both pure and effectful has no home in the decomposition and no decidable behavior.
+**Rationale.** The thesis splits morphisms of Mol into PureMol (total functions, the pure-molecules-as-functions theorem), EffMol(Ctx) (the Kleisli category of the state monad, the Kleisli characterization), and HybridMol as the residual class (neither `S ≅ ()` nor `S ≅ Ctx`). Atoms are the irreducible cases: pure or effectful, never both. The classification is what makes the zero-allocation data path (linearity and zero allocation) and the determinism of pure fragments (the determinism theorem) checkable. An atom that is both pure and effectful has no home in the classification and no decidable behavior.
 
 **Wrong.** An atom that computes a checksum and, on the side, writes a line to a log file; or an atom that reads a global clock without declaring a context that contains a clock.
 
@@ -302,15 +302,15 @@ The categories:
 
 ### [MOL] Molecules
 
-#### MOL-01: Composition by ∘ and ⊗
+#### MOL-01: Composition by ∘, ⊗, ∘_K, and Tr
 
-**Statement.** Molecules are assembled only by sequential composition (∘) and tensor product (⊗). Orchestration through ad-hoc callbacks, entangled mutable shared objects, or inheritance-style structure is not molecule assembly. The composition tree of every molecule is explicit and recorded in the situation record.
+**Statement.** Molecules are assembled by sequential Mol composition (∘, pipeline `;`), tensor product (⊗), Kleisli composition of EffMol (`∘_K`, one context threaded), and delayed feedback (`Tr`, the reactor loop). Orchestration through ad-hoc callbacks, entangled mutable shared objects, or inheritance-style structure is not molecule assembly. Mol composition of two effectful machines products the states and is hybrid; Kleisli composition threads one Ctx and stays effectful; the two operators are not identified. The composition tree of every molecule is explicit and recorded in the situation record.
 
-**Rationale.** Composition in Mol is associative (the category axioms), respects behavioral equivalence (the congruence of behavioral equivalence), and lifts refinement with cost monotonicity (refinement substitution). The tensor product makes independent parts explicit: the basis of per-core partitioning (CONC-01) and of parallelism claims (complexity closure). Ad-hoc wiring has none of these properties: it is invisible to the type graph, so its behavior and its cost are both outside the decidable theory (the decidability of the equational theory, situation solvability).
+**Rationale.** Composition in Mol is associative (the category axioms), respects behavioral equivalence (the congruence of behavioral equivalence), and lifts refinement with cost monotonicity (refinement substitution). The tensor product makes independent parts explicit: the basis of per-core partitioning (CONC-01) and of parallelism claims (complexity closure). Delayed feedback is a delayed trace: vanishing, superposing, and sliding of pure maps hold; yanking fails (`Tr(σ) = Δ`). Ad-hoc wiring has none of these properties: it is invisible to the type graph, so its behavior and its cost are both outside the decidable theory (the decidability of the equational theory, situation solvability).
 
-**Wrong.** A "pipeline" built by passing a mutable object through a chain of callbacks, with no recorded composition.
+**Wrong.** A "pipeline" built by passing a mutable object through a chain of callbacks, with no recorded composition. Treating Mol `then` of two context machines as Kleisli bind.
 
-**Correct.** An explicit composition `g ∘ f`, and `f ⊗ h` for independent branches, with the composition tree recorded.
+**Correct.** An explicit composition `g ∘ f` (or pipeline `f; g`), `f ⊗ h` for independent branches, `∘_K` when a single Ctx must be threaded, and `Tr` for a loop-carried register, with the composition tree recorded.
 
 **Scope.** All situations whose solution is a molecule.
 
@@ -420,7 +420,7 @@ The categories:
 
 **Statement.** At every instant, the number of in-flight elements in a ring is at most `capacity − 1` (for power-of-two rings; the ring's declared maximum otherwise). Exceeding the bound produces a defined outcome (backpressure on the control path, a push failure, or a documented error) never silent overwrite or corruption.
 
-**Rationale.** This is the correctness half of the ring-capacity invariant (bitmask indexing is correct iff in-flight ≤ `2^k − 1`), and the ring equations `push ∘ pop = id` and `pop ∘ push = id` (the ring equations) hold only when pop never observes an empty ring and push never overwrites a live slot. Silent overwrite makes the ring a lossy channel whose behavior is not a function of its input: a violation of totality (A-03) at the molecule level.
+**Rationale.** This is the correctness half of the ring-capacity invariant (bitmask indexing is correct iff in-flight ≤ `2^k − 1`). The occupancy bound is what makes masked empty and full distinguishable. Silent overwrite makes the ring a lossy channel whose behavior is not a function of its input: a violation of totality (A-03) at the molecule level. Sequence-number MPMC rings may hold `capacity` items; they still refuse overwrite and still report a defined full outcome.
 
 **Wrong.** A ring that overwrites the oldest slot when full, discarding an element the consumer never saw.
 
@@ -430,23 +430,23 @@ The categories:
 
 **Level.** MUST on the data path and the control path; SHOULD at shutdown while draining (mask row R-03).
 
-**Enforcement.** M3: property tests assert the invariant (in-flight ≤ capacity − 1) and the ring laws over randomized sequences; M1: debug assertions in the ring implementation; M2: CI runs the property harness.
+**Enforcement.** M3: property tests assert the occupancy invariant (bitmask SPSC: in-flight ≤ capacity − 1; sequence-number MPMC: in-flight ≤ capacity) and FIFO order over generated sequences; M1: debug assertions in the ring implementation; M2: CI runs the property harness.
 
-#### R-04: Ring Laws Hold in Every Model
+#### R-04: FIFO Order on Rings; Stack Laws on Stacks
 
-**Statement.** Every ring implementation satisfies the ring equations behaviorally: push after pop is invisible on a non-empty ring, and pop after push returns the pushed element. Rewriting `push ∘ pop` away is behavior-preserving.
+**Statement.** Every FIFO ring implementation preserves FIFO order: the sequence of successful pops is the sequence of successful pushes. On a nonempty ring, `push; pop` returns the oldest stored element, not the element just pushed; the stack cancellation rule `push; pop → id` does not apply to FIFO content. Every stack implementation satisfies the stack-theory equations behaviorally: `push; pop = id`, and `pop; push = id` on a nonempty stack. Rewriting an adjacent `push; pop` pair away is behavior-preserving for stacks and is not licensed for FIFO rings.
 
-**Rationale.** The ring theory is complete for the free ring model (the ring equations), its rewrite system is terminating and confluent (the rewrite theorems), and rewriting by cost-nonincreasing rules preserves behavior and does not raise cost (normalization soundness). These laws are what allow the runtime and the builder to normalize ring traffic.
+**Rationale.** The stack theory is complete for the free pointer model (the stack-theory equations); its rewrite system is terminating and confluent (the rewrite theorems). FIFO rings obey the occupancy invariant and FIFO order, not those LIFO equations. Applying stack cancellation to a FIFO ring changes behavior on every nonempty buffer.
 
-**Wrong.** A ring whose pop on a full ring returns the wrong element because indexing and capacity disagree.
+**Wrong.** A property test that asserts `push; pop ≈ id` on a nonempty FIFO ring. A ring whose pop on a full ring returns the wrong element because indexing and capacity disagree.
 
-**Correct.** The ring is tested against the laws (TEST-01) and normalized ring traffic is behavior-preserving.
+**Correct.** FIFO rings are tested for occupancy and FIFO order (TEST-01). Stacks are tested for LIFO cancellation. Normalized stack traffic is behavior-preserving; FIFO traffic is not rewritten by those rules.
 
-**Scope.** Situations whose solution contains a ring.
+**Scope.** Situations whose solution contains a ring or a stack.
 
 **Level.** MUST (mask row R-04).
 
-**Enforcement.** M3: property tests for `push ∘ pop ≈ id` and `pop ∘ push ≈ id` on non-empty rings; M2: CI runs them.
+**Enforcement.** M3: property tests for FIFO order and occupancy on rings, and for `push; pop = id` and guarded `pop; push = id` on stacks; M2: CI runs them.
 
 ### [ALLOC] Allocation
 
@@ -948,13 +948,13 @@ The categories:
 
 #### TEST-01: Property-Based Law Tests
 
-**Statement.** Every molecule ships property-based tests of its equational laws: ring laws (`push ∘ pop ≈ id`; `pop ∘ push ≈ id` on non-empty rings), batch laws (flattening, batch flattening), parser laws (left-factoring normal forms, parser left factoring), transport interchange (the transport theory), and any law the molecule's theory declares. Tests are generated over the declared domain and its boundaries.
+**Statement.** Every molecule ships property-based tests of its equational laws: FIFO occupancy and FIFO order on rings (R-03, R-04); stack-theory equations on stacks (`push; pop = id`; guarded `pop; push = id`); a negative check that FIFO rings fail `push; pop = id` on nonempty buffers; batch laws (flattening, batch flattening); parser laws (left-factoring normal forms, parser left factoring); transport interchange (the transport theory); Mol versus Kleisli composition of effectful machines; delayed feedback (`Tr(σ) = Δ`); and any law the molecule's theory declares. Tests are generated over the declared domain and its boundaries.
 
-**Rationale.** The laws are the specification: they are complete for their theories (the ring equations, parser left factoring, batch-flattening rewrites), and normalization is sound (normalization soundness). Property tests that check the laws on randomized inputs check exactly the identities the runtime and the builder rely on (the normal-form lookup table).
+**Rationale.** The laws are the specification: they are complete for their theories (the stack-theory equations, the ring-capacity invariant, parser left factoring, batch-flattening rewrites), and normalization is sound on the theories it applies to (normalization soundness). Property tests that check the laws on generated inputs check exactly the identities the runtime and the builder rely on (the normal-form lookup table).
 
-**Wrong.** A ring tested only with hand-written sequential cases.
+**Wrong.** A ring tested only with hand-written sequential cases, or a harness that treats FIFO rings as LIFO stacks.
 
-**Correct.** A property harness generates arbitrary push/pop sequences and asserts the ring laws and the in-flight invariant (R-03).
+**Correct.** A property harness generates arbitrary push/pop sequences and asserts FIFO order and the in-flight invariant on rings (R-03), and LIFO cancellation on stacks (R-04).
 
 **Scope.** Situations whose molecules declare laws.
 
@@ -1246,7 +1246,7 @@ The following recipes are worked applications of the general policies to the can
 - *(Conn, Request → Response)*: data path: per-connection ring (D-1), HTTP parser (A-04 domain partition: well-formed / truncated / trailing-garbage), request molecule, response serializer, write batching (D-4). Keep-alive pipelines requests into the batch (batch flattening batch flattening).
 - *(Idle → Close)*: control path: teardown, draining (R-03 at shutdown).
 
-**Molecules.** The per-request molecule factors as `q ∘ e ∘ p` (Kleisli decomposition): `p` parses and validates the request (pure; fuzzed, TEST-02; length caps, SEC-01); `e` performs I/O through Ctx (nonblocking, IO-01; drains, IO-02; batches, IO-03); `q` serializes the response (pure; the inverse of `p` on the well-formed domain, the zero-copy roundtrip: a serialization roundtrip in a proxy situation is eliminated, D-6). State: per-connection ring and parse state, minimal (MOL-04). Dispatch on method codes is dense-integer (MOL-03); the parser's choice structure follows left-factored normal forms (parser left factoring).
+**Molecules.** A common engineering shape is pipeline `p; e; q`: `p` parses and validates the request (pure; fuzzed, TEST-02; length caps, SEC-01); `e` performs I/O through Ctx (nonblocking, IO-01; drains, IO-02; batches, IO-03); `q` serializes the response (pure; the inverse of `p` on the well-formed domain, the zero-copy roundtrip: a serialization roundtrip in a proxy situation is eliminated, D-6). This is a dummy-wire factorization of a representative, not a unique decomposition of the hybrid class. Per-connection parse state plus Ctx is hybrid (residual class). If `e` is two effectful stages composed in Mol, the composite is hybrid (`E ∘ E ⊆ H`); if they share one Ctx, compose them with `∘_K`. State: per-connection ring and parse state, minimal (MOL-04). Dispatch on method codes is dense-integer (MOL-03); the parser's choice structure follows left-factored normal forms (parser left factoring).
 
 **Binding notes.** [R] all at MUST; [ALLOC]-01 at MUST (zero allocation per request); [SEC]-01/02/03/04 at MUST; [IO]-01/02/03/04 at MUST; [TEST]-01 (parser and batch laws), -02 (fuzz the parser), -03 (differential against a reference HTTP stack), -04 (zero-alloc regression) at MUST offline; D-3 → TCP (stream reliability), D-4 → batch size, D-6 → copy unless the pipeline is a pure proxy, D-7 → static dispatch on method codes.
 
@@ -1275,7 +1275,7 @@ The following recipes are worked applications of the general policies to the can
 1. Declare the situation triple `(A→B, Φ, c̄)`: the wire format's messages are the interface; Φ states the protocol's behavioral contract (request-response matching, error behavior, ordering); `c̄` states the latency, memory, and cache budgets (SEC-04 caps included).
 2. Classify the kind(s), steady-state message processing is D; setup and handshake are C or U.
 3. Apply the D-matrices: D-3 (protocol choice), D-1 (rings), D-4 (batch), D-6 (zero-copy vs copy, given the wire format's inverse well-formedness), D-7 (dispatch on message kinds), D-8 (SIMD for fixed-width fields, e.g., header arrays), D-9 (concurrency), D-10/D-11 as the state shape demands, D-12 if plugins are involved.
-4. Build the solution molecule from atoms in the `q ∘ e ∘ p` shape, recording the composition tree and the state space.
+4. Build the solution molecule from atoms, recording the composition tree (Mol `∘` / `;`, `⊗`, `∘_K`, `Tr`) and the state space. A parse-effect-serialize pipeline is a common representative, not a unique hybrid factorization.
 5. Ship the law tests (TEST-01), fuzz the parser (TEST-02), compare against the reference or the specification (TEST-03), and declare the cost regression (TEST-04).
 
 The recipe is the general method; the other recipes are its worked instances.
@@ -1316,8 +1316,8 @@ Terms marked * are defined here for this standard's purposes; terms marked † a
 - **Feasible set**: the set of molecules satisfying `M ⊢ Φ` and `cost(M) ≤ c̄`; finite and decidable for bounded types and additive costs (situation solvability).
 - **Feature gate**: the conditional enabling of a vector (or other) path on a detected hardware feature, paired with a behaviorally equivalent fallback. See SIMD-03.
 - **Hot path**: the declared steady-state execution of a data-path situation; the scope predicate of the performance policies. See Section 2.
-- **Hybrid molecule**: a molecule mixing pure and effectful steps; uniquely `q ∘ e ∘ p` (Kleisli decomposition).
-- **In-flight**: elements placed in a ring but not yet removed; bounded by `capacity − 1` (the ring-capacity invariant, R-03).
+- **Hybrid molecule**: residual class of Mol morphisms that are neither pure (`S ≅ ()`) nor effectful over Ctx (`S ≅ Ctx`). Product state is a common representative; `E ∘ E ⊆ H` under Mol composition. Dummy-wire `q ∘ e ∘ p` of a representative does not uniquely identify `S`.
+- **In-flight**: elements placed in a ring but not yet removed; bounded by `capacity − 1` under bitmask indexing (the ring-capacity invariant, R-03). Sequence-number MPMC may hold `capacity` items.
 - **Mask (Situation Application Matrix)**: the per-situation default assignment of effective policy levels (MUST/SHOULD/MAY/n/a) by situation kind; overridable only with written justification (Section 4.4).
 - **Molecule**: a stateful transformation `M : A → B`; an equivalence class of `(S, step)` pairs (the category axioms–the bijection-quotient theorem). See Section 2.
 - **Normal form NF(M)**: the unique (up to coherence) normal form of M under the runtime's equational theory; `NF(M) ≈ M`, and equivalence is decided by comparing normal forms (unique normal forms–the normal-form lookup table).
@@ -1327,7 +1327,8 @@ Terms marked * are defined here for this standard's purposes; terms marked † a
 - **Property test**: a test that asserts a law or property over generated inputs from a declared domain; the mechanism M3.
 - **Pure atom / pure molecule**: a total function with no observable effects (the pure-molecules-as-functions theorem); deterministic (the determinism theorem).
 - **Refinement (⊑)**: `f ⊑ f′`: f′ preserves the behavior of f at no greater cost (refinement substitution); maximal refinement is unique and its dispatcher cost-minimal (maximal refinement).
-- **Ring**: a bounded FIFO with `push`/`pop` obeying the ring equations (the ring equations); power-of-two capacity with bitmask indexing when `2^k` (the ring-capacity invariant). See [R].
+- **Ring**: a bounded FIFO; power-of-two capacity with bitmask indexing when `2^k`; occupancy `≤ 2^k − 1` for bitmask empty/full (the ring-capacity invariant). FIFO content fails `push; pop = id` on nonempty buffers. See [R].
+- **Stack**: a bounded LIFO; model of the stack theory (`push; pop = id`; guarded `pop; push = id`). See [R].
 - **Scope (policy)**: a decidable applicability predicate over situations; false scope ⇒ the policy binds nothing. See Section 4.1.
 - **Situation**: the triple `(A→B, Φ, c̄)`; the unit of conformance for this standard. See Section 7.
 - **Situation kind**: one of data-path (D), control-path (C), startup (U), shutdown (S), offline (O). See Section 4.3.

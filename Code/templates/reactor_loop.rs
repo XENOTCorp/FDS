@@ -1,5 +1,6 @@
 //! Template: a REACTOR LOOP: drain the ingress ring through a molecule
-//! into the egress ring (thesis ch. 10: the reactor loop as a trace).
+//! into the egress ring (thesis ch. 10: delayed feedback, not a JSV
+//! trace; yanking fails, `Tr(σ) = Δ`).
 //!
 //! Copy this file and adapt. The loop is a fixed, branch-predictable
 //! drain: pull one item, step the molecule, push the output. In a

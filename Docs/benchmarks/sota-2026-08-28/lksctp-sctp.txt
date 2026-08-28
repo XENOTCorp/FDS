@@ -1,0 +1,1 @@
+sctp one-way: 4161306624 bytes in 3.00 s = 11.10 Gbps, 42330 msgs/s (32768 B/msg)

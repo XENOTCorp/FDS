@@ -1,18 +1,22 @@
 //! Molecules: stateful transformations, the morphisms of Mol.
 //!
-//! A molecule is a mealy machine: `step` maps `S × A → B × S`, realized
+//! A molecule is a Mealy machine: `step` maps `S × A → B × S`, realized
 //! as in-place mutation of the state (`&mut State`) plus a returned output.
-//! Composition (`then`) threads outputs through states; tensor (`par`)
-//! runs two molecules side by side on product states. All molecules are
-//! `Sized` and their state is `'static`; hot-path molecules should keep
-//! `State` and `Input`/`Output` small and `Copy` (linearity:
-//! exactly-once consumption, no hidden allocation).
+//! Under currying, `step` is a Kleisli morphism of the state monad on `S`;
+//! the response on input words is that morphism's iterate. Mol composition
+//! (`then`) products the states; Kleisli composition of two EffMol
+//! machines (`kleisli_then`) threads one context. Tensor (`par`) runs two
+//! molecules side by side on product states. All molecules are `Sized`
+//! and their state is `'static`; hot-path molecules should keep `State`
+//! and `Input`/`Output` small and `Copy` (linearity: exactly-once
+//! consumption, no hidden allocation).
 
 /// A stateful transformation `A → B` with state space `S`.
 ///
-/// `step` is the mealy transition: it reads `input`, mutates `state` in
+/// `step` is the Mealy transition: it reads `input`, mutates `state` in
 /// place (the new state), and returns the output. `S: 'static` so states
-/// can live in preallocated per-core structures.
+/// can live in preallocated per-core structures. Equality of morphisms
+/// in Mol is state-space bijection of representatives, not bisimulation.
 pub trait Molecule: Sized {
     type State: 'static;
     type Input;
@@ -30,13 +34,25 @@ impl<T: Molecule<State = ()>> PureMolecule for T {}
 
 /// EffMol(Ctx): molecules whose state space is exactly a runtime context
 /// `Ctx`.
+///
 /// `Ctx` is generic: each application supplies its preallocated context.
+/// Composition in this subcategory is [`crate::kleisli_then`] (one
+/// context threaded). Mol composition [`crate::then`] of two such
+/// machines has state `(Ctx, Ctx)` and is hybrid.
 pub trait EffectfulMolecule<Ctx>: Molecule<State = Ctx> {}
 
 impl<Ctx, T: Molecule<State = Ctx>> EffectfulMolecule<Ctx> for T {}
 
-/// HybridMol: molecules whose state is a product of a protocol-logic state
-/// and a runtime context, `S = Spure × Ctx`.
+/// Product-state representative of a hybrid molecule: `State = (Spure, Ctx)`.
+///
+/// HybridMol is the residual class: neither `S ≅ ()` (pure) nor
+/// `S ≅ Ctx` (effectful). This marker names the common product-state
+/// form, including `then` of two effectful machines (`E ∘ E ⊆ H`).
+/// It does not claim a unique factorization `q ∘ e ∘ p`. A dummy-wire
+/// factorization of a representative exists and does not identify `S`
+/// among behavioral equivalents. The inequalities that make
+/// `(Spure, Ctx)` genuinely hybrid (`Spure ≇ ()`, product `≇ Ctx`) are
+/// semantic; `((), Ctx)` is state-space-isomorphic to `Ctx`.
 pub trait HybridMolecule<Spure, Ctx>: Molecule<State = (Spure, Ctx)> {}
 
 impl<Spure, Ctx, T: Molecule<State = (Spure, Ctx)>> HybridMolecule<Spure, Ctx> for T {}
@@ -146,5 +162,23 @@ pub(crate) mod tests {
         let m = Add(0);
         assert_pure(&m);
         assert_effectful::<CountCtx, _>(&Count);
+    }
+
+    #[test]
+    fn mol_then_of_effectful_is_hybrid_marker() {
+        use crate::compose::then;
+        fn assert_hybrid<Spure, Ctx, M: HybridMolecule<Spure, Ctx>>(_: &M) {}
+        struct Tick;
+        impl Molecule for Tick {
+            type State = u32;
+            type Input = u32;
+            type Output = u32;
+            fn step(&self, s: &mut u32, x: u32) -> u32 {
+                *s += 1;
+                x
+            }
+        }
+        let m = then(Tick, Tick);
+        assert_hybrid::<u32, u32, _>(&m);
     }
 }

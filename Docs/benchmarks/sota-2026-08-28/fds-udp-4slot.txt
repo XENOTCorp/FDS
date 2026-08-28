@@ -1,0 +1,4 @@
+FDS default after D-4 (udp_rx_slots=4), three 5s runs:
+run1: bench-udp-against: 127.0.0.1:7777; 4 sockets x 61440B, sent 19.84 Gbps, echoed 19.74 Gbps, echo completion 99.53%
+run2: bench-udp-against: 127.0.0.1:7777; 4 sockets x 61440B, sent 21.37 Gbps, echoed 21.28 Gbps, echo completion 99.62%
+run3: bench-udp-against: 127.0.0.1:7777; 4 sockets x 61440B, sent 21.33 Gbps, echoed 21.30 Gbps, echo completion 99.84%

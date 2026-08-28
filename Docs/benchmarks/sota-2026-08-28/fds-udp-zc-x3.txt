@@ -1,0 +1,8 @@
+zc three-run characterization (fresh engine per run):
+run1: bench-udp-against: 127.0.0.1:7777; 4 sockets x 61440B, sent 5.15 Gbps, echoed 4.90 Gbps, echo completion 95.04%
+run2: bench-udp-against: 127.0.0.1:7777; 4 sockets x 61440B, sent 21.26 Gbps, echoed 21.19 Gbps, echo completion 99.66%
+run3: bench-udp-against: 127.0.0.1:7777; 4 sockets x 61440B, sent 17.96 Gbps, echoed 17.65 Gbps, echo completion 98.24%
+baseline (no ZC) three runs:
+bench-udp-against: 127.0.0.1:7777; 4 sockets x 61440B, sent 20.81 Gbps, echoed 20.77 Gbps, echo completion 99.85%
+bench-udp-against: 127.0.0.1:7777; 4 sockets x 61440B, sent 19.33 Gbps, echoed 19.33 Gbps, echo completion 100.00%
+bench-udp-against: 127.0.0.1:7777; 4 sockets x 61440B, sent 17.48 Gbps, echoed 17.43 Gbps, echo completion 99.71%

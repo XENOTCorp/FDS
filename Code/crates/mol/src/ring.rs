@@ -1,11 +1,18 @@
-//! Lock-free rings (standard \[R\]).
+//! Lock-free FIFO rings (standard \[R\]).
 //!
-//! Both rings are power-of-two capacity with bitmask indexing. The SPSC
-//! ring keeps in-flight ≤ CAP − 1 so the masked full/empty checks are
-//! unambiguous; the MPMC ring (Vyukov) holds up to CAP items, with
-//! sequence-number epochs disambiguating full/empty. `SpscRing` is single
-//! producer, single consumer; `MpmcRing` allows arbitrary producers and
-//! consumers, lock-free.
+//! Both rings are power-of-two capacity with bitmask indexing. They
+//! realize FIFO content: `push` writes at `w`, `pop` reads at `r`.
+//! On a nonempty buffer, `push; pop` returns the oldest stored element,
+//! not the element just pushed, so they are not models of the stack
+//! theory (`push; pop = id`).
+//!
+//! The SPSC ring keeps in-flight `≤ CAP − 1` so masked full/empty
+//! checks are unambiguous (ring-capacity invariant). The MPMC ring
+//! (Vyukov) holds up to `CAP` items: sequence-number epochs
+//! disambiguate full/empty, which is a different protocol from the
+//! bitmask-only occupancy bound. `SpscRing` is single producer, single
+//! consumer; `MpmcRing` allows arbitrary producers and consumers,
+//! lock-free.
 
 use crate::layout::CachePadded;
 use core::cell::UnsafeCell;
@@ -49,7 +56,10 @@ impl<T, const CAP: usize> SpscRing<T, CAP> {
 
     /// A new empty ring. `CAP` must be a power of two.
     pub const fn new() -> Self {
-        assert!(CAP.is_power_of_two(), "SpscRing: CAP must be a power of two");
+        assert!(
+            CAP.is_power_of_two(),
+            "SpscRing: CAP must be a power of two"
+        );
         SpscRing {
             // SAFETY: MaybeUninit array, no reads before writes.
             buffer: UnsafeCell::new(unsafe { MaybeUninit::uninit().assume_init() }),
@@ -159,7 +169,10 @@ impl<T, const CAP: usize> MpmcRing<T, CAP> {
 
     /// A new empty ring. `CAP` must be a power of two.
     pub fn new() -> Self {
-        assert!(CAP.is_power_of_two(), "MpmcRing: CAP must be a power of two");
+        assert!(
+            CAP.is_power_of_two(),
+            "MpmcRing: CAP must be a power of two"
+        );
         // Build the cell array through MaybeUninit (the cells hold
         // uninitialized payloads until a push writes them; sequence
         // numbers are set here before any data read can observe them).
@@ -203,8 +216,12 @@ impl<T, const CAP: usize> MpmcRing<T, CAP> {
             let diff = seq.wrapping_sub(head) as isize;
             if diff == 0 {
                 // Slot available: claim it.
-                match self.head.compare_exchange_weak(head, head.wrapping_add(1), Ordering::Relaxed, Ordering::Relaxed)
-                {
+                match self.head.compare_exchange_weak(
+                    head,
+                    head.wrapping_add(1),
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                ) {
                     Ok(_) => {
                         // SAFETY: we own this slot now; no reader can
                         // observe it until the Release seq store.
@@ -236,10 +253,12 @@ impl<T, const CAP: usize> MpmcRing<T, CAP> {
             let seq = cell.seq.load(Ordering::Acquire);
             let diff = seq.wrapping_sub(tail.wrapping_add(1)) as isize;
             if diff == 0 {
-                match self
-                    .tail
-                    .compare_exchange_weak(tail, tail.wrapping_add(1), Ordering::Relaxed, Ordering::Relaxed)
-                {
+                match self.tail.compare_exchange_weak(
+                    tail,
+                    tail.wrapping_add(1),
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                ) {
                     Ok(_) => {
                         // SAFETY: the slot was written and published by an
                         // enqueuer observed via the Acquire seq load.

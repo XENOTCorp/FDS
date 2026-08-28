@@ -42,7 +42,7 @@ Every knob in `config.json` carries `x-derived-from` in
 | `core.threads` = 0 | engine default ([CONC]) | 0 = one worker per logical CPU (2x physical on SMT); the default is already hardware-adaptive. |
 | `reactor.strategy` | D-5 (polling strategy) | Moderate packet rate + small syscall share → readiness loop (`epoll-busy-poll`); high rate where syscall amortization pays → kernel-side batching (`io-uring`); extreme rate + zero-copy + a dedicated core → zero-copy kernel ring (AF_XDP, `af_xdp.device`). |
 | Allocation/zero-allocation | D-11 (allocation policy) | The hot path never allocates (ALLOC-01/02); buffers are preallocated at startup; enforced by the zero-alloc test in mol. |
-| Batch sizes, in-flight caps | D-4 (batch size, syscall amortization) | Engine constants (`recv_batch`, `UDP_SLOTS`, ring capacities) follow the syscall-amortization rule; the observable knob is `reactor.max_events`. |
+| Batch sizes, in-flight caps | D-4 (batch size, syscall amortization) | UDP recvmmsg slots default to 4 on this CPU (D-1: 4 × 60 KiB fits L2; a 64-slot 60 KiB batch misses L3). Override `FDS_UDP_RX_SLOTS`. Other ring capacities follow the occupancy bound; the observable epoll knob is `reactor.max_events`. |
 
 ## Workflow
 

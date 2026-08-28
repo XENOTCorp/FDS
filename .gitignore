@@ -8,7 +8,10 @@ Code/bench-results/
 
 # Editor and OS noise
 *.swp
+*~
+*.bak
 .DS_Store
+Code/.cargo/
 
 # Subagent scratch (not product)
 .superpowers/

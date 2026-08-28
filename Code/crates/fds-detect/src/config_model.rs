@@ -43,7 +43,7 @@ static CORE_FIELDS: &[FieldDef] = &[
         json_type: JsonType::Bool,
         default_json: "true",
         derived_from: "engine default ([CONC] pin-per-core)",
-        description: "Pin each worker thread to its own logical CPU.",
+        description: "Pin workers. Unique physical cores when the worker count fits; otherwise worker i to logical CPU i.",
         trade_off: "Removes scheduler migration and cache thrash; consumes whole CPUs. Disable when cores are shared with other tenants.",
     },
     FieldDef {

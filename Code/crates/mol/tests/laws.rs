@@ -3,7 +3,10 @@
 //! deterministic sweeps; no external RNG, so the suite stays fast and
 //! reproducible (standard [TEST]).
 
-use mol::{Molecule, MpmcRing, SpscRing, par, then};
+use mol::{
+    delay, kleisli_then, par, then, tr, EffectfulMolecule, HybridMolecule, Molecule, MpmcRing,
+    SpscRing, Stack,
+};
 
 /// Pure molecule: `x + n`.
 #[derive(Clone, Copy)]
@@ -189,8 +192,8 @@ fn step_is_deterministic() {
 
 #[test]
 fn spsc_ring_is_fifo_across_wraparound() {
-    // The ring realizes FIFO streams; push;pop = id elementwise,
-    // including across slot-index wraparound (CAP 16, in-flight ≤ 15).
+    // FIFO order, including across slot-index wraparound (CAP 16,
+    // occupancy ≤ 15). This is not the stack equation push;pop = id.
     let ring = SpscRing::<u64, 16>::new();
     let mut next_push = 0u64;
     let mut next_pop = 0u64;
@@ -221,6 +224,101 @@ fn spsc_ring_is_fifo_across_wraparound() {
         next_pop += 1;
     }
     assert_eq!(next_push, next_pop);
+}
+
+#[test]
+fn spsc_fifo_push_pop_is_not_id_on_nonempty() {
+    // Thesis: FIFO content fails push;pop = id on every nonempty buffer.
+    let ring = SpscRing::<u32, 8>::new();
+    assert!(ring.try_push(1).is_ok());
+    assert!(ring.try_push(2).is_ok());
+    assert_eq!(
+        ring.try_pop(),
+        Some(1),
+        "pop returns the oldest element, not the last push"
+    );
+    assert_eq!(ring.try_pop(), Some(2));
+}
+
+#[test]
+fn spsc_occupancy_at_most_cap_minus_one() {
+    let ring = SpscRing::<u32, 8>::new();
+    for i in 0..7 {
+        assert!(ring.try_push(i).is_ok());
+    }
+    assert_eq!(ring.len(), 7);
+    assert!(ring.try_push(99).is_err());
+    assert_eq!(ring.len(), 7);
+}
+
+#[test]
+fn stack_satisfies_lifo_equations() {
+    let mut s = Stack::<u32, 8>::new();
+    assert!(s.try_push(1).is_ok());
+    assert!(s.try_push(2).is_ok());
+    // push; pop = id on the element just pushed.
+    assert!(s.try_push(3).is_ok());
+    assert_eq!(s.try_pop(), Some(3));
+    assert_eq!(s.peek().copied(), Some(2));
+    // pop; push = id when nonempty.
+    let v = s.try_pop().unwrap();
+    assert_eq!(v, 2);
+    assert!(s.try_push(v).is_ok());
+    assert_eq!(s.try_pop(), Some(2));
+    assert_eq!(s.try_pop(), Some(1));
+    assert!(s.is_empty());
+}
+
+#[test]
+fn kleisli_then_is_effectful_mol_then_is_hybrid() {
+    struct Tick;
+    impl Molecule for Tick {
+        type State = u32;
+        type Input = u32;
+        type Output = u32;
+        fn step(&self, s: &mut u32, x: u32) -> u32 {
+            *s = s.wrapping_add(1);
+            x.wrapping_add(*s)
+        }
+    }
+    fn assert_eff<Ctx, M: EffectfulMolecule<Ctx>>(_: &M) {}
+    fn assert_hyb<Spure, Ctx, M: HybridMolecule<Spure, Ctx>>(_: &M) {}
+
+    let k = kleisli_then(Tick, Tick);
+    assert_eff::<u32, _>(&k);
+    let mut c = 0u32;
+    assert_eq!(k.step(&mut c, 0), 3);
+    assert_eq!(c, 2);
+
+    let m = then(Tick, Tick);
+    assert_hyb::<u32, u32, _>(&m);
+    let mut s = (0u32, 0u32);
+    assert_eq!(m.step(&mut s, 0), 2);
+    assert_eq!(s, (1, 1));
+}
+
+/// Braiding used to witness delay-in-place-of-yanking.
+struct SwapU32;
+
+impl Molecule for SwapU32 {
+    type State = ();
+    type Input = (u32, u32);
+    type Output = (u32, u32);
+    fn step(&self, _state: &mut (), input: (u32, u32)) -> (u32, u32) {
+        (input.1, input.0)
+    }
+}
+
+#[test]
+fn delayed_feedback_is_delay_not_identity() {
+    let looped = tr(SwapU32);
+    let mut s = ((), 4u32);
+    assert_eq!(looped.step(&mut s, 8), 4);
+    assert_eq!(s.1, 8);
+    let d = delay::<u32>();
+    let mut u = 4u32;
+    assert_eq!(d.step(&mut u, 8), 4);
+    assert_eq!(u, 8);
 }
 
 #[test]

@@ -3,7 +3,8 @@
 //! A pure atom is a total function `A → B` with no state; an effectful
 //! atom is a morphism of EffMol(Ctx), acting on a preallocated runtime
 //! context. Atoms carry no hidden state: an atom is exactly one of these
-//! two shapes (standard \[A\]).
+//! two shapes (standard \[A\]). Hybrid is a residual class of
+//! *molecules* (stateful composites), not a third atom kind.
 
 /// An atom's interface: an input type and an output type.
 pub trait Atom {

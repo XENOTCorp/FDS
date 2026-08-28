@@ -2,6 +2,8 @@
 name = "fds-verify"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
+authors = ["XENOT Corporation"]
 
 # Isolated from the FDS root workspace: std-only by design, must build
 # offline with no crates.io dependencies.

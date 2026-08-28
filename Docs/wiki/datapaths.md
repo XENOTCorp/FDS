@@ -2,7 +2,7 @@
 
 ## Kernel datapath (default)
 
-The engine runs on the kernel socket path: epoll readiness, recvmmsg and sendmmsg batches of 64 datagrams, readv and writev on TCP. This is the default. On the reference machine it is the fastest strategy. See [benchmarks](../benchmarks.md).
+The engine runs on the kernel socket path: epoll readiness, recvmmsg and sendmmsg with a D-1/D-4 batch (default 4 datagrams on this CPU so 4 × 60 KiB stays in L2; override `FDS_UDP_RX_SLOTS`), readv and writev on TCP. This is the default. On the reference machine it is the fastest strategy. See [benchmarks](../benchmarks.md).
 
 ## io_uring
 

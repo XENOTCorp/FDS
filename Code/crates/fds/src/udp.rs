@@ -490,6 +490,52 @@ impl UdpSocket {
         Ok(ret as usize)
     }
 
+    /// Block until the socket is writable (send buffer has room) or an
+    /// error is reported. Used by [`UdpSocket::send_batch_all`] so a
+    /// full receive batch is echoed instead of dropped on EAGAIN.
+    pub fn wait_writable(&self) -> io::Result<()> {
+        let mut pfd = libc::pollfd {
+            fd: self.fd.as_raw_fd(),
+            events: libc::POLLOUT,
+            revents: 0,
+        };
+        loop {
+            // SAFETY: `pfd` is a live pollfd for our owned socket; poll
+            // does not retain it.
+            let ret = unsafe { libc::poll(&mut pfd, 1, -1) };
+            if ret < 0 {
+                let err = io::Error::last_os_error();
+                if err.kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(err);
+            }
+            if pfd.revents & (libc::POLLERR | libc::POLLNVAL) != 0 {
+                return Err(io::Error::other("udp wait_writable: poll error"));
+            }
+            if pfd.revents & libc::POLLOUT != 0 {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Send every datagram in `msgs`, waiting for writable when the send
+    /// buffer is full. This **blocks** and is not for the engine data
+    /// path (IO-01). Bound is `msgs.len()`. Returns the number sent
+    /// (always `msgs.len()` on success).
+    pub fn send_batch_all(&self, msgs: &[(&[u8], SocketAddr)]) -> io::Result<usize> {
+        let mut sent = 0;
+        while sent < msgs.len() {
+            let n = self.send_batch(&msgs[sent..])?;
+            if n == 0 {
+                self.wait_writable()?;
+                continue;
+            }
+            sent += n;
+        }
+        Ok(sent)
+    }
+
     /// The local address.
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
         // SAFETY: a zeroed `sockaddr_storage` is a valid destination;
@@ -652,6 +698,24 @@ mod tests {
         eprintln!(
             "udp: corked mutation test; OLD (copied) = {cork_saw_old}, NEW (pages referenced) = {cork_saw_new}"
         );
+    }
+
+    #[test]
+    fn udp_send_batch_all_delivers() {
+        let a = bind();
+        let b = bind();
+        let baddr = b.local_addr().unwrap();
+        let payloads: Vec<Vec<u8>> = (0..8).map(|i| format!("all-{i}").into_bytes()).collect();
+        let msgs: Vec<(&[u8], SocketAddr)> = payloads.iter().map(|p| (p.as_slice(), baddr)).collect();
+        assert_eq!(a.send_batch_all(&msgs).unwrap(), payloads.len());
+
+        let mut bufs: [mol::Buffer<2048>; 16] = std::array::from_fn(|_| mol::Buffer::new());
+        let mut out: [RecvResult; 16] = std::array::from_fn(|_| recv_slot());
+        let n = b.recv_batch(&mut bufs, &mut out).unwrap();
+        assert_eq!(n, payloads.len());
+        for (i, p) in payloads.iter().enumerate() {
+            assert_eq!(bufs[i].as_slice(), p.as_slice());
+        }
     }
 
     #[test]

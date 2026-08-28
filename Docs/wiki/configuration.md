@@ -7,7 +7,7 @@ The schema is `Code/config/config.schema.json`. `fds-detect` generates it.
 ## Keys
 
 - `core.threads`: worker count. 0 means one per logical CPU (default).
-- `core.pin_cores`: pin worker `i` to logical CPU `i` (default on).
+- `core.pin_cores`: pin workers; unique physical cores when the count fits, else logical CPU `i` (default on).
 - `reactor.strategy`: `epoll-busy-poll` (default token; busy poll is a separate flag) or `io-uring`.
 - `reactor.busy_poll`: explicit spin for dedicated cores (default off).
 - `reactor.io_uring_entries`: ring size.

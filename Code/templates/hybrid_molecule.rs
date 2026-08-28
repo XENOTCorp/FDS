@@ -1,11 +1,13 @@
-//! Template: a HYBRID MOLECULE (HybridMol): protocol state × context,
-//! with hot/cold state separation.
+//! Template: a HYBRID MOLECULE: protocol state × context, with hot/cold
+//! state separation.
 //!
-//! Copy this file, rename the structs, and fill in `step`. The state is
-//! `(ProtocolState, Ctx)` = `Spure × Ctx` (thesis ch. 3, the pure/effectful classification), where
-//! `ProtocolState` pairs the HOT fields (touched every step) and COLD
-//! fields (touched rarely: peer info, timers) in separate cache lines so
-//! they never share one (standard [CACHE], thesis ch. 7, the resource-graded cost enrichment).
+//! Copy this file, rename the structs, and fill in `step`. HybridMol is
+//! the residual class (neither `S ≅ ()` nor `S ≅ Ctx`). Product state
+//! `(ProtocolState, Ctx)` is a common representative, not a unique
+//! factorization `q ∘ e ∘ p`. `ProtocolState` pairs HOT fields (touched
+//! every step) and COLD fields (touched rarely: peer info, timers) in
+//! separate cache lines so they never share one (standard [CACHE],
+//! thesis ch. 7).
 
 use mol::Molecule;
 
@@ -24,8 +26,7 @@ pub struct ColdState {
     pub peer_id: u32,
 }
 
-/// The hybrid molecule: state `((HotState, ColdState), Ctx)`; the pure
-/// protocol state (hot/cold split) paired with the effectful context.
+/// Product-state hybrid representative: `((HotState, ColdState), Ctx)`.
 #[derive(Clone, Copy)]
 pub struct MyHybridMolecule;
 
@@ -48,9 +49,10 @@ impl Molecule for MyHybridMolecule {
     }
 }
 
-// The blanket impl makes MyHybridMolecule a HybridMolecule<(HotState,
-// ColdState), Ctx>: `impl<Spure, Ctx, T: Molecule<State = (Spure, Ctx)>>
-// HybridMolecule<Spure, Ctx> for T`.
+// The blanket impl marks this product-state representative as
+// HybridMolecule<(HotState, ColdState), Ctx>. Mol composition of two
+// effectful machines is also hybrid (`E ∘ E ⊆ H`); Kleisli composition
+// threads one Ctx and stays effectful.
 
 #[cfg(test)]
 mod tests {
@@ -59,10 +61,7 @@ mod tests {
     #[test]
     fn hybrid_molecule_steps() {
         let m = MyHybridMolecule;
-        let mut state = (
-            (HotState { sequence: 0 }, ColdState { peer_id: 7 }),
-            Ctx,
-        );
+        let mut state = ((HotState { sequence: 0 }, ColdState { peer_id: 7 }), Ctx);
         assert_eq!(m.step(&mut state, 10), 11);
         assert_eq!(m.step(&mut state, 10), 12);
     }
