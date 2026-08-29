@@ -2,11 +2,11 @@
 
 ## Kernel datapath (default)
 
-The engine runs on the kernel socket path: epoll readiness, recvmmsg and sendmmsg with a D-1/D-4 batch (default 4 datagrams on this CPU so 4 × 60 KiB stays in L2; override `FDS_UDP_RX_SLOTS`), readv and writev on TCP. This is the default. On the reference machine it is the fastest strategy. See [benchmarks](../benchmarks.md).
+The engine runs on the kernel socket path: epoll readiness, recvmmsg and sendmmsg with a D-1/D-4 batch (default 4 datagrams on the reference CPU so 4 × 60 KiB stays in L2; override `FDS_UDP_RX_SLOTS`), readv and writev on TCP. This is the default. On the reference machine it is the fastest strategy. See [benchmarks](../benchmarks.md).
 
 ## io_uring
 
-The `io-uring` reactor runs UDP and TCP echo through the ring (IORING_OP_RECVMSG/SENDMSG/ACCEPT/READ/WRITE). On this kernel, io_uring matches epoll on UDP and stalls on TCP. SQPOLL loses on two physical cores. The startup autotuner selects the strategy per machine.
+The `io-uring` reactor runs UDP and TCP echo through the ring (IORING_OP_RECVMSG/SENDMSG/ACCEPT/READ/WRITE). On the reference kernel, io_uring matches epoll on UDP and stalls on TCP. SQPOLL loses on two physical cores. Results vary by kernel version and CPU count. The startup autotuner selects the strategy per machine.
 
 On server hardware, register files and buffers and enable multishot receive. Config keys: `FDS_REACTOR_IO_URING_ENTRIES` and `FDS_REACTOR_IO_URING_SQ_THREAD`.
 

@@ -23,7 +23,7 @@ Overrides:
 | Flag | debug | release | Adaptive | Effect |
 | --- | --- | --- | --- | --- |
 | `opt-level` | 1 (own), 3 (deps) | 3 | no | 3 is the silicon target. Deps at 3 in dev are compiled once and cached. |
-| `target-cpu` | (host) | `native` | yes | `native` enables every feature this CPU has. Pin with `TARGET_CPU` for portable binaries. |
+| `target-cpu` | (host) | `native` | yes | `native` enables every feature the build CPU has. Pin with `TARGET_CPU` for portable binaries. |
 | `lto` | off | fat | no | Fat LTO across crates at release. |
 | `codegen-units` | 16 | 1 | no | One unit is whole-crate optimization. |
 | `panic` | unwind | abort | no | Abort shrinks the binary. The test profile always unwinds. |

@@ -4,6 +4,8 @@ Host and kernel settings that affect the datapath. The engine does not apply the
 
 ## NIC
 
+The examples use `eth0`. Replace it with your interface name.
+
 Disable interrupt coalescing on the datapath queue:
 
 ```sh

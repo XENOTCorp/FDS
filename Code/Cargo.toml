@@ -27,10 +27,10 @@ strip = true
 
 # Dev profile: own code at opt-level 1 (still debuggable, still checks
 # overflow and assertions) with dependencies at opt-level 3 (compiled once,
-# cached): fast builds, fast test execution. On this host
-# ~/.cargo/config.toml overrides manifest profiles (cargo 1.97: home
-# config wins), pinning dev opt-level=0. This manifest stays the portable
-# baseline for machines without that config.
+# cached): fast builds, fast test execution. A developer's
+# ~/.cargo/config.toml can override these profiles (cargo 1.97: home
+# config wins). This manifest stays the portable baseline for machines
+# without that config.
 [profile.dev]
 opt-level = 1
 overflow-checks = true

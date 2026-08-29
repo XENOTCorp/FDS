@@ -87,7 +87,8 @@ bash scripts/autotune.sh
 
 ## 9. AF_XDP on a supported NIC
 
-With an XDP-capable NIC (ixgbe, i40e, ice, mlx5):
+Use an XDP-capable NIC (ixgbe, i40e, ice, mlx5). Replace `eth0` with your
+device name:
 
 ```json
 { "af_xdp": { "device": "eth0", "queue": 0 } }

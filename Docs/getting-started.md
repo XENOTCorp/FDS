@@ -1,16 +1,25 @@
 # Getting started
 
-This guide installs FDS, runs tests, and starts the echo engine.
+This guide installs FDS, runs the tests, and starts the echo engine.
 
 ## 1. Install the tools
 
-Install Rust 1.97.1 or later. Use a Linux host. The engine does not run on other kernels.
+Install Rust 1.97.1 or later. Use a Linux host. The engine does not run on
+other kernels.
 
-Confirm:
+Confirm the toolchain:
 
 ```sh
 rustc --version
 uname -s
+```
+
+Install the development packages for libsctp and liburing. These are
+required for the default features. Use the package manager of your
+distribution. On Debian or Ubuntu:
+
+```sh
+sudo apt-get install -y libsctp-dev liburing-dev
 ```
 
 ## 2. Open the code tree
@@ -30,41 +39,61 @@ cargo clippy --all-targets -- -D warnings
 
 Both commands must exit 0.
 
-## 4. Run the echo engine
+## 4. Build the adaptive release
 
 ```sh
-cargo run --release -p fds-engine
+bash build/build.sh --release
 ```
 
-The process starts one worker per logical CPU. UDP echo binds 127.0.0.1:7777. TCP echo binds 127.0.0.1:7778.
+The script detects the host, sets the codegen flags, and builds the
+workspace. The engine binary is `target/release/fds`. Use
+`bash build/build.sh --summary` to show the detection facts.
+
+## 5. Run the echo engine
+
+```sh
+./target/release/fds
+```
+
+The process starts one worker per logical CPU. UDP echo binds to
+127.0.0.1:7777. TCP echo binds to 127.0.0.1:7778.
 
 Stop the process with Ctrl-C.
 
-## 5. Optional configuration
+## 6. Optional configuration
 
 Copy `config.json` in `Code/` or pass a path:
 
 ```sh
-cargo run --release -p fds-engine -- /path/to/config.json
+./target/release/fds /path/to/config.json
 ```
 
-Override one key with an environment variable. The form is `FDS_<SECTION>_<KEY>`.
+Override one key with an environment variable. The form is
+`FDS_<SECTION>_<KEY>`.
 
 ```sh
-FDS_CORE_THREADS=2 cargo run --release -p fds-engine
+FDS_CORE_THREADS=2 ./target/release/fds
 ```
 
-The schema is `Code/config/config.schema.json`.
+The schema is `Code/config/config.schema.json`. Regenerate the host
+configuration:
 
-## 6. Mini project: full-duplex channels
+```sh
+cargo run --release -p fds-detect -- --emit-config
+```
 
-This example builds a TCP echo server on the reactor. It then opens eight connections and streams in both directions.
+## 7. Mini project: full-duplex channels
+
+This example builds a TCP echo server on the reactor. It then opens eight
+connections and streams in both directions.
 
 ```sh
 cargo run --release -p fds --example full_duplex_channels
 ```
 
-## 7. Measure
+## 8. Measure
+
+Run the engine in one terminal. Then run the benchmark client in another:
 
 ```sh
 cargo run --release -p fds-engine -- --bench-large 60000 5
@@ -80,7 +109,7 @@ cargo run --release -p fds-engine -- --bench-tcp-against 127.0.0.1:7778 5
 
 Published numbers: [benchmarks.md](benchmarks.md).
 
-## 8. Build the thesis
+## 9. Build the thesis
 
 ```sh
 cd ../Docs/paper

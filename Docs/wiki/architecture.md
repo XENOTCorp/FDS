@@ -10,7 +10,7 @@ Each worker owns:
 - its own SO_REUSEPORT UDP socket and TCP listener on the shared bind addresses. The kernel steers flows across workers by 4-tuple hash;
 - its own connection table, active-stream slot array, 64 KiB datagram receive batch, and per-core counters.
 
-The worker pins itself with `sched_setaffinity` when `core.pin_cores` is set. If the worker count fits on the physical cores, worker `i` pins to the first SMT sibling of physical core `i` (logical 0 then 1 on this machine are the same core). Otherwise worker `i` pins to logical CPU `i`.
+The worker pins itself with `sched_setaffinity` when `core.pin_cores` is set. If the worker count fits on the physical cores, worker `i` pins to the first SMT sibling of physical core `i` (on a typical SMT CPU, logical 0 and 1 are the same core). Otherwise worker `i` pins to logical CPU `i`.
 
 ## Data flow (one worker)
 
@@ -41,7 +41,7 @@ The metrics listener is registered on worker 0 only. Metrics are pulled over a U
 - Ring `head` and `tail` each occupy a 64-byte line. Producer and consumer do not bounce one line.
 - Connection hot state (seq, activity, in-flight, fd) is one line. Cold state (peer, flags) is another line.
 - Per-worker metrics (packets, bytes, drops) share one line. Adjacent workers do not share a line.
-- Receive buffers are 64-byte aligned. The UDP slab is `udp_rx_slots` × 64 KiB (default 4 × 64 KiB = 256 KiB, L2-resident on this CPU) and is advised with `MADV_HUGEPAGE`.
+- Receive buffers are 64-byte aligned. The UDP slab is `udp_rx_slots` × 64 KiB (default 4 × 64 KiB = 256 KiB, L2-resident on the reference CPU) and is advised with `MADV_HUGEPAGE`.
 - TCP lookup is a slot index from the epoll token. There is no hash map on the hot path.
 
 ## Crate map
