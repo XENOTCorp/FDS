@@ -82,7 +82,30 @@ configuration:
 cargo run --release -p fds-detect -- --emit-config
 ```
 
-## 7. Mini project: full-duplex channels
+## 7. Adopt the library API
+
+Other programs use `fds::api`. Two shapes sit on one core:
+
+- Driver/callback: `EpollDriver` or `IoUringDriver` (feature `io-uring`).
+  Register fds, poll, read events.
+- Async: `poll_read`, `poll_write`, `poll_accept`, `poll_recv_from` in
+  the `std::task::Poll` shape. Drive them with `fds::api::noop_context()`
+  or with any runtime that calls `poll_*`.
+
+```rust
+use fds::api::{Driver, EpollDriver, Interest, TcpListener, noop_context};
+use std::os::fd::AsRawFd;
+
+let mut driver = EpollDriver::new(64)?;
+let mut listener = TcpListener::bind("127.0.0.1:0".parse()?)?;
+driver.register(listener.as_raw_fd(), 0, Interest::Readable)?;
+let mut ctx = noop_context();
+driver.poll(Some(std::time::Duration::from_millis(100)))?;
+```
+
+See [examples](wiki/examples.md) for a full loop.
+
+## 8. Mini project: full-duplex channels
 
 This example builds a TCP echo server on the reactor. It then opens eight
 connections and streams in both directions.
@@ -91,7 +114,7 @@ connections and streams in both directions.
 cargo run --release -p fds --example full_duplex_channels
 ```
 
-## 8. Measure
+## 9. Measure
 
 Run the engine in one terminal. Then run the benchmark client in another:
 
@@ -109,7 +132,7 @@ cargo run --release -p fds-engine -- --bench-tcp-against 127.0.0.1:7778 5
 
 Published numbers: [benchmarks.md](benchmarks.md).
 
-## 9. Build the thesis
+## 10. Build the thesis
 
 ```sh
 cd ../Docs/paper

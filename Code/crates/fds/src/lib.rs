@@ -6,6 +6,8 @@
 //!
 //! # Structure
 //!
+//! - [`api`]: stable Driver/callback and AsyncRead/AsyncWrite surface
+//!   for programs that adopt FDS.
 //! - [`reactor`]: one edge-triggered epoll instance with a
 //!   drain-to-EAGAIN discipline (the readiness source).
 //! - [`tcp`], [`udp`]: nonblocking transports with the option set from
@@ -20,10 +22,12 @@
 //! - [`util`]: thread pinning and coarse monotonic ticks.
 //! - [`parse`]: bounds-safe IPv4/UDP/TCP header parsers.
 //!
-//! Experimental reactor paths: the io_uring completion-driven datapath
-//! (`io_uring_reactor`, feature `io-uring`) and the AF_XDP frame
-//! pipeline (`af_xdp`, feature `af-xdp`). [`fuzz`] is the deterministic
-//! parser and checksum harness used by the `fds` binary.
+//! Optional reactor paths: the io_uring completion-driven datapath
+//! (`io_uring_reactor`, feature `io-uring`; registered buffers,
+//! multishot recv/accept, SEND_ZC) and the AF_XDP zero-copy frame
+//! pipeline (`af_xdp`, feature `af-xdp`; native `XDP_ZEROCOPY`,
+//! NUMA-local umem). [`fuzz`] is the deterministic parser and checksum
+//! harness used by the `fds` binary.
 //!
 //! The echo engine and CLI live in the `fds-engine` package (binary `fds`).
 
@@ -44,4 +48,6 @@ pub mod sctp;
 #[cfg(feature = "io-uring")]
 pub mod io_uring_reactor;
 
+#[cfg(feature = "af-xdp")]
 pub mod af_xdp;
+pub mod api;

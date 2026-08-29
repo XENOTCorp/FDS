@@ -17,6 +17,8 @@ pub(crate) enum JsonType {
     /// `i32` in the engine.
     I32,
     Str,
+    /// `Vec<u32>` in the engine (non-negative integers).
+    U32Array,
     /// `ReactorStrategy`, kebab-case enum.
     Strategy,
 }
@@ -336,8 +338,56 @@ static AF_XDP_FIELDS: &[FieldDef] = &[
         json_type: JsonType::U32,
         default_json: "0",
         derived_from: "engine default",
-        description: "Queue id on the AF_XDP device.",
+        description: "Queue id on the AF_XDP device (used when queues is empty).",
         trade_off: "Binding a queue dedicates it to the XDP path.",
+    },
+    FieldDef {
+        key: "queues",
+        json_type: JsonType::U32Array,
+        default_json: "[]",
+        derived_from: "engine default",
+        description: "Per-worker queue ids; workers take queues round-robin.",
+        trade_off: "One queue per worker gives per-core RSS-like scaling; a queue cannot be shared across sockets.",
+    },
+    FieldDef {
+        key: "zero_copy",
+        json_type: JsonType::Bool,
+        default_json: "true",
+        derived_from: "engine default",
+        description: "Bind with XDP_ZEROCOPY; falls back to XDP_COPY when the driver rejects it.",
+        trade_off: "Zero-copy uses the NIC's own memory for the umem (fastest); copy mode works on any driver.",
+    },
+    FieldDef {
+        key: "ring_size",
+        json_type: JsonType::U32,
+        default_json: "256",
+        derived_from: "engine default",
+        description: "Per-ring entry count (power of two).",
+        trade_off: "Larger rings absorb bursts; smaller rings reduce memory.",
+    },
+    FieldDef {
+        key: "num_frames",
+        json_type: JsonType::U32,
+        default_json: "4096",
+        derived_from: "engine default",
+        description: "Umem frame count (one page each).",
+        trade_off: "The umem is the RX/TX buffer pool; it must cover the ring depth plus in-flight frames.",
+    },
+    FieldDef {
+        key: "numa",
+        json_type: JsonType::Bool,
+        default_json: "false",
+        derived_from: "engine default",
+        description: "Bind each worker's umem to its NUMA node (mbind).",
+        trade_off: "On-node umems avoid cross-socket bounce; requires a NUMA machine and pinned workers.",
+    },
+    FieldDef {
+        key: "xskmap",
+        json_type: JsonType::Str,
+        default_json: "",
+        derived_from: "engine default",
+        description: "Pinned XSKMAP path (bpffs) to register the socket in.",
+        trade_off: "Without an XDP program steering frames into the map, the socket binds but receives nothing.",
     },
 ];
 
@@ -385,6 +435,9 @@ fn field_value(f: &FieldDef) -> Value {
         JsonType::Bool | JsonType::Int | JsonType::U32 | JsonType::I32 => {
             serde_json::from_str(f.default_json).unwrap_or_else(|_| json!(f.default_json))
         }
+        JsonType::U32Array => {
+            serde_json::from_str(f.default_json).unwrap_or_else(|_| json!([]))
+        }
         JsonType::Str | JsonType::Strategy => json!(f.default_json),
     }
 }
@@ -425,11 +478,15 @@ pub(crate) fn generate_schema() -> String {
                 JsonType::Bool => "boolean",
                 JsonType::Int | JsonType::U32 | JsonType::I32 => "integer",
                 JsonType::Str | JsonType::Strategy => "string",
+                JsonType::U32Array => "array",
             };
             let mut fd = Map::new();
             fd.insert("type".to_string(), json!(jt));
             if f.json_type == JsonType::Strategy {
                 fd.insert("enum".to_string(), json!(["epoll-busy-poll", "io-uring"]));
+            }
+            if f.json_type == JsonType::U32Array {
+                fd.insert("items".to_string(), json!({ "type": "integer", "minimum": 0 }));
             }
             fd.insert("default".to_string(), field_value(f));
             fd.insert("description".to_string(), json!(f.description));
@@ -488,6 +545,9 @@ pub(crate) fn validate_config(text: &str) -> Vec<String> {
                 JsonType::Int | JsonType::U32 => fv.as_u64().is_some(),
                 JsonType::I32 => fv.as_i64().is_some(),
                 JsonType::Str => fv.is_string(),
+                JsonType::U32Array => fv
+                    .as_array()
+                    .is_some_and(|a| a.iter().all(|x| x.as_u64().is_some())),
                 JsonType::Strategy => {
                     fv.as_str().is_some_and(|s| matches!(s, "epoll-busy-poll" | "io-uring"))
                 }
@@ -499,6 +559,7 @@ pub(crate) fn validate_config(text: &str) -> Vec<String> {
                     JsonType::U32 => "a non-negative integer",
                     JsonType::I32 => "an integer",
                     JsonType::Str => "a string",
+                    JsonType::U32Array => "an array of non-negative integers",
                     JsonType::Strategy => "\"epoll-busy-poll\" | \"io-uring\"",
                 }));
             }
@@ -552,7 +613,15 @@ mod tests {
                 assert!(fd["description"].is_string());
                 assert!(fd["x-trade-off"].is_string());
                 assert!(fd["x-derived-from"].is_string());
-                assert!(fd["default"].is_boolean() || fd["default"].is_number() || fd["default"].is_string());
+                assert!(
+                    fd["default"].is_boolean()
+                        || fd["default"].is_number()
+                        || fd["default"].is_string()
+                        || fd["default"].is_array(),
+                    "{}:{} missing default",
+                    section.name,
+                    f.key
+                );
             }
         }
     }

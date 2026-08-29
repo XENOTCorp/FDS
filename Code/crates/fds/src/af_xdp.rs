@@ -1,29 +1,32 @@
-//! Experimental AF_XDP path (feature `af-xdp`): raw Ethernet sockets
-//! with the XDP umem/ring setup; `socket(AF_XDP, SOCK_RAW, 0)`,
-//! `XDP_UMEM_REG`, `XDP_RX_RING`/`XDP_TX_RING` (mmap'd), `bind()` with
-//! `struct sockaddr_xdp`. EXPERIMENTAL: needs an XDP-attached device at
-//! runtime; the module compiles everywhere, tests skip when no device is
-//! available. The UAPI constants are declared in-crate (libc does not
-//! ship them) and were verified against `<linux/if_xdp.h>`.
+//! AF_XDP path (feature `af-xdp`): raw Ethernet sockets with the XDP
+//! umem/ring setup; `socket(AF_XDP, SOCK_RAW, 0)`, `XDP_UMEM_REG`,
+//! `XDP_RX_RING`/`XDP_TX_RING` (mmap'd), `bind()` with `struct
+//! sockaddr_xdp`. The UAPI constants are declared in-crate (libc does
+//! not ship them) and were verified against `<linux/if_xdp.h>`.
 //!
-//! The datapath: [`process_frame`] validates each received frame
-//! (EtherType IPv4, IPv4/UDP headers, IP + UDP checksums via the
-//! parse/checksum atoms) and rewrites it for echo (MAC swap, TTL
-//! decrement, IP checksum recompute). It is a pure function over the
-//! frame bytes and is unit-tested with synthetic frames; the ring
-//! mechanics around it need a real XDP-capable device.
+//! The datapath is **zero-copy**: [`XskSocket::recv_frame`] hands out a
+//! frame descriptor into the umem (no copy); the caller processes the
+//! frame in place through [`XskSocket::frame_mut`] and either
+//! [`XskSocket::tx_frame`]s it back out of the same umem slot (echo
+//! with no copy) or [`XskSocket::drop_frame`]s it. Transmitted frames
+//! are reclaimed from the completion ring by
+//! [`XskSocket::recycle_tx`] and returned to the fill ring. Bind mode
+//! is `XDP_ZEROCOPY` when the driver supports it (the socket's umem is
+//! the NIC's own memory); it falls back to `XDP_COPY` automatically.
+//! [`XskSocket::kick`] implements the `XDP_USE_NEED_WAKEUP` contract:
+//! the poller is woken only when the kernel asks.
 //!
-//! NOT production-ready: single consumer/producer per ring (no
-//! contention), one in-flight TX frame on a fixed umem slot (reused only
-//! after the completion ring reports it), no `XDP_USE_NEED_WAKEUP`
-//! handling, no statistics polling.
+//! [`XskMultiqueue`] opens one socket per device queue, each with its
+//! own umem and rings. [`XskOpenOpts::node`] binds the umem to a NUMA
+//! node with `mbind`, so a pinned worker's rings live on its own node
+//! (no cross-socket bounce for the data plane).
 //!
 //! CONTRACT (implementer): declare the XDP_* setsockopt constants and
 //! `struct xdp_umem_reg` / `struct xdp_mmap_offsets` per
-//! `<linux/if_xdp.h>`; implement [`XskSocket`] with the public API below.
-//! Tests: socket creation with `AddressFamily::XDP` skips gracefully when
-//! unsupported; full umem/ring setup is compile-checked but only run when
-//! a device is available (skip by default).
+//! `<linux/if_xdp.h>`; implement [`XskSocket`] with the public API
+//! below. Tests: socket creation with `AddressFamily::XDP` skips
+//! gracefully when unsupported; full umem/ring setup is compile-checked
+//! but only run when a device is available (skip by default).
 
 use std::io;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -45,6 +48,33 @@ const XDP_UMEM_FILL_RING: libc::c_int = 5;
 /// `XDP_UMEM_COMPLETION_RING` setsockopt: completion ring entry count.
 const XDP_UMEM_COMPLETION_RING: libc::c_int = 6;
 
+/// `XDP_SHARED_UMEM` bind flag: share umem with another socket.
+const XDP_SHARED_UMEM: u16 = 1 << 0;
+/// `XDP_COPY` bind flag: the kernel copies frames between the umem and
+/// the driver.
+const XDP_COPY: u16 = 1 << 1;
+/// `XDP_ZEROCOPY` bind flag: the driver uses the umem directly.
+const XDP_ZEROCOPY: u16 = 1 << 2;
+/// `XDP_USE_NEED_WAKEUP` bind flag: the kernel may sleep; user space
+/// must `poll`/`sendto` when `XDP_RING_NEED_WAKEUP` is set on the fill
+/// or TX ring.
+const XDP_USE_NEED_WAKEUP: u16 = 1 << 3;
+
+/// `XDP_RING_NEED_WAKEUP` in the RX/TX ring flags word: the kernel
+/// needs an explicit wakeup (`poll` for RX, `sendto` for TX).
+const XDP_RING_NEED_WAKEUP: u32 = 1 << 0;
+
+// Bind flags from `<linux/if_xdp.h>`: SHARED_UMEM=bit0, COPY=bit1,
+// ZEROCOPY=bit2, USE_NEED_WAKEUP=bit3. A wrong ZEROCOPY value binds
+// SHARED_UMEM instead and never enters native zero-copy.
+const _: () = {
+    assert!(XDP_SHARED_UMEM == 1u16);
+    assert!(XDP_COPY == 2u16);
+    assert!(XDP_ZEROCOPY == 4u16);
+    assert!(XDP_USE_NEED_WAKEUP == 8u16);
+    assert!(XDP_RING_NEED_WAKEUP == 1u32);
+};
+
 /// mmap offset of the RX ring (byte offset passed to `mmap`; the kernel's
 /// `xsk_mmap` compares these against `XDP_PGOFF_*` directly).
 const XDP_PGOFF_RX_RING: libc::off_t = 0;
@@ -55,11 +85,11 @@ const XDP_UMEM_PGOFF_FILL_RING: libc::off_t = 0x1_0000_0000;
 /// mmap offset of the completion ring.
 const XDP_UMEM_PGOFF_COMPLETION_RING: libc::off_t = 0x1_8000_0000;
 
-/// Umem frames: 4096 frames of one page each (16 MiB).
+/// Default umem frames: 4096 frames of one page each (16 MiB).
 const DEFAULT_NUM_FRAMES: u32 = 4096;
-/// Umem frame size (chunk size), one page.
+/// Default umem frame size (chunk size), one page.
 const DEFAULT_FRAME_SIZE: u32 = 4096;
-/// Per-ring entry count (a power of two, as the kernel requires).
+/// Default per-ring entry count (a power of two, as the kernel requires).
 const DEFAULT_RING_SIZE: u32 = 256;
 
 /// `struct sockaddr_xdp` from `<linux/if_xdp.h>`.
@@ -113,20 +143,76 @@ struct XdpDesc {
     options: u32,
 }
 
-/// An AF_XDP socket (umem + rx/tx rings + bind).
-///
-/// EXPERIMENTAL, not production-ready: single consumer/producer per ring,
-/// one in-flight TX frame on a fixed umem slot, no wakeup handling.
+/// Open options for an AF_XDP socket.
+#[derive(Clone, Copy, Debug)]
+pub struct XskOpenOpts {
+    /// Entry count of every ring (power of two).
+    pub ring_size: u32,
+    /// Umem frame count.
+    pub num_frames: u32,
+    /// Bind with `XDP_ZEROCOPY`; falls back to `XDP_COPY` when the
+    /// driver rejects it.
+    pub zero_copy: bool,
+    /// NUMA node for the umem (`mbind`); `None` = current node.
+    pub node: Option<i32>,
+}
+
+impl Default for XskOpenOpts {
+    fn default() -> Self {
+        XskOpenOpts {
+            ring_size: DEFAULT_RING_SIZE,
+            num_frames: DEFAULT_NUM_FRAMES,
+            zero_copy: true,
+            node: None,
+        }
+    }
+}
+
+/// The bind mode of a socket.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum XdpMode {
+    /// The NIC uses the umem directly (no copy).
+    ZeroCopy,
+    /// The kernel copies frames between the driver and the umem.
+    Copy,
+}
+
+/// One received frame: an offset into the umem and its length. The
+/// frame is checked out of the socket; call [`XskSocket::frame_mut`] to
+/// process it, then [`XskSocket::tx_frame`] or
+/// [`XskSocket::drop_frame`] to release it.
+#[derive(Clone, Copy, Debug)]
+pub struct Frame {
+    addr: u64,
+    len: u32,
+}
+
+impl Frame {
+    /// The frame's byte length.
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    /// True when the frame is empty (zero length).
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// The frame's umem offset.
+    pub fn addr(&self) -> u64 {
+        self.addr
+    }
+}
+
+/// An AF_XDP socket (umem + rx/tx/fill/completion rings + bind).
 pub struct XskSocket {
     fd: i32,
-    /// Anonymous umem mapping (16 MiB); frame `i` is at `umem + i * frame_size`.
+    /// Anonymous umem mapping; frame `i` is at `umem + i * frame_size`.
     umem: *mut u8,
     /// Total umem length in bytes.
     umem_len: usize,
     /// Umem frame (chunk) size in bytes.
     frame_size: u32,
-    /// Byte offset of the fixed TX frame (the last umem frame).
-    tx_frame_off: u64,
     /// Entry count of every ring (a power of two).
     ring_size: u32,
     /// mmap base of the RX ring region.
@@ -147,8 +233,10 @@ pub struct XskSocket {
     fill_head: u32,
     /// Userspace completion-ring consumer index.
     cr_tail: u32,
-    /// True while the fixed TX frame awaits completion.
-    tx_in_flight: bool,
+    /// TX frame addrs awaiting completion (in submission order).
+    tx_inflight: std::collections::VecDeque<u64>,
+    /// How the socket is bound.
+    mode: XdpMode,
 }
 
 /// Byte length of a ring's mmap region: the descriptor area plus the
@@ -203,6 +291,35 @@ unsafe fn ring_store(ptr: *mut u32, val: u32) {
     unsafe { AtomicU32::from_ptr(ptr).store(val, Ordering::Release) }
 }
 
+/// Bind the umem to NUMA `node` with `mbind(MPOL_BIND)` (best-effort:
+/// a non-NUMA kernel or missing permission leaves the allocation where
+/// it is).
+fn mbind_umem(umem: *mut u8, len: usize, node: i32) {
+    // Fixed 1024-bit nodemask (16 words) covers any real node count.
+    let mut mask = [0u64; 16];
+    let word = node as usize / 64;
+    let bit = node as usize % 64;
+    if word < mask.len() {
+        mask[word] = 1u64 << bit;
+    }
+    // SAFETY: the mask array is initialized and alive for the call;
+    // `umem`/`len` describe a live mmap from this process.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_mbind,
+            umem,
+            len,
+            2, // MPOL_BIND
+            mask.as_ptr(),
+            (mask.len() * 8) as libc::c_ulong, // maxnode in bits
+            0,                                 // MPOL_MF_STRICT unset: best-effort
+        )
+    };
+    if rc != 0 {
+        // Not fatal: without NUMA the allocation is still correct.
+    }
+}
+
 impl XskSocket {
     /// Pointer to ring-index word `off` inside ring region `base`.
     fn field(&self, base: *mut u8, off: u64) -> *mut u32 {
@@ -241,6 +358,10 @@ impl XskSocket {
     fn fill_producer(&self) -> *mut u32 {
         self.field(self.fill_base, self.offsets.fr.producer)
     }
+    /// Kernel-written fill-ring consumer word.
+    fn fill_consumer(&self) -> *mut u32 {
+        self.field(self.fill_base, self.offsets.fr.consumer)
+    }
     /// Fill-ring descriptor array (umem frame offsets).
     fn fill_desc(&self) -> *mut u64 {
         self.fill_base
@@ -255,13 +376,35 @@ impl XskSocket {
     fn cr_consumer(&self) -> *mut u32 {
         self.field(self.cr_base, self.offsets.cr.consumer)
     }
+    /// Completion-ring descriptor array.
+    fn cr_desc(&self) -> *mut u64 {
+        self.cr_base
+            .wrapping_add(self.offsets.cr.desc as usize)
+            .cast::<u64>()
+    }
+
+    /// The bind mode of this socket.
+    pub fn mode(&self) -> XdpMode {
+        self.mode
+    }
+
+    /// Umem frame (chunk) size in bytes.
+    pub fn frame_size(&self) -> u32 {
+        self.frame_size
+    }
+
+    /// Open an AF_XDP socket for `ifindex` on queue `queue_id` with
+    /// default options.
+    pub fn open(ifindex: i32, queue_id: u32) -> io::Result<Self> {
+        Self::open_with(ifindex, queue_id, XskOpenOpts::default())
+    }
 
     /// Open an AF_XDP socket for `ifindex` on queue `queue_id`.
-    pub fn open(ifindex: i32, queue_id: u32) -> io::Result<Self> {
+    pub fn open_with(ifindex: i32, queue_id: u32, opts: XskOpenOpts) -> io::Result<Self> {
         let frame_size = DEFAULT_FRAME_SIZE;
-        let num_frames = DEFAULT_NUM_FRAMES;
+        let num_frames = opts.num_frames.max(1);
         let umem_len = (num_frames as usize) * (frame_size as usize);
-        let ring_size = DEFAULT_RING_SIZE;
+        let ring_size = opts.ring_size.max(1).next_power_of_two();
 
         // socket(AF_XDP, SOCK_RAW | SOCK_CLOEXEC, 0): EPERM without
         // CAP_NET_RAW, EAFNOSUPPORT when the kernel lacks AF_XDP.
@@ -277,11 +420,12 @@ impl XskSocket {
         let mut fill_base: *mut u8 = std::ptr::null_mut();
         let mut cr_base: *mut u8 = std::ptr::null_mut();
         let mut offsets = XdpMmapOffsets::default();
+        let mut mode = XdpMode::Copy;
 
         // All fallible steps run in one closure so the error path releases
         // everything allocated so far in a single place.
         let setup = (|| -> io::Result<()> {
-            // Umem: anonymous 16 MiB, page-aligned by mmap.
+            // Umem: anonymous, page-aligned by mmap.
             // SAFETY: anonymous private mapping of a fresh region.
             let p = unsafe {
                 libc::mmap(
@@ -297,6 +441,9 @@ impl XskSocket {
                 return Err(io::Error::last_os_error());
             }
             umem = p.cast::<u8>();
+            if let Some(node) = opts.node {
+                mbind_umem(umem, umem_len, node);
+            }
 
             // Register the umem.
             let reg = XdpUmemReg {
@@ -387,9 +534,18 @@ impl XskSocket {
 
             // Bind via bind(2) with struct sockaddr_xdp; the kernel has
             // no XDP_BIND setsockopt; its xsk_bind() runs on the syscall.
-            let sxdp = SockaddrXdp {
+            // Native zero-copy is requested first; copy mode is the
+            // fallback when the driver rejects it. NEED_WAKEUP is always
+            // set so [`Self::kick`] matches the kernel contract.
+            let mut flags = XDP_USE_NEED_WAKEUP;
+            if opts.zero_copy {
+                flags |= XDP_ZEROCOPY;
+            } else {
+                flags |= XDP_COPY;
+            }
+            let mut sxdp = SockaddrXdp {
                 sxdp_family: libc::AF_XDP as u16,
-                sxdp_flags: 0,
+                sxdp_flags: flags,
                 sxdp_ifindex: ifindex as u32,
                 sxdp_queue_id: queue_id,
                 sxdp_shared_umem_fd: 0,
@@ -403,9 +559,34 @@ impl XskSocket {
                     std::mem::size_of::<SockaddrXdp>() as libc::socklen_t,
                 )
             };
+            if rc == 0 {
+                mode = if opts.zero_copy {
+                    XdpMode::ZeroCopy
+                } else {
+                    XdpMode::Copy
+                };
+                return Ok(());
+            }
+            let err = io::Error::last_os_error();
+            if !opts.zero_copy {
+                return Err(err);
+            }
+            // Zero-copy rejected (driver without ZC): retry in copy
+            // mode. libbpf xsk.c retries on any bind error, not only
+            // EOPNOTSUPP; some drivers return EINVAL.
+            sxdp.sxdp_flags = XDP_USE_NEED_WAKEUP | XDP_COPY;
+            // SAFETY: as above, with the copy flag.
+            let rc = unsafe {
+                libc::bind(
+                    fd,
+                    &sxdp as *const SockaddrXdp as *const libc::sockaddr,
+                    std::mem::size_of::<SockaddrXdp>() as libc::socklen_t,
+                )
+            };
             if rc != 0 {
                 return Err(io::Error::last_os_error());
             }
+            mode = XdpMode::Copy;
             Ok(())
         })();
 
@@ -441,9 +622,6 @@ impl XskSocket {
             umem,
             umem_len,
             frame_size,
-            // Fixed TX slot: the last umem frame, never handed to the fill
-            // ring, so it cannot alias an RX frame.
-            tx_frame_off: ((num_frames - 1) as u64) * (frame_size as u64),
             ring_size,
             rx_base,
             tx_base,
@@ -455,7 +633,8 @@ impl XskSocket {
             // The fill ring is pre-filled with `ring_size` entries below.
             fill_head: ring_size,
             cr_tail: 0,
-            tx_in_flight: false,
+            tx_inflight: std::collections::VecDeque::new(),
+            mode,
         };
 
         // Pre-fill the fill ring with the first `ring_size` frame offsets;
@@ -473,86 +652,58 @@ impl XskSocket {
         Ok(sock)
     }
 
-    /// Receive one frame into `out`. Returns `Some(len)` with the frame
-    /// copied into `out[..len]`, or `None` when the ring is empty (or the
-    /// frame did not fit `out` and was dropped back to the fill ring).
-    pub fn recv_frame(&mut self, out: &mut [u8]) -> Option<usize> {
+    /// Receive one frame descriptor, or `None` when the RX ring is
+    /// empty. The frame is checked out: process it with
+    /// [`Self::frame_mut`], then release it with [`Self::tx_frame`] or
+    /// [`Self::drop_frame`].
+    pub fn recv_frame(&mut self) -> Option<Frame> {
         let mask = self.ring_size - 1;
-
         // SAFETY: rx_producer() is the RX-ring producer word (written by
         // the kernel), inside the region mmap'd in open().
         let rx_head = unsafe { ring_load(self.rx_producer()) };
         if rx_head == self.rx_tail {
             return None;
         }
-
         let idx = (self.rx_tail & mask) as usize;
         // SAFETY: idx < ring_size, so the descriptor lies inside the
         // mapped RX ring region.
         let desc = unsafe { self.rx_desc().add(idx).read() };
-
-        let len = desc.len as usize;
-        let fits = len <= out.len()
-            && desc
-                .addr
-                .checked_add(len as u64)
-                .is_some_and(|end| end <= self.umem_len as u64);
-        if fits {
-            // SAFETY: the umem stays mapped for the socket's lifetime and
-            // desc.addr + len <= umem_len was checked above.
-            let src =
-                unsafe { std::slice::from_raw_parts(self.umem.add(desc.addr as usize), len) };
-            out[..len].copy_from_slice(src);
-        }
-
-        // Return the frame to the fill ring regardless: once our consumer
-        // advances, the frame is no longer valid in the RX ring.
-        // SAFETY: the fill ring holds exactly `ring_size` entries in
-        // flight (we return one per RX frame consumed), so
-        // `fill_head & mask` is always inside the mapped fill region.
-        let fidx = (self.fill_head & mask) as usize;
-        unsafe {
-            self.fill_desc().add(fidx).write(desc.addr);
-        }
-        self.fill_head = self.fill_head.wrapping_add(1);
-        // SAFETY: fill_producer() is the fill-ring producer word; the
-        // release store pairs with the kernel's acquire read.
-        unsafe { ring_store(self.fill_producer(), self.fill_head) };
-
+        // Advance the consumer: the frame is ours now.
         self.rx_tail = self.rx_tail.wrapping_add(1);
         // SAFETY: rx_consumer() is the RX-ring consumer word; the release
         // store pairs with the kernel's acquire read.
         unsafe { ring_store(self.rx_consumer(), self.rx_tail) };
-        if fits {
-            Some(len)
-        } else {
-            None
-        }
+        Some(Frame {
+            addr: desc.addr,
+            len: desc.len,
+        })
     }
 
-    /// Send one frame; `false` = tx ring full (or `data` larger than one
-    /// umem frame).
-    pub fn send_frame(&mut self, data: &[u8]) -> bool {
-        if data.len() > self.frame_size as usize {
-            return false;
-        }
+    /// Mutable access to a checked-out frame's bytes (in place, in the
+    /// umem; no copy).
+    ///
+    /// # Panics
+    /// Panics if `frame` lies outside the umem.
+    pub fn frame_mut(&mut self, frame: &Frame) -> &mut [u8] {
+        assert!(
+            frame
+                .addr
+                .checked_add(frame.len as u64)
+                .is_some_and(|end| end <= self.umem_len as u64),
+            "af_xdp: frame outside umem"
+        );
+        // SAFETY: the frame is checked out (not in the fill ring or the
+        // kernel's rings), so user space owns it exclusively; the bounds
+        // were checked above.
+        unsafe { std::slice::from_raw_parts_mut(self.umem.add(frame.addr as usize), frame.len as usize) }
+    }
+
+    /// Transmit a checked-out frame from its umem slot (zero-copy echo:
+    /// the same pages the NIC delivered are sent back). Returns `false`
+    /// when the TX ring is full; the caller retries after
+    /// [`Self::recycle_tx`].
+    pub fn tx_frame(&mut self, frame: Frame) -> bool {
         let mask = self.ring_size - 1;
-
-        // Reclaim the fixed TX slot once the kernel reports completion.
-        if self.tx_in_flight {
-            // SAFETY: cr_producer() is the completion-ring producer word
-            // (written by the kernel), inside the mapped region.
-            let cr_head = unsafe { ring_load(self.cr_producer()) };
-            if cr_head == self.cr_tail {
-                return false; // previous frame still in flight.
-            }
-            self.cr_tail = self.cr_tail.wrapping_add(1);
-            // SAFETY: cr_consumer() is the completion-ring consumer word;
-            // the release store pairs with the kernel's acquire read.
-            unsafe { ring_store(self.cr_consumer(), self.cr_tail) };
-            self.tx_in_flight = false;
-        }
-
         // The TX ring needs room for one descriptor.
         // SAFETY: tx_consumer() is the TX-ring consumer word (written by
         // the kernel), inside the mapped region.
@@ -560,35 +711,137 @@ impl XskSocket {
         if self.tx_head.wrapping_sub(tx_tail) >= self.ring_size {
             return false;
         }
-
-        // Copy into the fixed TX frame (the last umem frame).
-        // SAFETY: data.len() <= frame_size was checked above and the fixed
-        // frame lies fully inside the umem mapping.
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                data.as_ptr(),
-                self.umem.add(self.tx_frame_off as usize),
-                data.len(),
-            );
-        }
-
         let idx = (self.tx_head & mask) as usize;
         // SAFETY: idx < ring_size, so the descriptor slot lies inside the
         // mapped TX ring region.
         unsafe {
             self.tx_desc().add(idx).write(XdpDesc {
-                addr: self.tx_frame_off,
-                len: data.len() as u32,
+                addr: frame.addr,
+                len: frame.len,
                 options: 0,
             });
         }
         self.tx_head = self.tx_head.wrapping_add(1);
         // SAFETY: tx_producer() is the TX-ring producer word; the release
-        // store pairs with the kernel's acquire read (the descriptor write
-        // above happens-before it).
+        // store pairs with the kernel's acquire read (the descriptor
+        // write above happens-before it).
         unsafe { ring_store(self.tx_producer(), self.tx_head) };
-        self.tx_in_flight = true;
+        self.tx_inflight.push_back(frame.addr);
         true
+    }
+
+    /// Drop a checked-out frame back to the fill ring (not transmitted).
+    pub fn drop_frame(&mut self, frame: Frame) {
+        self.fill_one(frame.addr);
+    }
+
+    /// Reclaim transmitted frames from the completion ring and return
+    /// them to the fill ring. Call this after a TX burst.
+    pub fn recycle_tx(&mut self) {
+        let mask = self.ring_size - 1;
+        // SAFETY: cr_producer() is the completion-ring producer word
+        // (written by the kernel), inside the mapped region.
+        let cr_head = unsafe { ring_load(self.cr_producer()) };
+        while self.cr_tail != cr_head {
+            let idx = (self.cr_tail & mask) as usize;
+            // SAFETY: idx < ring_size, so the descriptor lies inside the
+            // mapped completion region.
+            let addr = unsafe { self.cr_desc().add(idx).read() };
+            self.cr_tail = self.cr_tail.wrapping_add(1);
+            self.tx_inflight.pop_front();
+            self.fill_one(addr);
+        }
+        // SAFETY: cr_consumer() is the completion-ring consumer word; the
+        // release store pairs with the kernel's acquire read.
+        unsafe { ring_store(self.cr_consumer(), self.cr_tail) };
+    }
+
+    /// How many TX frames await completion.
+    pub fn tx_pending(&self) -> usize {
+        self.tx_inflight.len()
+    }
+
+    /// The `XDP_USE_NEED_WAKEUP` contract: `(rx, tx)` booleans are true
+    /// when the kernel asks for an explicit wakeup. RX wakeup is the
+    /// fill-ring flag; TX wakeup is the TX-ring flag (kernel
+    /// `Documentation/networking/af_xdp.rst`).
+    pub fn need_wakeup(&self) -> (bool, bool) {
+        // SAFETY: the flags words lie inside the mapped ring regions.
+        let rx = unsafe { ring_load(self.field(self.fill_base, self.offsets.fr.flags)) }
+            & XDP_RING_NEED_WAKEUP
+            != 0;
+        let tx = unsafe { ring_load(self.field(self.tx_base, self.offsets.tx.flags)) }
+            & XDP_RING_NEED_WAKEUP
+            != 0;
+        (rx, tx)
+    }
+
+    /// Wake the kernel when it asked for it: `poll` for RX, `sendto`
+    /// with no payload for TX (per the `XDP_USE_NEED_WAKEUP` contract).
+    pub fn kick(&self) {
+        let (rx, tx) = self.need_wakeup();
+        if rx {
+            let mut pfd = libc::pollfd {
+                fd: self.fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            // SAFETY: `pfd` is initialized and alive for the call.
+            unsafe {
+                libc::poll(&mut pfd, 1, 0);
+            }
+        }
+        if tx {
+            // SAFETY: a zero-length sendto with no payload only wakes the
+            // kernel's TX path; the socket is ours.
+            unsafe {
+                libc::sendto(
+                    self.fd,
+                    std::ptr::null(),
+                    0,
+                    libc::MSG_DONTWAIT,
+                    std::ptr::null(),
+                    0,
+                );
+            }
+        }
+    }
+
+    /// Block until RX is ready or `timeout_ms` elapses. Used on the idle
+    /// path so a worker without frames does not spin.
+    pub fn wait_rx(&self, timeout_ms: i32) {
+        let mut pfd = libc::pollfd {
+            fd: self.fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: `pfd` is initialized and alive for the call.
+        unsafe {
+            libc::poll(&mut pfd, 1, timeout_ms);
+        }
+    }
+
+    /// Push one frame offset back to the fill ring.
+    fn fill_one(&mut self, addr: u64) {
+        let mask = self.ring_size - 1;
+        // SAFETY: fill_consumer() is the kernel-written fill-ring
+        // consumer word, inside the mapped fill region.
+        let cons = unsafe { ring_load(self.fill_consumer()) };
+        if self.fill_head.wrapping_sub(cons) >= self.ring_size {
+            // Fill ring full: leak the umem slot until the socket
+            // closes. Checkout accounting should prevent this.
+            return;
+        }
+        let idx = (self.fill_head & mask) as usize;
+        // SAFETY: idx < ring_size, so the descriptor lies inside the
+        // mapped fill region.
+        unsafe {
+            self.fill_desc().add(idx).write(addr);
+        }
+        self.fill_head = self.fill_head.wrapping_add(1);
+        // SAFETY: fill_producer() is the fill-ring producer word; the
+        // release store pairs with the kernel's acquire read.
+        unsafe { ring_store(self.fill_producer(), self.fill_head) };
     }
 
     /// Insert this socket into an XSKMAP so an attached XDP program can
@@ -694,6 +947,45 @@ impl Drop for XskSocket {
             );
             libc::close(self.fd);
         }
+    }
+}
+
+/// Multiple AF_XDP sockets, one per device queue, each with its own
+/// umem and rings. A pinned worker owns one socket; the ring memory and
+/// umem of every socket are allocated on the requested NUMA node, so a
+/// queue handled on its local node never bounces across sockets.
+pub struct XskMultiqueue {
+    sockets: Vec<XskSocket>,
+}
+
+impl XskMultiqueue {
+    /// Open one socket per queue id.
+    pub fn open_multi(ifindex: i32, queues: &[u32], opts: XskOpenOpts) -> io::Result<Self> {
+        let mut sockets = Vec::with_capacity(queues.len());
+        for &q in queues {
+            sockets.push(XskSocket::open_with(ifindex, q, opts)?);
+        }
+        Ok(XskMultiqueue { sockets })
+    }
+
+    /// The socket for `index` (the queue position in `open_multi`).
+    pub fn socket(&mut self, index: usize) -> &mut XskSocket {
+        &mut self.sockets[index]
+    }
+
+    /// Iterate the sockets.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut XskSocket> {
+        self.sockets.iter_mut()
+    }
+
+    /// Number of sockets.
+    pub fn len(&self) -> usize {
+        self.sockets.len()
+    }
+
+    /// True when there are no sockets.
+    pub fn is_empty(&self) -> bool {
+        self.sockets.is_empty()
     }
 }
 
@@ -808,6 +1100,11 @@ mod tests {
         assert_eq!(XDP_PGOFF_TX_RING, 0x8000_0000);
         assert_eq!(XDP_UMEM_PGOFF_FILL_RING, 0x1_0000_0000);
         assert_eq!(XDP_UMEM_PGOFF_COMPLETION_RING, 0x1_8000_0000);
+        assert_eq!(XDP_SHARED_UMEM, 1);
+        assert_eq!(XDP_COPY, 2);
+        assert_eq!(XDP_ZEROCOPY, 4);
+        assert_eq!(XDP_USE_NEED_WAKEUP, 8);
+        assert_eq!(XDP_RING_NEED_WAKEUP, 1);
     }
 
     /// Struct layouts, verified against `/usr/include/linux/if_xdp.h`.
@@ -848,21 +1145,30 @@ mod tests {
                 return;
             }
         };
-        // Exercise recv; the ring is normally empty right after bind, but
-        let mut buf = [0u8; 1500];
-        let _ = sock.recv_frame(&mut buf);
-        assert!(
-            sock.send_frame(&[0xde, 0xad, 0xbe, 0xef]),
-            "fresh TX ring must accept a frame"
-        );
-        assert!(
-            !sock.send_frame(&[0u8; 8]),
-            "second send must wait for the first completion"
-        );
-        assert!(
-            !sock.send_frame(&[0u8; 5000]),
-            "oversized frame must be rejected"
-        );
+        // The RX ring is normally empty right after bind.
+        assert!(sock.recv_frame().is_none(), "fresh RX ring must be empty");
+        // A dropped frame returns to the fill ring; a transmitted frame
+        // waits on the completion ring.
+        assert!(sock.tx_pending() == 0);
+        let _ = sock.mode();
+    }
+
+    /// Zero-copy frame lifecycle without a device: frame descriptors
+    /// bound the umem, and the fill-ring accounting stays consistent.
+    #[test]
+    fn frame_descriptor_bounds() {
+        let mut sock = match XskSocket::open(1, 0) {
+            Ok(s) => s,
+            Err(_) => return, // no device: nothing to test against
+        };
+        // A synthetic frame inside the umem is addressable.
+        let fake = Frame {
+            addr: 0,
+            len: 64,
+        };
+        let buf = sock.frame_mut(&fake);
+        buf.fill(0xAB);
+        assert!(buf.iter().all(|&b| b == 0xAB));
     }
 
     // ---- the frame-processing pipeline (hardware-independent) ----

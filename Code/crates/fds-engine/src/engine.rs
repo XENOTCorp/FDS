@@ -60,9 +60,11 @@ pub fn run(cfg: &Config) -> std::io::Result<()> {
     run_until(cfg, Arc::new(signals::interrupted))
 }
 
-/// The engine proper: spawn one worker per logical CPU, plus an optional
-/// AF_XDP forwarding thread, and join them when `stop` turns true. The
-/// binary passes [`signals::interrupted`]; tests pass their own flag.
+/// The engine proper: spawn one worker per logical CPU and join them
+/// when `stop` turns true. When `af_xdp.device` is set, each worker
+/// runs the AF_XDP zero-copy loop on a queue instead of the kernel
+/// socket path. The binary passes [`signals::interrupted`]; tests pass
+/// their own flag.
 fn run_until(
     cfg: &Config,
     stop: Arc<dyn Fn() -> bool + Send + Sync>,
@@ -93,12 +95,6 @@ fn run_until(
         );
     }
 
-    // Experimental AF_XDP: when a device is configured and opens, a
-    // dedicated thread forwards frames on that queue (kernel bypass);
-    // otherwise this is a no-op and the engine runs on the kernel
-    // datapath.
-    let xdp = spawn_xdp_thread(cfg, &stop);
-
     for w in workers {
         // The outer `?` propagates a worker panic; the inner one
         // propagates the worker's own error (e.g. a bind failure) instead
@@ -107,10 +103,6 @@ fn run_until(
             .join()
             .map_err(|_| std::io::Error::other("worker panicked"))?;
         result?;
-    }
-    if let Some(x) = xdp {
-        let forwarded = x.join().unwrap_or(0);
-        eprintln!("fds: af_xdp thread stopped ({forwarded} frames forwarded)");
     }
     let (p, b, d) = metrics.totals();
     eprintln!("fds: engine stopped ({p} packets, {b} bytes, {d} drops)");
@@ -169,6 +161,22 @@ fn worker_main(
         match pin_to_core(cpu) {
             Ok(()) => eprintln!("fds: worker {id} pinned to cpu {cpu}"),
             Err(e) => eprintln!("fds: worker {id} pinning unavailable ({e}), unpinned"),
+        }
+    }
+
+    // AF_XDP is a first-class datapath: when a device is configured,
+    // this worker binds one of its queues and runs the zero-copy frame
+    // loop instead of the kernel socket path. Every worker takes a
+    // queue (round-robin over `af_xdp.queues`), so multiqueue devices
+    // scale across the workers with NUMA-local umems.
+    if !cfg.af_xdp.device.is_empty() {
+        #[cfg(feature = "af-xdp")]
+        {
+            return worker_af_xdp_loop(id, cfg, metrics, stop);
+        }
+        #[cfg(not(feature = "af-xdp"))]
+        {
+            eprintln!("fds: worker {id}: af-xdp feature disabled; using kernel datapath");
         }
     }
 
@@ -430,143 +438,123 @@ fn startup_probes(cfg: &Config) {
     {
         if !cfg.af_xdp.device.is_empty() {
             eprintln!(
-                "fds: af_xdp configured for device {} (queue {})",
-                cfg.af_xdp.device, cfg.af_xdp.queue
+                "fds: af_xdp configured for device {} (queues {:?}, queue {})",
+                cfg.af_xdp.device, cfg.af_xdp.queues, cfg.af_xdp.queue
             );
         }
     }
 }
 
-/// SAFETY wrapper: the [`fds::af_xdp::XskSocket`] is created in
-/// `spawn_xdp_thread` and moved into the forwarding thread immediately;
-/// no other thread ever touches it. Its raw ring/umem pointers are only
-/// dereferenced in that thread, which also runs `Drop`.
-struct SendXsk(fds::af_xdp::XskSocket);
-
-// SAFETY: single-owner transfer; the socket is only ever accessed from
-// the forwarding thread that owns it (see the struct doc).
-unsafe impl Send for SendXsk {}
-
-impl SendXsk {
-    fn recv_frame(&mut self, out: &mut [u8]) -> Option<usize> {
-        self.0.recv_frame(out)
-    }
-    fn send_frame(&mut self, data: &[u8]) -> bool {
-        self.0.send_frame(data)
-    }
-}
-
-/// Experimental AF_XDP forwarding thread (feature `af-xdp`): bind
-/// `cfg.af_xdp.device` queue and forward frames rx->tx until `stop`.
-/// Device-gated: absent a configured device, or when the socket cannot
-/// open (no XDP-capable driver, no CAP_NET_RAW), the engine logs and
-/// runs on the kernel datapath only.
+/// The AF_XDP worker datapath (feature `af-xdp`): this worker pins to
+/// its core, binds one queue of `cfg.af_xdp.device` (round-robin over
+/// `af_xdp.queues`), and runs the zero-copy echo loop. Frames are
+/// processed in place in the umem (no copy), echoed out of the same
+/// umem slot, and reclaimed from the completion ring. When
+/// `af_xdp.numa` is set, the umem is bound to the worker's NUMA node,
+/// so the data plane never bounces across sockets.
 #[cfg(feature = "af-xdp")]
-fn spawn_xdp_thread(
+fn worker_af_xdp_loop(
+    id: usize,
     cfg: &Config,
-    stop: &Arc<dyn Fn() -> bool + Send + Sync>,
-) -> Option<std::thread::JoinHandle<u64>> {
-    if cfg.af_xdp.device.is_empty() {
-        return None;
-    }
+    metrics: &Metrics,
+    stop: &(dyn Fn() -> bool + Send + Sync),
+) -> std::io::Result<()> {
     use std::ffi::CString;
+    let queues = if cfg.af_xdp.queues.is_empty() {
+        vec![cfg.af_xdp.queue]
+    } else {
+        cfg.af_xdp.queues.clone()
+    };
+    let queue = queues[id % queues.len()];
+
     let Ok(dev) = CString::new(cfg.af_xdp.device.as_str()) else {
-        eprintln!("fds: af_xdp device name contains a NUL byte");
-        return None;
+        return Err(std::io::Error::other("af_xdp device name contains a NUL byte"));
     };
     // SAFETY: `dev` is a valid NUL-terminated C string for the call.
     let ifindex = unsafe { libc::if_nametoindex(dev.as_ptr()) };
     if ifindex == 0 {
-        eprintln!(
-            "fds: af_xdp device {} not found; kernel datapath only",
+        return Err(std::io::Error::other(format!(
+            "af_xdp device {} not found",
             cfg.af_xdp.device
-        );
-        return None;
+        )));
     }
-    let queue = cfg.af_xdp.queue;
-    let stop = stop.clone();
-    match fds::af_xdp::XskSocket::open(ifindex as i32, queue) {
-        Ok(xsk) => {
-            // Register the socket in the pinned XSKMAP so the attached
-            // XDP program can steer frames into it. Without this the
-            // socket binds but receives nothing.
-            if !cfg.af_xdp.xskmap.is_empty() {
-                if let Err(e) = xsk.register_in_map(&cfg.af_xdp.xskmap, queue) {
-                    eprintln!(
-                        "fds: af_xdp xskmap {} update failed ({e}); kernel datapath only",
-                        cfg.af_xdp.xskmap
-                    );
-                    return None;
-                }
-            }
-            eprintln!(
-                "fds: af_xdp bound {} queue {queue} (ifindex {ifindex}); forwarding frames",
-                cfg.af_xdp.device
-            );
-            let mut guarded: SendXsk = SendXsk(xsk);
-            Some(
-                match std::thread::Builder::new()
-                    .name("fds-af-xdp".to_string())
-                    .stack_size(cfg.core.stack_bytes)
-                    .spawn(move || {
-                        let mut buf = [0u8; 4096];
-                        let mut forwarded = 0u64;
-                        let mut dropped = 0u64;
-                        while !stop() {
-                            // Method calls on the whole `SendXsk` wrapper
-                            // (not the inner field): the move closure then
-                            // captures the wrapper, whose unsafe `Send`
-                            // impl is in effect. Capturing `guarded.0`
-                            // directly would capture the raw-pointer
-                            // `XskSocket` field and fail to send.
-                            //
-                            // recv_frame consumes the RX frame (returning
-                            // it to the fill ring); the datapath validates
-                            // + rewrites it for echo, and only Echoed
-                            // frames are transmitted.
-                            if let Some(n) = guarded.recv_frame(&mut buf) {
-                                match fds::af_xdp::process_frame(&mut buf[..n]) {
-                                    fds::af_xdp::FrameAction::Echo => {
-                                        if guarded.send_frame(&buf[..n]) {
-                                            forwarded += 1;
-                                        }
-                                    }
-                                    fds::af_xdp::FrameAction::Drop => dropped += 1,
-                                }
-                            }
-                        }
-                        eprintln!(
-                            "fds: af_xdp thread stopped ({forwarded} forwarded, {dropped} dropped)"
-                        );
-                        forwarded
-                    }) {
-                    Ok(h) => h,
-                    Err(e) => {
-                        eprintln!("fds: af_xdp thread spawn failed: {e}");
-                        return None;
-                    }
-                },
+
+    // The worker is pinned above; read its NUMA node for the umem.
+    let node = if cfg.af_xdp.numa {
+        let mut cpu: libc::c_uint = 0;
+        let mut node_id: libc::c_uint = 0;
+        // SAFETY: getcpu writes the current cpu and node into the uints.
+        let rc = unsafe {
+            libc::syscall(
+                libc::SYS_getcpu,
+                &mut cpu as *mut libc::c_uint,
+                &mut node_id as *mut libc::c_uint,
+                0,
             )
-        }
-        Err(e) => {
-            eprintln!(
-                "fds: af_xdp device {} unavailable ({e}); kernel datapath only",
-                cfg.af_xdp.device
-            );
+        };
+        if rc == 0 {
+            Some(node_id as i32)
+        } else {
             None
         }
+    } else {
+        None
+    };
+    let opts = fds::af_xdp::XskOpenOpts {
+        ring_size: cfg.af_xdp.ring_size.clamp(1, 65536).next_power_of_two(),
+        num_frames: cfg.af_xdp.num_frames.clamp(1, 1 << 20),
+        zero_copy: cfg.af_xdp.zero_copy,
+        node,
+    };
+    let mut xsk = fds::af_xdp::XskSocket::open_with(ifindex as i32, queue, opts)?;
+    if !cfg.af_xdp.xskmap.is_empty() {
+        xsk.register_in_map(&cfg.af_xdp.xskmap, queue)?;
     }
-}
+    eprintln!(
+        "fds: worker {id}: af_xdp bound {} queue {queue} (ifindex {ifindex}, {:?})",
+        cfg.af_xdp.device,
+        xsk.mode()
+    );
 
-#[cfg(not(feature = "af-xdp"))]
-fn spawn_xdp_thread(
-    cfg: &Config,
-    _stop: &Arc<dyn Fn() -> bool + Send + Sync>,
-) -> Option<std::thread::JoinHandle<u64>> {
-    if !cfg.af_xdp.device.is_empty() {
-        eprintln!("fds: af-xdp feature disabled; ignoring af_xdp.device");
+    let mut forwarded = 0u64;
+    let mut dropped = 0u64;
+    while !stop() {
+        let mut progressed = false;
+        while let Some(frame) = xsk.recv_frame() {
+            let n = frame.len();
+            // Zero-copy: process and echo in the same umem slot.
+            match fds::af_xdp::process_frame(&mut xsk.frame_mut(&frame)[..n]) {
+                fds::af_xdp::FrameAction::Echo => {
+                    metrics.add_packets(id, 1);
+                    metrics.add_bytes(id, n as u64);
+                    if xsk.tx_frame(frame) {
+                        forwarded += 1;
+                    } else {
+                        // TX ring full: drop the frame back to the fill
+                        // ring; the next loop pass recycles completions.
+                        xsk.drop_frame(frame);
+                        dropped += 1;
+                    }
+                }
+                fds::af_xdp::FrameAction::Drop => {
+                    xsk.drop_frame(frame);
+                    dropped += 1;
+                }
+            }
+            progressed = true;
+        }
+        xsk.recycle_tx();
+        xsk.kick();
+        if !progressed {
+            // Idle: poll the socket so the worker yields to the kernel
+            // instead of spinning (NEED_WAKEUP contract).
+            xsk.wait_rx(1);
+        }
     }
-    None
+    eprintln!(
+        "fds: worker {id}: af_xdp stopped ({forwarded} forwarded, {dropped} dropped)"
+    );
+    Ok(())
 }
 
 /// Drain the UDP socket to EAGAIN, echoing every datagram back to its

@@ -313,6 +313,40 @@ impl UdpSocket {
         Ok(count)
     }
 
+    /// Receive one datagram (single datagram path). Returns
+    /// `Ok((len, src))`. `WouldBlock` means drained (nothing to
+    /// receive); callers treat it as drain-to-EAGAIN.
+    pub fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+        let mut name: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+        let mut iov = libc::iovec {
+            // SAFETY: the kernel writes at most buf.len() bytes into
+            // `buf`, which is a valid mutable slice for the call.
+            iov_base: buf.as_mut_ptr().cast::<libc::c_void>(),
+            iov_len: buf.len(),
+        };
+        let mut msg: libc::msghdr = unsafe { std::mem::zeroed() };
+        msg.msg_name = (&mut name as *mut libc::sockaddr_storage).cast::<libc::c_void>();
+        msg.msg_namelen = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+        msg.msg_iov = &mut iov;
+        msg.msg_iovlen = 1;
+        // SAFETY: `msg`/`iov`/`name` are initialized; the kernel fills
+        // `name` and writes at most `buf.len()` bytes into `buf`.
+        let n = unsafe { libc::recvmsg(self.fd.as_raw_fd(), &mut msg, 0) };
+        if n < 0 {
+            let err = io::Error::last_os_error();
+            return if err.raw_os_error() == Some(libc::EAGAIN) {
+                Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "udp: recv EAGAIN",
+                ))
+            } else {
+                Err(err)
+            };
+        }
+        let n = (n as usize).min(buf.len());
+        Ok((n, addr_from_storage(&name)))
+    }
+
     /// Send one datagram (single datagram path).
     pub fn send_to(&self, data: &[u8], dst: SocketAddr) -> std::io::Result<usize> {
         let sa = sockaddr_in_from(dst)?;

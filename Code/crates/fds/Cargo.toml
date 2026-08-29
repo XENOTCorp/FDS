@@ -26,7 +26,7 @@ static_assertions = "1.1"
 # consumer that does not need SCTP, io_uring, or AF_XDP.
 # sctp: FFI declared in-crate; links libsctp (pkg-config libsctp).
 # io-uring: experimental reactor path; links liburing via the io-uring crate.
-# af-xdp: experimental raw-Ethernet path; pure libc constants, needs an
+# af-xdp: zero-copy raw-Ethernet path; pure libc UAPI, needs an
 # XDP-attached device at runtime (tests skip when unavailable).
 default = ["sctp", "io-uring", "af-xdp"]
 sctp = []

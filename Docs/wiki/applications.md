@@ -2,14 +2,21 @@
 
 The `fds` crate is the library surface. The `fds` binary in `fds-engine` is a reference echo loop. Applications build their own loops on the primitives.
 
+The stable surface for other programs is `fds::api`. It exposes a
+Driver/callback shape (`EpollDriver`, `IoUringDriver`) and an async
+shape (`AsyncRead`, `AsyncWrite`, `AsyncAccept`, `AsyncDatagram`) over
+the same transports.
+
 ## What the library covers
 
 - custom UDP protocols
 - custom TCP protocols with full-duplex parallel channels
+- Driver and AsyncRead/AsyncWrite adoption (`fds::api`)
 - batched receive and send
 - per-core connection tables with hot and cold cache lines
 - metrics over a Unix socket
 - `config.json` plus `FDS_*` overrides
+- AF_XDP zero-copy frame loop (`fds::af_xdp`)
 
 HTTP servers, DNS, FTP, and other protocols use the same surface.
 

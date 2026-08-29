@@ -69,6 +69,27 @@ modprobe sctp
 
 Engine keys are in `SctpConfig` (`init_max_streams`, `max_burst`, `partial_delivery_point`, `nodelay`). If `socket(..., IPPROTO_SCTP)` fails at runtime, the transport skips with a log line. Check the module.
 
+## AF_XDP
+
+The engine does not load an XDP program. Attach a redirect program that
+steers frames into the pinned XSKMAP before you start the engine.
+
+```sh
+ip link set dev eth0 xdp obj xdp_redirect.o sec xdp
+```
+
+`scripts/veth-af-xdp.sh` does this for a local veth pair.
+
+Zero-copy needs a driver that supports native XDP. If bind with
+`XDP_ZEROCOPY` fails, the socket falls back to copy mode and logs the
+mode. Confirm the mode in the worker start line (`ZeroCopy` or `Copy`).
+
+On a NUMA host, set `af_xdp.numa` and `core.pin_cores`. Each worker binds
+its umem to the node of its pinned CPU. Do not place a queue on a remote
+node.
+
+One queue belongs to one socket. Do not share a queue across workers.
+
 ## Verification
 
 ```sh

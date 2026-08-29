@@ -25,7 +25,7 @@ pub struct Config {
     pub metrics: MetricsConfig,
     pub zero_copy: ZeroCopyConfig,
     pub engine: EngineConfig,
-    /// AF_XDP device binding (experimental, device-gated).
+    /// AF_XDP device binding. Empty `device` keeps the kernel socket path.
     pub af_xdp: AfXdpConfig,
 }
 
@@ -241,21 +241,51 @@ impl Default for ZeroCopyConfig {
     }
 }
 
-/// AF_XDP device binding (experimental, feature `af-xdp`): when `device`
-/// is non-empty and the socket opens, a dedicated thread forwards frames
-/// on that queue rx->tx (kernel bypass). Absent a device (or without
-/// CAP_NET_RAW) the engine logs and continues on the kernel datapath.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+/// AF_XDP device binding (feature `af-xdp`): when `device` is
+/// non-empty, every worker binds a queue of the device and runs the
+/// zero-copy frame datapath (kernel bypass) instead of the kernel
+/// socket path. `queues` selects per-worker queues; empty = one queue
+/// per worker, round-robin over `queue` (for a single-queue device).
+/// Absent a device (or without CAP_NET_RAW) the engine logs and
+/// continues on the kernel datapath.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AfXdpConfig {
     /// Device name (e.g. "eth0"); empty = disabled.
     pub device: String,
-    /// Queue id on the device.
+    /// Queue id on the device (used when `queues` is empty).
     pub queue: u32,
+    /// Per-worker queue ids (one per worker, round-robin when shorter).
+    pub queues: Vec<u32>,
+    /// Bind with XDP_ZEROCOPY (falls back to XDP_COPY when the driver
+    /// rejects it).
+    pub zero_copy: bool,
+    /// Per-ring entry count (power of two).
+    pub ring_size: u32,
+    /// Umem frame count.
+    pub num_frames: u32,
+    /// Bind each worker's umem to its NUMA node (mbind); the worker
+    /// pins to its core first, so the data plane stays on-node.
+    pub numa: bool,
     /// Pinned XSKMAP path (bpffs) to register this socket in; empty =
     /// do not register (frames will not reach the socket without an XDP
     /// program steering into the map).
     pub xskmap: String,
+}
+
+impl Default for AfXdpConfig {
+    fn default() -> Self {
+        AfXdpConfig {
+            device: String::new(),
+            queue: 0,
+            queues: Vec::new(),
+            zero_copy: true,
+            ring_size: 256,
+            num_frames: 4096,
+            numa: false,
+            xskmap: String::new(),
+        }
+    }
 }
 
 impl Config {
@@ -308,6 +338,24 @@ impl Config {
         }
         if let Some(v) = env_u32("FDS_AF_XDP_QUEUE") {
             self.af_xdp.queue = v;
+        }
+        if let Ok(v) = std::env::var("FDS_AF_XDP_QUEUES") {
+            self.af_xdp.queues = v
+                .split(',')
+                .filter_map(|s| s.trim().parse().ok())
+                .collect();
+        }
+        if let Some(v) = env_flag("FDS_AF_XDP_ZERO_COPY") {
+            self.af_xdp.zero_copy = v;
+        }
+        if let Some(v) = env_u32("FDS_AF_XDP_RING_SIZE") {
+            self.af_xdp.ring_size = v;
+        }
+        if let Some(v) = env_u32("FDS_AF_XDP_NUM_FRAMES") {
+            self.af_xdp.num_frames = v;
+        }
+        if let Some(v) = env_flag("FDS_AF_XDP_NUMA") {
+            self.af_xdp.numa = v;
         }
         if let Ok(v) = std::env::var("FDS_AF_XDP_XSKMAP") {
             self.af_xdp.xskmap = v;

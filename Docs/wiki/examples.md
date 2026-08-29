@@ -85,16 +85,55 @@ The autotuner compares strategies on the current machine and kernel:
 bash scripts/autotune.sh
 ```
 
-## 9. AF_XDP on a supported NIC
+## 9. Adopt the public API
 
-Use an XDP-capable NIC (ixgbe, i40e, ice, mlx5). Replace `eth0` with your
-device name:
+`fds::api` is the surface other programs use. Two shapes sit on one
+core:
 
-```json
-{ "af_xdp": { "device": "eth0", "queue": 0 } }
+- Driver/callback: register fds, poll, read `Event`s. `EpollDriver` and
+  `IoUringDriver` implement `Driver`.
+- Async: `poll_read` / `poll_write` / `poll_accept` / `poll_recv_from`
+  in the `std::task::Poll` shape. Drive them with `noop_context()` or
+  with any runtime that calls `poll_*`.
+
+```rust
+use fds::api::{AsyncAccept, Driver, EpollDriver, Interest, TcpListener, noop_context};
+use std::os::fd::AsRawFd;
+use std::task::Poll;
+
+let mut driver = EpollDriver::new(64).unwrap();
+let mut listener = TcpListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+driver.register(listener.as_raw_fd(), 0, Interest::Readable).unwrap();
+let mut ctx = noop_context();
+loop {
+    driver.poll(Some(std::time::Duration::from_millis(100))).unwrap();
+    for ev in driver.events() {
+        if ev.token == 0 && ev.readable {
+            if let Poll::Ready(Ok(Some(_stream))) = listener.poll_accept(&mut ctx) {
+                // handle the stream
+            }
+        }
+    }
+    driver.clear_events();
+}
 ```
 
-The engine starts a forwarding thread that validates and echoes frames through the AF_XDP rings.
+## 10. AF_XDP on a supported NIC
+
+Use an XDP-capable NIC (ixgbe, i40e, ice, mlx5). Replace `eth0` with your
+device name. Each worker binds one queue. Native zero-copy is the default.
+
+```json
+{
+  "af_xdp": {
+    "device": "eth0",
+    "queues": [0, 1],
+    "zero_copy": true,
+    "numa": true,
+    "xskmap": "/sys/fs/bpf/xskmap"
+  }
+}
+```
 
 Bring up a local veth pair:
 

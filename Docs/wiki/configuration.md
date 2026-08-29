@@ -12,7 +12,14 @@ The schema is `Code/config/config.schema.json`. `fds-detect` generates it.
 - `reactor.busy_poll`: explicit spin for dedicated cores (default off).
 - `reactor.io_uring_entries`: ring size.
 - `reactor.io_uring_sq_thread`: SQPOLL CPU. 0 means off.
-- `af_xdp.device` / `af_xdp.queue`: XDP device queue for the frame pipeline.
+- `af_xdp.device`: NIC name. Empty means the kernel socket path (default).
+- `af_xdp.queue`: queue id when `queues` is empty.
+- `af_xdp.queues`: per-worker queue ids. Workers take queues round-robin.
+- `af_xdp.zero_copy`: bind with `XDP_ZEROCOPY`. Falls back to `XDP_COPY` when the driver rejects it (default on).
+- `af_xdp.ring_size`: per-ring entry count, power of two (default 256).
+- `af_xdp.num_frames`: umem frame count (default 4096).
+- `af_xdp.numa`: bind each worker's umem to its NUMA node with `mbind` (default off).
+- `af_xdp.xskmap`: pinned XSKMAP path. Empty means do not register.
 - `udp.incoming_cpu`: default off. On loopback it pins all traffic to one worker. Enable only with NIC RSS and IRQ affinity.
 
 Example:

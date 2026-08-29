@@ -11,7 +11,9 @@ runs on any supported Linux system.
 ## Features
 
 - TCP, UDP, and SCTP transports
-- epoll, io_uring, and AF_XDP datapaths
+- Public API: Driver/callback and AsyncRead/AsyncWrite (`fds::api`)
+- epoll, io_uring (multishot recv/accept, registered buffers, SEND_ZC),
+  and AF_XDP (native zero-copy, NUMA-local rings) datapaths
 - One worker per logical CPU
 - SO_REUSEPORT flow steering across workers
 - Batched receive and send (recvmmsg, sendmmsg, readv, writev)
@@ -88,7 +90,7 @@ Docs/              Documentation, benchmarks, thesis, standard
 | Crate | Role |
 | --- | --- |
 | `mol` | Atom and molecule framework |
-| `fds` | Transport library |
+| `fds` | Transport library and public API |
 | `fds-engine` | Echo engine binary `fds` |
 | `fds-detect` | Hardware detection and `config.json` tooling |
 

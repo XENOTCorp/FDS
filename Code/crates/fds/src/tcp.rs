@@ -318,6 +318,37 @@ impl TcpStream {
         Ok(n as usize)
     }
 
+    /// Write `buf`, returning the number of bytes accepted. The write
+    /// may be partial. `WouldBlock` means the kernel send buffer is
+    /// full; callers treat it as drain-to-EAGAIN (write readiness is
+    /// the mirror image of read readiness).
+    pub fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        // MSG_NOSIGNAL: the process does not ignore SIGPIPE, so writes
+        // to a reset connection must not raise it (same rule as
+        // `write_all`).
+        // SAFETY: send reads at most buf.len() bytes from `buf`, which
+        // is a valid slice for the duration of the call.
+        let n = unsafe {
+            libc::send(
+                self.fd.as_raw_fd(),
+                buf.as_ptr().cast::<libc::c_void>(),
+                buf.len(),
+                libc::MSG_NOSIGNAL,
+            )
+        };
+        if n < 0 {
+            let err = std::io::Error::last_os_error();
+            if would_block(&err) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WouldBlock,
+                    "tcp: write EAGAIN",
+                ));
+            }
+            return Err(err);
+        }
+        Ok(n as usize)
+    }
+
     /// Scatter-gather read into `bufs`, chunked over a stack `[iovec; 16]`.
     pub fn readv(&mut self, bufs: &mut [&mut [u8]]) -> std::io::Result<usize> {
         let mut total = 0usize;

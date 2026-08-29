@@ -57,16 +57,16 @@
         },
         "busy_poll": {
           "type": "boolean",
-          "default": false,
-          "description": "Explicit busy-poll spin (zero epoll timeout) for dedicated cores; default is event-driven.",
-          "x-trade-off": "Lowest wake latency at the cost of CPU spin when idle; on a shared machine the spin starves co-tenants.",
-          "x-derived-from": "engine default (event-driven)"
+          "default": true,
+          "description": "Busy-poll the ready queue to empty before yielding.",
+          "x-trade-off": "Lowest latency at the cost of CPU spin when idle; disable on shared CPUs.",
+          "x-derived-from": "engine default (latency target)"
         },
         "timeout_ms": {
           "type": "integer",
           "default": 0,
           "description": "Poll timeout in milliseconds when not busy-polling.",
-          "x-trade-off": "0 = event-driven (block in the kernel, waking every 100 ms to observe the stop flag); a positive value bounds wake latency at the cost of syscall rate.",
+          "x-trade-off": "0 with busy-poll off blocks indefinitely; a small timeout bounds wake latency at the cost of syscall rate.",
           "x-derived-from": "engine default"
         },
         "io_uring_entries": {
@@ -74,7 +74,7 @@
           "default": 256,
           "description": "io_uring ring entries (strategy io-uring).",
           "x-trade-off": "Larger rings hold more in-flight ops; entries are power-of-two and floored by the datapath (UDP slots + accept + timeout).",
-          "x-derived-from": "engine default (ring-capacity invariant)"
+          "x-derived-from": "engine default"
         },
         "io_uring_sq_thread": {
           "type": "integer",
@@ -297,8 +297,54 @@
         "queue": {
           "type": "integer",
           "default": 0,
-          "description": "Queue id on the AF_XDP device.",
+          "description": "Queue id on the AF_XDP device (used when queues is empty).",
           "x-trade-off": "Binding a queue dedicates it to the XDP path.",
+          "x-derived-from": "engine default"
+        },
+        "queues": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "default": [],
+          "description": "Per-worker queue ids; workers take queues round-robin.",
+          "x-trade-off": "One queue per worker gives per-core RSS-like scaling; a queue cannot be shared across sockets.",
+          "x-derived-from": "engine default"
+        },
+        "zero_copy": {
+          "type": "boolean",
+          "default": true,
+          "description": "Bind with XDP_ZEROCOPY; falls back to XDP_COPY when the driver rejects it.",
+          "x-trade-off": "Zero-copy uses the NIC's own memory for the umem (fastest); copy mode works on any driver.",
+          "x-derived-from": "engine default"
+        },
+        "ring_size": {
+          "type": "integer",
+          "default": 256,
+          "description": "Per-ring entry count (power of two).",
+          "x-trade-off": "Larger rings absorb bursts; smaller rings reduce memory.",
+          "x-derived-from": "engine default"
+        },
+        "num_frames": {
+          "type": "integer",
+          "default": 4096,
+          "description": "Umem frame count (one page each).",
+          "x-trade-off": "The umem is the RX/TX buffer pool; it must cover the ring depth plus in-flight frames.",
+          "x-derived-from": "engine default"
+        },
+        "numa": {
+          "type": "boolean",
+          "default": false,
+          "description": "Bind each worker's umem to its NUMA node (mbind).",
+          "x-trade-off": "On-node umems avoid cross-socket bounce; requires a NUMA machine and pinned workers.",
+          "x-derived-from": "engine default"
+        },
+        "xskmap": {
+          "type": "string",
+          "default": "",
+          "description": "Pinned XSKMAP path (bpffs) to register the socket in.",
+          "x-trade-off": "Without an XDP program steering frames into the map, the socket binds but receives nothing.",
           "x-derived-from": "engine default"
         }
       }

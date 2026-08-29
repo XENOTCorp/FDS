@@ -6,7 +6,7 @@ The engine runs one worker thread per logical CPU. Each worker owns its poller, 
 
 Each worker owns:
 
-- its datapath: epoll edge-triggered and event-driven with the syscall transports by default (a busy-poll spin is available for dedicated cores), or the io_uring completion-driven datapath;
+- its datapath: epoll edge-triggered and event-driven with the syscall transports by default (a busy-poll spin is available for dedicated cores), the io_uring completion-driven datapath, or the AF_XDP zero-copy frame loop when `af_xdp.device` is set;
 - its own SO_REUSEPORT UDP socket and TCP listener on the shared bind addresses. The kernel steers flows across workers by 4-tuple hash;
 - its own connection table, active-stream slot array, 64 KiB datagram receive batch, and per-core counters.
 
@@ -29,6 +29,25 @@ sockets (UDP/TCP)  ->  epoll: wait, copy events, drain handlers
 
 The metrics listener is registered on worker 0 only. Metrics are pulled over a Unix socket.
 
+## AF_XDP worker
+
+When `af_xdp.device` is set, the worker does not bind UDP or TCP sockets.
+It binds one AF_XDP queue (round-robin over `af_xdp.queues`). The umem
+lives on the worker's NUMA node when `af_xdp.numa` is true.
+
+```
+NIC queue -> XDP program -> XSKMAP -> AF_XDP RX ring
+                                        |
+                                        v
+                                  umem frame (in place)
+                                        |
+                              echo: TX ring (same slot)
+                              drop: fill ring
+```
+
+Each worker owns its socket, umem, and rings. Frame bytes do not cross
+a NUMA socket.
+
 ## Loop invariants
 
 - Edge-triggered with drain to EAGAIN. After an event fires, the handler must drain the fd until the syscall returns EAGAIN, or no further edge is generated and events are lost. The loop processes each poll batch fully before polling again.
@@ -49,7 +68,7 @@ The metrics listener is registered on worker 0 only. Metrics are pulled over a U
 | Crate | Role |
 | --- | --- |
 | `mol` | Atoms, molecules, FIFO rings, LIFO stacks, delayed feedback, buffers, SIMD checksums, layout |
-| `fds` | Reactor, TCP, UDP, SCTP, conn, config, metrics, parse |
+| `fds` | Public API, reactor, TCP, UDP, SCTP, conn, config, metrics, parse |
 | `fds-engine` | Binary `fds`: echo loop, CLI, benches |
 | `fds-detect` | Hardware detect, emit and validate `config.json` |
 
@@ -57,6 +76,7 @@ The metrics listener is registered on worker 0 only. Metrics are pulled over a U
 
 | Module | Responsibility |
 | --- | --- |
+| `api` | Driver/callback and AsyncRead/AsyncWrite surface for other programs |
 | `reactor` | rustix epoll, edge-triggered, preallocated event array |
 | `tcp` | nonblocking listener and stream (accept4, FASTOPEN, NODELAY, writev, splice) |
 | `udp` | recvmmsg/sendmmsg, GSO, GRO, MSG_ZEROCOPY |
@@ -67,5 +87,5 @@ The metrics listener is registered on worker 0 only. Metrics are pulled over a U
 | `metrics` | per-core line-packed counters, Unix-socket pull |
 | `config` | `config.json` plus `FDS_*` |
 | `util` | pinning, coarse monotonic ticks |
-| `io_uring_reactor` | experimental, feature `io-uring` |
-| `af_xdp` | experimental, feature `af-xdp` |
+| `io_uring_reactor` | completion datapath, feature `io-uring`: multishot recv/accept, registered buffers, SEND_ZC |
+| `af_xdp` | zero-copy frame datapath, feature `af-xdp`: `XDP_ZEROCOPY`, NUMA-local umem, multiqueue |
