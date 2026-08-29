@@ -112,23 +112,28 @@ fn fill_sockaddr(
 ) -> io::Result<libc::socklen_t> {
     // SAFETY: sockaddr_storage is a kernel buffer we own; every field
     // we send is written below.
-    unsafe { std::ptr::write_bytes(ss as *mut libc::sockaddr_storage, 0, 1) };
     match (sock_family, addr) {
         (libc::AF_INET, SocketAddr::V4(v4)) => {
             let sin = ss as *mut libc::sockaddr_storage as *mut libc::sockaddr_in;
-            // SAFETY: ss is zeroed and large enough for sockaddr_in.
+            // IPv4 hot path: write the 16-byte sockaddr_in, do not
+            // memset the whole sockaddr_storage.
+            // SAFETY: ss is large enough for sockaddr_in; unused
+            // storage bytes are not sent (namelen is sizeof sockaddr_in).
             unsafe {
                 (*sin).sin_family = libc::AF_INET as libc::sa_family_t;
                 (*sin).sin_port = v4.port().to_be();
                 (*sin).sin_addr.s_addr = u32::from_ne_bytes(v4.ip().octets());
+                (*sin).sin_zero = [0; 8];
             }
             Ok(std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t)
         }
         (libc::AF_INET6, SocketAddr::V6(v6)) => {
+            unsafe { std::ptr::write_bytes(ss as *mut libc::sockaddr_storage, 0, 1) };
             write_sockaddr_in6(ss, v6.ip().octets(), v6.port(), v6.scope_id());
             Ok(std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t)
         }
         (libc::AF_INET6, SocketAddr::V4(v4)) => {
+            unsafe { std::ptr::write_bytes(ss as *mut libc::sockaddr_storage, 0, 1) };
             let mapped = v4.ip().to_ipv6_mapped();
             write_sockaddr_in6(ss, mapped.octets(), v4.port(), 0);
             Ok(std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t)

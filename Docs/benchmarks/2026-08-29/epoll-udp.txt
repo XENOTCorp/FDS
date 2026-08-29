@@ -1,1 +1,1 @@
-bench-udp-against: 127.0.0.1:7777; 4 sockets x 61440B, sent 18.77 Gbps, echoed 18.74 Gbps, echo completion 99.84%
+bench-udp-against: 127.0.0.1:7777; 4 sockets x 61440B, sent 18.63 Gbps, echoed 18.58 Gbps, echo completion 99.76%

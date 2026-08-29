@@ -1,1 +1,1 @@
-latency: 76424 samples over 3s: p10  22.3µs p20  23.8µs p30  25.0µs p40  25.8µs p50  26.4µs p60  27.1µs p70  27.9µs p80  28.8µs p90  30.5µs p95  37.6µs p99  107.6µs p999 2346.6µs; mean 39.1µs, median 26.4µs, stdev 150.8µs, jitter(stdev/mean) 3.86
+latency: 246702 samples over 5s: p10  16.0µs p20  17.3µs p30  17.5µs p40  17.6µs p50  18.3µs p60  18.6µs p70  18.7µs p80  18.9µs p90  20.0µs p95  23.6µs p99  36.3µs p999 669.6µs; mean 20.1µs, median 18.3µs, stdev 41.3µs, jitter(stdev/mean) 2.05

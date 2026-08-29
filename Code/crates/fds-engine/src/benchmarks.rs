@@ -945,10 +945,19 @@ pub fn run_tcp_against(addr: std::net::SocketAddr, seconds: u64) -> std::io::Res
             let mut bytes: u64 = 0;
             let mut rbuf = vec![0u8; 64 * 1024];
             while !stop.load(Ordering::Relaxed) {
-                match s.write(&payload) {
-                    Ok(n) => bytes += n as u64,
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                    Err(e) => return Err(e),
+                let mut burst = 0u32;
+                loop {
+                    match s.write(&payload) {
+                        Ok(n) => {
+                            bytes += n as u64;
+                            burst += 1;
+                            if burst >= 8 {
+                                break;
+                            }
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                        Err(e) => return Err(e),
+                    }
                 }
                 // Drain the echo so the server's send queue (and the
                 // io_uring high watermark) cannot stall the flood.
@@ -1003,9 +1012,9 @@ pub fn run_udp_against(addr: std::net::SocketAddr, seconds: u64) -> std::io::Res
         handles.push(std::thread::spawn(move || -> std::io::Result<()> {
             use std::sync::atomic::Ordering;
             let local: std::net::SocketAddr = if addr.is_ipv6() {
-                "[::]:0".parse().unwrap()
+                "[::1]:0".parse().unwrap()
             } else {
-                "0.0.0.0:0".parse().unwrap()
+                "127.0.0.1:0".parse().unwrap()
             };
             let sock = std::net::UdpSocket::bind(local)?;
             sock.set_read_timeout(Some(std::time::Duration::from_millis(200)))?;

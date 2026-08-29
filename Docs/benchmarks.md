@@ -202,20 +202,19 @@ UDP echo and TCP drain-echo, isolated engines:
 
 | Strategy | UDP sent / echoed | TCP client→server | % vs epoll (UDP) |
 | --- | --- | --- | --- |
-| epoll (event-driven) | 18.77 / 18.74 Gbps (99.84%) | 9.78 Gbps | 0% (baseline) |
-| io_uring (event-driven) | 14.32 / 14.30 Gbps (99.87%) | 5.79 Gbps | −23.7% |
+| epoll (event-driven) | 18.63 / 18.58 Gbps (99.76%) | 17.25 Gbps | 0% (baseline) |
+| io_uring (event-driven) | 15.43 / 15.43 Gbps (100.00%) | 6.13 Gbps | −17.2% |
 
-io_uring TCP completes. The 2026-08-28 “stalled” TCP row used a
-write-only flood. Drain-echo is slower than that flood on epoll
-(9.78 Gbps vs 31.35 Gbps) because the client also reads the echo.
-The two TCP methods are not ranked against each other.
+io_uring TCP completes. Drain-echo TCP on epoll is 17.25 Gbps
+(client→server; the echo doubles wire traffic). The 2026-08-28
+write-only flood (31.35 Gbps) did not read.
 
 Cross-process UDP latency (`--latency-against`, 32 B, 3 s):
 
 | Strategy | p50 | p90 | p99 | p999 | mean | notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | epoll | 21.5 µs | 27.2 µs | 91.4 µs | 1707.5 µs | 27.8 µs | 107274 samples |
-| io_uring | 84.8 µs | 113.3 µs | 889.1 µs | 2412.6 µs | 109.9 µs | 27265 samples; 13092 engine drops; last recv timed out |
+| io_uring | 27.9 µs | 37.0 µs | 54.9 µs | 160.0 µs | 30.5 µs | 97902 samples, 0 engine drops |
 
 Dual-stack (`[::]:7777` / `[::]:7778`, `ipv6_only=false`). Functional
 check, not a ranking: IPv4 and IPv6 clients on one engine, UDP then
@@ -232,7 +231,7 @@ RACK/RTO.
 
 In-process (no second process): UDP `--bench` 62.7 kpps / 83.7 MB/s;
 `--bench-large` 60 KiB send 14.53 Gbps, recv 12.53 Gbps; `--latency`
-p50 26.4 µs; `--latency-tcp` p50 33.8 µs; `--bench-sctp` 6.4 Gbps.
+p50 18.3 µs; `--latency-tcp` p50 33.8 µs; `--bench-sctp` 10.5 Gbps.
 
 AF_XDP vs xdpsock (veth, user+net namespace): both sockets bound in
 copy mode. RX 0 pps on both. veth delivers frames to an XSK only
@@ -258,8 +257,11 @@ four workers on two physical cores.
   21.26 / 17.96 Gbps with ZC versus 20.81 / 19.33 / 17.48 Gbps copy
   path.
 - io_uring TCP: a write-only flood stalled the 2026-08-28 client
-  (`io_uring-tcp.txt` in that snapshot). The 2026-08-29 drain-echo
-  client completes: 5.79 Gbps vs epoll 9.78 Gbps.
+  (`io_uring-tcp.txt` in that snapshot). Drain-echo completes:
+  6.13 Gbps vs epoll 17.25 Gbps. Echo uses IORING_OP_SEND (one CQE).
+- io_uring UDP: 4 recv slots (D-4), IOSQE_ASYNC. RecvMsg EAGAIN is
+  re-armed, not counted as a drop. Isolated latency p50 27.9 µs,
+  0 engine drops.
 - io_uring SQPOLL: the kernel polling thread loses on 2C/4T. Not
   re-run on 2026-08-29.
 - AF_XDP on veth without an XDP redirect program: bind succeeds

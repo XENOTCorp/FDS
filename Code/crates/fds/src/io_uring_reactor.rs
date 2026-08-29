@@ -10,12 +10,10 @@
 //!   as IORING_OP_ACCEPT with the multishot flag. Receive runs as
 //!   multishot recvmsg against a per-connection provided-buffer group;
 //!   the payload offset is read from the `io_uring_recvmsg_out` header
-//!   the kernel prepends. Echo runs as IORING_OP_SEND_ZC against the
-//!   registered (fixed) buffer pool, so no iovec is built per op. Each
-//!   SEND_ZC posts two CQEs: the send completion and a notification
-//!   that the pages are no longer referenced. The buffer id is encoded
-//!   in the SQE `user_data`, so the notification recycles the exact
-//!   buffer. Flow control is a per-connection watermark: when the
+//!   the kernel prepends. Echo runs as IORING_OP_SEND against the
+//!   registered buffer pool (one CQE per send; SEND_ZC's extra
+//!   notification does not pay on loopback). The buffer id is encoded
+//!   in the SQE `user_data`. Flow control is a per-connection watermark: when the
 //!   outstanding echo bytes reach the high watermark the multishot
 //!   recv is cancelled (backpressure stops reads); at the low
 //!   watermark buffers are re-provided and the recv re-armed. Buffering
@@ -39,6 +37,7 @@
 use crate::conn::{ConnTable, Connection, ConnectionId, CONN_CAP};
 use crate::metrics::{Metrics, MetricsServer};
 use crate::reactor::Interest;
+use io_uring::squeue::Flags;
 use std::collections::VecDeque;
 
 /// An io_uring reactor instance.
@@ -270,9 +269,8 @@ fn modern_capable() -> bool {
 // ---------------------------------------------------------------------
 
 /// user_data layout: the high nibble is the op class, the low bits the
-/// object. For SEND_ZC the user_data encodes the buffer id so the
-/// notification CQE (which carries no buffer id) can recycle the exact
-/// buffer: `KIND_TCP_SEND | (buf_id << 32) | slot`.
+/// object. TCP send user_data encodes the buffer id:
+/// `KIND_TCP_SEND | (buf_id << 32) | slot`.
 const KIND_MASK: u64 = 0xF000_0000_0000_0000;
 const KIND_UDP_RECV: u64 = 0x1000_0000_0000_0000;
 const KIND_UDP_SEND: u64 = 0x2000_0000_0000_0000;
@@ -285,8 +283,10 @@ const KIND_PROVIDE: u64 = 0x8000_0000_0000_0000;
 const KIND_POLL: u64 = 0xC000_0000_0000_0000;
 const KIND_TIMEOUT: u64 = 0xD000_0000_0000_0000;
 
-/// In-flight UDP receive slots (recv or send pending per slot).
-const UDP_SLOTS: usize = 64;
+/// In-flight UDP recv/send slots. Matches engine `udp_rx_slots` (D-4):
+/// 4 × 64 KiB stays in this CPU's L2. A 64-slot set misses L3 and
+/// completes empty RecvMsg with -EAGAIN on a nonblocking socket.
+const UDP_SLOTS: usize = 4;
 /// Periodic wakeup (ms) so the stop flag and metrics poll are serviced
 /// while the sockets are idle.
 const TIMEOUT_MS: u64 = 100;
@@ -689,6 +689,14 @@ impl IoUringDatapath {
                         metrics.add_bytes(core, n as u64);
                         self.submit_udp_send(slot, n)?;
                     }
+                    Err(e)
+                        if e.kind() == std::io::ErrorKind::WouldBlock
+                            || e.raw_os_error() == Some(libc::EAGAIN) =>
+                    {
+                        // Nonblocking RecvMsg completed empty: re-arm,
+                        // do not count as a drop.
+                        self.submit_udp_recv(slot)?;
+                    }
                     Err(_) => {
                         metrics.add_drops(core, 1);
                         self.submit_udp_recv(slot)?;
@@ -956,12 +964,13 @@ impl IoUringDatapath {
                     // until the tail is fully sent and notified.
                     let meta = self.pool.metas[buf_id as usize];
                     let remaining = meta.len as usize;
-                    if n < remaining {
+                    if n < remaining && n > 0 {
                         let new_off = meta.off as usize + n;
                         let new_len = remaining - n;
                         if let Some(pos) = c.in_kernel.iter().position(|&x| x == buf_id) {
                             c.in_kernel.swap_remove(pos);
                             c.to_send.push_front(buf_id);
+                            self.pool.cancel_zc(buf_id);
                             self.pool.mark_owned(buf_id, new_off as u16, new_len as u16);
                         }
                         self.flush_sends(token)?;
@@ -980,6 +989,18 @@ impl IoUringDatapath {
                                 KIND_TCP_POLLOUT | token,
                             )?;
                             c.poll_out = true;
+                        }
+                    } else if self.pool.notify_zc(buf_id) {
+                        // Full send: recycle now (IORING_OP_SEND, one CQE).
+                        c.in_kernel.retain(|&x| x != buf_id);
+                        c.outstanding = c.outstanding.saturating_sub(1);
+                        if c.closing {
+                            let _ = c;
+                            self.maybe_drain_group(token)?;
+                            self.try_finish_close(token)?;
+                        } else if c.outstanding <= LWM_BUFS {
+                            let _ = c;
+                            self.provide_and_arm_recv(token)?;
                         }
                     }
                 }
@@ -1010,11 +1031,10 @@ impl IoUringDatapath {
         Ok(())
     }
 
-    /// Submit SEND_ZC for every buffer queued on `token`'s connection.
+    /// Submit IORING_OP_SEND for every buffer queued on `token`.
     /// The kernel accepts what its send buffer holds and completes the
     /// rest with -EAGAIN (handled in [`Self::dispatch_tcp_send`]);
-    /// POLLOUT then arms the writable edge. No iovec is built per op:
-    /// the send references the registered buffer by index.
+    /// POLLOUT then arms the writable edge.
     fn flush_sends(&mut self, token: u64) -> std::io::Result<()> {
         loop {
             let outcome = {
@@ -1029,11 +1049,14 @@ impl IoUringDatapath {
                 let meta = self.pool.metas[buf_id as usize];
                 let ptr = unsafe { self.pool.ptr(buf_id).add(meta.off as usize) };
                 let user_data = KIND_TCP_SEND | ((buf_id as u64) << 32) | (token & 0xFFFF_FFFF);
-                let entry =
-                    io_uring::opcode::SendZc::new(io_uring::types::Fd(c.fd), ptr, meta.len as u32)
-                        .buf_index(Some(buf_id as u16))
-                        .build()
-                        .user_data(user_data);
+                let entry = io_uring::opcode::Send::new(
+                    io_uring::types::Fd(c.fd),
+                    ptr,
+                    meta.len as u32,
+                )
+                .build()
+                .flags(Flags::ASYNC)
+                .user_data(user_data);
                 // Push BEFORE moving the buffer between lists: a failed
                 // push must leave the queue untouched (the buffer is
                 // retried on the next flush).
@@ -1247,6 +1270,7 @@ impl IoUringDatapath {
             &mut s.msg as *mut libc::msghdr,
         )
         .build()
+        .flags(Flags::ASYNC)
         .user_data(user_data);
         self.ring.push(user_data, entry)
     }
@@ -1271,6 +1295,7 @@ impl IoUringDatapath {
             &s.msg as *const libc::msghdr,
         )
         .build()
+        .flags(Flags::ASYNC)
         .user_data(user_data);
         self.ring.push(user_data, entry)
     }
