@@ -1,0 +1,1 @@
+bench-sctp: 3s one-way SCTP loopback: 2393341952 bytes (6.4 Gbps), 24346 msgs/s (32768 B/msg)

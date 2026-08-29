@@ -1002,7 +1002,12 @@ pub fn run_udp_against(addr: std::net::SocketAddr, seconds: u64) -> std::io::Res
         let echoed = echoed.clone();
         handles.push(std::thread::spawn(move || -> std::io::Result<()> {
             use std::sync::atomic::Ordering;
-            let sock = std::net::UdpSocket::bind("127.0.0.1:0")?;
+            let local: std::net::SocketAddr = if addr.is_ipv6() {
+                "[::]:0".parse().unwrap()
+            } else {
+                "0.0.0.0:0".parse().unwrap()
+            };
+            let sock = std::net::UdpSocket::bind(local)?;
             sock.set_read_timeout(Some(std::time::Duration::from_millis(200)))?;
             let payload = vec![0xabu8; MSG];
             let mut buf = vec![0u8; MSG + 2048];

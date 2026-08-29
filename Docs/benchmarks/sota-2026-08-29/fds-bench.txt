@@ -1,0 +1,5 @@
+bench[1s]: 58128 pps, 77.610 MB/s
+bench[2s]: 62367 pps, 83.268 MB/s
+bench[3s]: 64865 pps, 86.605 MB/s
+bench[4s]: 64983 pps, 86.762 MB/s
+bench: 313344 packets, 438681600 bytes in 5s; 62669 pps, 83.672 MB/s

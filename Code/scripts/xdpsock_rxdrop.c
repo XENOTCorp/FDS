@@ -2,7 +2,9 @@
  * Bind native zero-copy (copy fallback), count RX frames, return them
  * to the fill ring. Used by scripts/bench-afxdp-xdpsock.sh.
  *
- * Usage: xdpsock_rxdrop <ifname> <queue> [seconds]
+ * Usage: xdpsock_rxdrop <ifname> <queue> [seconds] [num_frames] [ring]
+ * num_frames default 4096; ring default 256 (power of two). Shrink
+ * num_frames when RLIMIT_MEMLOCK cannot hold a 16 MiB umem.
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -28,8 +30,8 @@
 #endif
 
 #define FRAME_SIZE 4096
-#define NUM_FRAMES 4096
-#define RING 256
+#define DEFAULT_NUM_FRAMES 4096
+#define DEFAULT_RING 256
 
 static volatile int stop;
 
@@ -41,21 +43,35 @@ static uint64_t nsec(void) {
     return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
 
+static int is_pow2(unsigned v) { return v && (v & (v - 1)) == 0; }
+
 int main(int argc, char **argv) {
     if (argc < 3) {
-        fprintf(stderr, "usage: %s ifname queue [seconds]\n", argv[0]);
+        fprintf(stderr, "usage: %s ifname queue [seconds] [num_frames] [ring]\n", argv[0]);
         return 2;
     }
     const char *ifname = argv[1];
     unsigned queue = (unsigned)atoi(argv[2]);
     int seconds = argc > 3 ? atoi(argv[3]) : 3;
+    unsigned num_frames = argc > 4 ? (unsigned)atoi(argv[4]) : DEFAULT_NUM_FRAMES;
+    unsigned ring = argc > 5 ? (unsigned)atoi(argv[5]) : DEFAULT_RING;
+    if (seconds < 1) seconds = 1;
+    if (num_frames < 64) num_frames = 64;
+    if (!is_pow2(ring) || ring < 16) {
+        fprintf(stderr, "ring must be a power of two >= 16\n");
+        return 2;
+    }
+    if (num_frames < ring) {
+        fprintf(stderr, "num_frames must be >= ring\n");
+        return 2;
+    }
     unsigned ifindex = if_nametoindex(ifname);
     if (!ifindex) { perror("if_nametoindex"); return 1; }
 
     int fd = socket(AF_XDP, SOCK_RAW | SOCK_CLOEXEC, 0);
     if (fd < 0) { perror("socket AF_XDP"); return 1; }
 
-    size_t umem_len = (size_t)NUM_FRAMES * FRAME_SIZE;
+    size_t umem_len = (size_t)num_frames * FRAME_SIZE;
     void *umem = mmap(NULL, umem_len, PROT_READ | PROT_WRITE,
                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (umem == MAP_FAILED) { perror("mmap umem"); return 1; }
@@ -66,9 +82,10 @@ int main(int argc, char **argv) {
         .chunk_size = FRAME_SIZE,
     };
     if (setsockopt(fd, SOL_XDP, XDP_UMEM_REG, &reg, sizeof(reg)) < 0) {
-        perror("XDP_UMEM_REG"); return 1;
+        fprintf(stderr, "XDP_UMEM_REG: %s (umem %zu B; raise RLIMIT_MEMLOCK or shrink num_frames)\n",
+                strerror(errno), umem_len);
+        return 1;
     }
-    unsigned ring = RING;
     if (setsockopt(fd, SOL_XDP, XDP_RX_RING, &ring, sizeof(ring)) < 0 ||
         setsockopt(fd, SOL_XDP, XDP_TX_RING, &ring, sizeof(ring)) < 0 ||
         setsockopt(fd, SOL_XDP, XDP_UMEM_FILL_RING, &ring, sizeof(ring)) < 0 ||
@@ -80,8 +97,8 @@ int main(int argc, char **argv) {
     if (getsockopt(fd, SOL_XDP, XDP_MMAP_OFFSETS, &off, &olen) < 0) {
         perror("XDP_MMAP_OFFSETS"); return 1;
     }
-    size_t rx_len = off.rx.desc + RING * sizeof(struct xdp_desc);
-    size_t fr_len = off.fr.desc + RING * sizeof(uint64_t);
+    size_t rx_len = off.rx.desc + (size_t)ring * sizeof(struct xdp_desc);
+    size_t fr_len = off.fr.desc + (size_t)ring * sizeof(uint64_t);
     void *rx = mmap(NULL, rx_len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     void *fr = mmap(NULL, fr_len, PROT_READ | PROT_WRITE, MAP_SHARED, fd,
                     0x100000000ULL);
@@ -92,9 +109,10 @@ int main(int argc, char **argv) {
     uint32_t *rx_prod = (uint32_t *)((char *)rx + off.rx.producer);
     uint32_t *rx_cons = (uint32_t *)((char *)rx + off.rx.consumer);
     struct xdp_desc *rx_desc = (struct xdp_desc *)((char *)rx + off.rx.desc);
+    unsigned ring_mask = ring - 1;
 
-    for (unsigned i = 0; i < RING; i++) fr_desc[i] = (uint64_t)i * FRAME_SIZE;
-    __atomic_store_n(fr_prod, RING, __ATOMIC_RELEASE);
+    for (unsigned i = 0; i < ring; i++) fr_desc[i] = (uint64_t)i * FRAME_SIZE;
+    __atomic_store_n(fr_prod, ring, __ATOMIC_RELEASE);
 
     struct sockaddr_xdp sx = {0};
     sx.sxdp_family = AF_XDP;
@@ -112,15 +130,15 @@ int main(int argc, char **argv) {
     }
 
     signal(SIGINT, on_int);
-    uint32_t rx_tail = 0, fill_head = RING;
+    uint32_t rx_tail = 0, fill_head = ring;
     uint64_t pkts = 0, t0 = nsec();
     uint64_t deadline = t0 + (uint64_t)seconds * 1000000000ull;
     while (!stop && nsec() < deadline) {
         uint32_t head = __atomic_load_n(rx_prod, __ATOMIC_ACQUIRE);
         while (rx_tail != head) {
-            struct xdp_desc d = rx_desc[rx_tail & (RING - 1)];
+            struct xdp_desc d = rx_desc[rx_tail & ring_mask];
             rx_tail++;
-            fr_desc[fill_head & (RING - 1)] = d.addr;
+            fr_desc[fill_head & ring_mask] = d.addr;
             fill_head++;
             pkts++;
         }
@@ -132,7 +150,8 @@ int main(int argc, char **argv) {
         }
     }
     double s = (nsec() - t0) / 1e9;
-    printf("xdpsock_rxdrop: %s queue %u, %.0f pps (%.2f Mpps) in %.2fs, %llu pkts\n",
-           ifname, queue, pkts / s, pkts / s / 1e6, s, (unsigned long long)pkts);
+    printf("xdpsock_rxdrop: %s queue %u, %.0f pps (%.2f Mpps) in %.2fs, %llu pkts, umem %u x %u\n",
+           ifname, queue, pkts / s, pkts / s / 1e6, s, (unsigned long long)pkts,
+           num_frames, FRAME_SIZE);
     return 0;
 }

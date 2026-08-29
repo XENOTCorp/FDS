@@ -1,8 +1,9 @@
 # FDS benchmarks
 
 Measured comparisons of the FDS engine against existing network stacks.
-Raw files: `Docs/benchmarks/sota-2026-08-28/`. Transport only: TCP,
-UDP, SCTP. No HTTP. No Atomos.
+Raw files: `Docs/benchmarks/sota-2026-08-28/` (stack ranking) and
+`Docs/benchmarks/sota-2026-08-29/` (datapath comparison). Transport
+only: TCP, UDP, SCTP. No HTTP. No Atomos.
 
 The FDS / libuv / tokio ranking (UDP echo, UDP latency, TCP lockstep,
 TCP write flood) is from one pass on 2026-08-28: 20 s idle first, one
@@ -184,8 +185,63 @@ binary.
 
 The startup autotuner (`Code/scripts/autotune.sh`) selects the
 strategy per machine and kernel. On this machine the lattice minimum
-is epoll event-driven; io_uring is disqualified by the TCP soundness
-floor.
+is epoll event-driven. The 2026-08-28 capture disqualified io_uring
+on a write-only TCP flood that never drained the echo. That client
+is no longer the TCP bench: see the 2026-08-29 table below.
+
+## Datapath comparison (2026-08-29)
+
+Same machine, kernel 7.2.0_1, loopback. Event-driven (`busy_poll=0`).
+One worker per logical CPU. Fresh engine per row. Idle 2 s between
+rows. Throughput 5 s. Latency and SCTP 3 s. TCP client writes and
+reads (drain-echo) so the io_uring high watermark cannot stall.
+Raw files: `Docs/benchmarks/sota-2026-08-29/`. Runner:
+`Code/scripts/bench-datapaths.sh`.
+
+UDP echo and TCP drain-echo, isolated engines:
+
+| Strategy | UDP sent / echoed | TCP client→server | % vs epoll (UDP) |
+| --- | --- | --- | --- |
+| epoll (event-driven) | 18.77 / 18.74 Gbps (99.84%) | 9.78 Gbps | 0% (baseline) |
+| io_uring (event-driven) | 14.32 / 14.30 Gbps (99.87%) | 5.79 Gbps | −23.7% |
+
+io_uring TCP completes. The 2026-08-28 “stalled” TCP row used a
+write-only flood. Drain-echo is slower than that flood on epoll
+(9.78 Gbps vs 31.35 Gbps) because the client also reads the echo.
+The two TCP methods are not ranked against each other.
+
+Cross-process UDP latency (`--latency-against`, 32 B, 3 s):
+
+| Strategy | p50 | p90 | p99 | p999 | mean | notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| epoll | 21.5 µs | 27.2 µs | 91.4 µs | 1707.5 µs | 27.8 µs | 107274 samples |
+| io_uring | 84.8 µs | 113.3 µs | 889.1 µs | 2412.6 µs | 109.9 µs | 27265 samples; 13092 engine drops; last recv timed out |
+
+Dual-stack (`[::]:7777` / `[::]:7778`, `ipv6_only=false`). Functional
+check, not a ranking: IPv4 and IPv6 clients on one engine, UDP then
+TCP, so later rows share that instance.
+
+| Client | UDP sent / echoed | TCP client→server |
+| --- | --- | --- |
+| 127.0.0.1 | 14.07 / 14.03 Gbps (99.68%) | 6.82 Gbps |
+| ::1 | 13.75 / 13.72 Gbps (99.79%) | 8.08 Gbps |
+
+Userspace TCP (`--bench-ustack 5`): lossless TSO 2.00 Gbps on the
+in-process wire. 10% data-frame loss recovered 8000/8000 bytes via
+RACK/RTO.
+
+In-process (no second process): UDP `--bench` 62.7 kpps / 83.7 MB/s;
+`--bench-large` 60 KiB send 14.53 Gbps, recv 12.53 Gbps; `--latency`
+p50 26.4 µs; `--latency-tcp` p50 33.8 µs; `--bench-sctp` 6.4 Gbps.
+
+AF_XDP vs xdpsock (veth, user+net namespace, no host root): both
+sockets bound in copy mode. RX 0 pps on both. veth does not steer
+frames into an XSK without an attached XDP redirect program, and
+this account cannot load BPF (`CAP_BPF` / bpffs). TX zero-copy pps
+needs a NIC with native XDP. Bind is proven; pps is not.
+
+SQPOLL was not re-run: the extra kernel thread still contends with
+four workers on two physical cores.
 
 ## Verified observations (measured)
 
@@ -202,8 +258,13 @@ floor.
   single run). `fds-udp-zc-x3.txt` keeps the three-run spread: 5.15 /
   21.26 / 17.96 Gbps with ZC versus 20.81 / 19.33 / 17.48 Gbps copy
   path.
-- io_uring TCP: the accept/echo path stalls under the write flood.
-- io_uring SQPOLL: the kernel polling thread loses on 2C/4T.
+- io_uring TCP: a write-only flood stalled the 2026-08-28 client
+  (`io_uring-tcp.txt` in that snapshot). The 2026-08-29 drain-echo
+  client completes: 5.79 Gbps vs epoll 9.78 Gbps.
+- io_uring SQPOLL: the kernel polling thread loses on 2C/4T. Not
+  re-run on 2026-08-29.
+- AF_XDP on veth without an XDP redirect program: bind succeeds
+  (copy mode); RX stays at 0 pps for both FDS and xdpsock.
 
 ## Stacks not run on this platform
 
@@ -224,5 +285,5 @@ FDS is a transport engine, not an HTTP server. The 2026-08-26 snapshot
 directory also holds HTTP/1.1, HTTP/2, and HTTP/3 comparison files
 measured on the same machine (nginx, h2o, Caddy, Seastar, axum, Hyper,
 actix-web, and related rows). Those files are raw tool output. They
-are not ranked in the tables above. The 2026-08-28 snapshot has no
-HTTP files.
+are not ranked in the tables above. The 2026-08-28 and 2026-08-29
+snapshots have no HTTP files.

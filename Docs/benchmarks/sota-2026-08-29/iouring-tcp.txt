@@ -1,0 +1,1 @@
+bench-tcp-against: 127.0.0.1:7778; 4 conns, 5.79 Gbps client->server (723 MiB/s), echo doubles wire traffic

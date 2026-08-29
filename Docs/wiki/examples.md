@@ -121,22 +121,31 @@ loop {
 ## 10. Compare epoll and io_uring
 
 ```sh
-bash scripts/bench-iouring-epoll.sh 3
+bash scripts/bench-iouring-epoll.sh 5
 ```
 
-The script starts the engine twice and runs `--bench-tcp-against` and
-`--bench-udp-against` against each strategy.
+One fresh engine per (strategy, protocol). UDP first, then TCP. The
+TCP client drains the echo.
+
+Full transport battery (in-process, dual-stack, userspace TCP, AF_XDP):
+
+```sh
+bash scripts/bench-datapaths.sh 5
+```
 
 ## 11. Compare AF_XDP zero-copy with xdpsock
 
-Needs root and a veth pair (or a NIC with native XDP):
+Prefers root and a veth pair (or a NIC with native XDP). Without root
+the script uses a user+net namespace when the kernel allows it.
 
 ```sh
-sudo bash scripts/bench-afxdp-xdpsock.sh 3
+bash scripts/bench-afxdp-xdpsock.sh 3
 ```
 
 The C helper `scripts/xdpsock_rxdrop.c` is the linux `xdpsock -r` shape:
-native zero-copy bind, count RX, recycle to the fill ring.
+native zero-copy bind, copy fallback, count RX, recycle to the fill
+ring. Helpers compile into `target/bench` (`/tmp` is noexec on some
+hosts). veth RX is 0 pps unless an XDP redirect program is attached.
 
 ## 12. AF_XDP on a supported NIC
 

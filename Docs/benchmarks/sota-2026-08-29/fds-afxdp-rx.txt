@@ -1,0 +1,4 @@
+fds: af_xdp configured for device veth0 (queues [], queue 0)
+fds: worker 0: af_xdp bound veth0 queue 0 (ifindex 3, Copy)
+fds: worker 0: af_xdp stopped (0 forwarded, 0 dropped)
+fds: engine stopped (0 packets, 0 bytes, 0 drops)

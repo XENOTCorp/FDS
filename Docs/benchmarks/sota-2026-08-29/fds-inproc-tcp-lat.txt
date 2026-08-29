@@ -1,0 +1,1 @@
+tcp latency: 80264 samples over 3s: p10  29.8µs p20  31.2µs p30  32.2µs p40  33.0µs p50  33.8µs p60  34.5µs p70  35.4µs p80  36.4µs p90  38.3µs p95  45.0µs p99  84.6µs p999 574.7µs; mean 37.2µs, median 33.8µs, stdev 62.7µs, jitter(stdev/mean) 1.68

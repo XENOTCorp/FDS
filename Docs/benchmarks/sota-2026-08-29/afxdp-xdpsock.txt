@@ -1,0 +1,17 @@
+bench-afxdp-xdpsock: no host root; using user+net namespace
+== build FDS and helpers ==
+umem: 1024 x 4096 B (memlock 8192 kB), ring 256
+== xdpsock_rxdrop ==
+xdpsock_rxdrop: copy mode
+xdpsock_rxdrop: veth0 queue 0, 0 pps (0.00 Mpps) in 3.00s, 0 pkts, umem 1024 x 4096
+== FDS AF_XDP (UDP echo path, counts RX) ==
+fds: af_xdp configured for device veth0 (queues [], queue 0)
+fds: worker 0: af_xdp bound veth0 queue 0 (ifindex 3, Copy)
+fds: worker 0: af_xdp stopped (0 forwarded, 0 dropped)
+fds: engine stopped (0 packets, 0 bytes, 0 drops)
+
+== comparison ==
+xdpsock: xdpsock_rxdrop: veth0 queue 0, 0 pps (0.00 Mpps) in 3.00s, 0 pkts, umem 1024 x 4096 
+xdpsock-err: xdpsock_rxdrop: copy mode 
+fds:     fds: af_xdp configured for device veth0 (queues [], queue 0) fds: worker 0: af_xdp bound veth0 queue 0 (ifindex 3, Copy) fds: worker 0: af_xdp stopped (0 forwarded, 0 dropped) fds: engine stopped (0 packets, 0 bytes, 0 drops) 
+DONE (veth RX only; a NIC with native XDP is required for TX ZC pps)
