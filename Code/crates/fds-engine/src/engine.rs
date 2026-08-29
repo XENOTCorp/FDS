@@ -516,32 +516,71 @@ fn worker_af_xdp_loop(
         xsk.mode()
     );
 
+    let tcp_port = parse_addr(&cfg.engine.tcp_bind, "127.0.0.1:7778").port();
+    let mut ustack = if cfg.engine.userspace_tcp {
+        eprintln!("fds: worker {id}: userspace TCP (RACK/TSO) listen port {tcp_port}");
+        let mut s = fds::ustack::TcpStack::new_v4([0; 6], [0; 4], tcp_port);
+        s.listen();
+        Some(s)
+    } else {
+        None
+    };
+    let mut now_us = 0u64;
     let mut forwarded = 0u64;
     let mut dropped = 0u64;
+    let mut echo = vec![0u8; 65535];
     while !stop() {
         let mut progressed = false;
         while let Some(frame) = xsk.recv_frame() {
             let n = frame.len();
-            // Zero-copy: process and echo in the same umem slot.
-            match fds::af_xdp::process_frame(&mut xsk.frame_mut(&frame)[..n]) {
-                fds::af_xdp::FrameAction::Echo => {
-                    metrics.add_packets(id, 1);
-                    metrics.add_bytes(id, n as u64);
-                    if xsk.tx_frame(frame) {
-                        forwarded += 1;
-                    } else {
-                        // TX ring full: drop the frame back to the fill
-                        // ring; the next loop pass recycles completions.
+            if let Some(stack) = ustack.as_mut() {
+                stack.set_now(now_us);
+                stack.ingest(&xsk.frame_mut(&frame)[..n]);
+                xsk.drop_frame(frame);
+                let got = stack.read(&mut echo);
+                if got > 0 {
+                    stack.write(&echo[..got]);
+                }
+                metrics.add_packets(id, 1);
+                metrics.add_bytes(id, n as u64);
+                forwarded += 1;
+            } else {
+                // Zero-copy: process and echo in the same umem slot.
+                match fds::af_xdp::process_frame(&mut xsk.frame_mut(&frame)[..n]) {
+                    fds::af_xdp::FrameAction::Echo => {
+                        metrics.add_packets(id, 1);
+                        metrics.add_bytes(id, n as u64);
+                        if xsk.tx_frame(frame) {
+                            forwarded += 1;
+                        } else {
+                            xsk.drop_frame(frame);
+                            dropped += 1;
+                        }
+                    }
+                    fds::af_xdp::FrameAction::Drop => {
                         xsk.drop_frame(frame);
                         dropped += 1;
                     }
                 }
-                fds::af_xdp::FrameAction::Drop => {
-                    xsk.drop_frame(frame);
-                    dropped += 1;
-                }
             }
             progressed = true;
+        }
+        if let Some(stack) = ustack.as_mut() {
+            now_us = now_us.saturating_add(1_000);
+            stack.on_timer(now_us);
+            while let Some(out) = stack.pop_tx() {
+                let Some(tx) = xsk.alloc_tx(out.len() as u32) else {
+                    dropped += 1;
+                    break;
+                };
+                xsk.frame_mut(&tx)[..out.len()].copy_from_slice(&out);
+                if !xsk.tx_frame(tx) {
+                    xsk.drop_frame(tx);
+                    dropped += 1;
+                    break;
+                }
+                forwarded += 1;
+            }
         }
         xsk.recycle_tx();
         xsk.kick();

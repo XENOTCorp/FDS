@@ -235,6 +235,10 @@ pub struct XskSocket {
     cr_tail: u32,
     /// TX frame addrs awaiting completion (in submission order).
     tx_inflight: std::collections::VecDeque<u64>,
+    /// Umem offsets reserved for generated TX (not in the fill ring).
+    tx_free: std::collections::VecDeque<u64>,
+    /// First umem offset that belongs to the TX pool (RX fill uses `[0, tx_pool_base)`).
+    tx_pool_base: u64,
     /// How the socket is bound.
     mode: XdpMode,
 }
@@ -634,6 +638,14 @@ impl XskSocket {
             fill_head: ring_size,
             cr_tail: 0,
             tx_inflight: std::collections::VecDeque::new(),
+            tx_free: {
+                let mut q = std::collections::VecDeque::new();
+                for i in ring_size..num_frames {
+                    q.push_back(i as u64 * frame_size as u64);
+                }
+                q
+            },
+            tx_pool_base: ring_size as u64 * frame_size as u64,
             mode,
         };
 
@@ -732,7 +744,23 @@ impl XskSocket {
 
     /// Drop a checked-out frame back to the fill ring (not transmitted).
     pub fn drop_frame(&mut self, frame: Frame) {
-        self.fill_one(frame.addr);
+        if frame.addr >= self.tx_pool_base {
+            self.tx_free.push_back(frame.addr);
+        } else {
+            self.fill_one(frame.addr);
+        }
+    }
+
+    /// Allocate a TX-only umem frame from the pool (frames that were
+    /// never placed in the fill ring). Used by userspace TCP to emit
+    /// generated segments. Returns `None` when the TX pool is empty.
+    pub fn alloc_tx(&mut self, len: u32) -> Option<Frame> {
+        let addr = self.tx_free.pop_front()?;
+        if len as u64 > u64::from(self.frame_size) {
+            self.tx_free.push_front(addr);
+            return None;
+        }
+        Some(Frame { addr, len })
     }
 
     /// Reclaim transmitted frames from the completion ring and return
@@ -749,7 +777,11 @@ impl XskSocket {
             let addr = unsafe { self.cr_desc().add(idx).read() };
             self.cr_tail = self.cr_tail.wrapping_add(1);
             self.tx_inflight.pop_front();
-            self.fill_one(addr);
+            if addr >= self.tx_pool_base {
+                self.tx_free.push_back(addr);
+            } else {
+                self.fill_one(addr);
+            }
         }
         // SAFETY: cr_consumer() is the completion-ring consumer word; the
         // release store pairs with the kernel's acquire read.
@@ -1000,18 +1032,17 @@ pub enum FrameAction {
 }
 
 /// Process one received Ethernet frame in place for echo: validate
-/// (EtherType IPv4, IPv4 + UDP headers, IP + UDP checksums) and rewrite
-/// (swap MACs, decrement TTL, recompute the IP checksum; the UDP
-/// checksum is untouched because the IP addresses and payload do not
-/// change). A pure function over the frame bytes; the unit-tested core
-/// of the AF_XDP datapath, exercised here with synthetic frames (the
-/// ring mechanics themselves need an XDP-capable device).
+/// (EtherType IPv4 or IPv6, UDP headers, checksums) and rewrite
+/// (swap MACs, decrement TTL/hop limit, recompute checksums). IPv6
+/// swaps the addresses so the UDP checksum is recomputed.
 pub fn process_frame(frame: &mut [u8]) -> FrameAction {
-    // Ethernet II (14) + IPv4 (>= 20) + UDP (8) minimum.
     if frame.len() < 14 + 20 + 8 {
         return FrameAction::Drop;
     }
     let ethertype = u16::from_be_bytes([frame[12], frame[13]]);
+    if ethertype == 0x86dd {
+        return process_frame_v6(frame);
+    }
     if ethertype != 0x0800 {
         return FrameAction::Drop;
     }
@@ -1078,6 +1109,69 @@ pub fn process_frame(frame: &mut [u8]) -> FrameAction {
     let csum = crate::checksum::ip_checksum(&frame[14..14 + ihl]);
     frame[14 + 10] = (csum >> 8) as u8;
     frame[14 + 11] = csum as u8;
+    FrameAction::Echo
+}
+
+fn process_frame_v6(frame: &mut [u8]) -> FrameAction {
+    if frame.len() < 14 + 40 + 8 {
+        return FrameAction::Drop;
+    }
+    let ip = match crate::parse::parse_ipv6(&frame[14..]) {
+        Ok(h) => h,
+        Err(_) => return FrameAction::Drop,
+    };
+    if ip.next_header != 17 {
+        return FrameAction::Drop;
+    }
+    if ip.hop_limit <= 1 {
+        return FrameAction::Drop;
+    }
+    let udp_off = 14 + 40;
+    let udp = match crate::parse::parse_udp(&frame[udp_off..]) {
+        Ok(h) => h,
+        Err(_) => return FrameAction::Drop,
+    };
+    let udp_len = udp.len as usize;
+    if udp_len < 8 || udp_off + udp_len > frame.len() {
+        return FrameAction::Drop;
+    }
+    let csum_off = udp_off + 6;
+    let stored = u16::from_be_bytes([frame[csum_off], frame[csum_off + 1]]);
+    if stored != 0 {
+        frame[csum_off] = 0;
+        frame[csum_off + 1] = 0;
+        let calc = crate::checksum::udp_checksum_v6(
+            ip.src,
+            ip.dst,
+            udp.len as u32,
+            &frame[udp_off..udp_off + udp_len],
+        );
+        frame[csum_off] = (stored >> 8) as u8;
+        frame[csum_off + 1] = stored as u8;
+        if calc != stored {
+            return FrameAction::Drop;
+        }
+    }
+    let (dst, rest) = frame.split_at_mut(6);
+    let (src, _) = rest.split_at_mut(6);
+    dst.swap_with_slice(src);
+    let mut orig_src = [0u8; 16];
+    orig_src.copy_from_slice(&frame[14 + 8..14 + 24]);
+    frame.copy_within(14 + 24..14 + 40, 14 + 8);
+    frame[14 + 24..14 + 40].copy_from_slice(&orig_src);
+    frame[14 + 7] -= 1;
+    let mut new_src = [0u8; 16];
+    new_src.copy_from_slice(&frame[14 + 8..14 + 24]);
+    frame[csum_off] = 0;
+    frame[csum_off + 1] = 0;
+    let calc = crate::checksum::udp_checksum_v6(
+        new_src,
+        orig_src,
+        udp.len as u32,
+        &frame[udp_off..udp_off + udp_len],
+    );
+    frame[csum_off] = (calc >> 8) as u8;
+    frame[csum_off + 1] = calc as u8;
     FrameAction::Echo
 }
 
@@ -1228,6 +1322,42 @@ mod tests {
         f[41] = 0;
         let u = crate::checksum::udp_checksum([10, 0, 0, 1], [10, 0, 0, 2], 24, &f[34..]);
         assert_eq!(stored_udp, u);
+    }
+
+    fn build_udp6_frame() -> Vec<u8> {
+        let mut f = vec![0u8; 14 + 40 + 8 + 16];
+        f[..6].copy_from_slice(&[0xAA; 6]);
+        f[6..12].copy_from_slice(&[0xCC; 6]);
+        f[12..14].copy_from_slice(&0x86ddu16.to_be_bytes());
+        f[14] = 0x60;
+        f[18..20].copy_from_slice(&24u16.to_be_bytes());
+        f[20] = 17;
+        f[21] = 64;
+        f[14 + 8 + 15] = 1; // src ::1
+        f[14 + 24 + 15] = 2; // dst ::2
+        f[54..56].copy_from_slice(&5000u16.to_be_bytes());
+        f[56..58].copy_from_slice(&7777u16.to_be_bytes());
+        f[58..60].copy_from_slice(&24u16.to_be_bytes());
+        f[62..].copy_from_slice(b"af-xdp-echo-test");
+        let mut src = [0u8; 16];
+        let mut dst = [0u8; 16];
+        src[15] = 1;
+        dst[15] = 2;
+        let c = crate::checksum::udp_checksum_v6(src, dst, 24, &f[54..]);
+        f[60] = (c >> 8) as u8;
+        f[61] = c as u8;
+        f
+    }
+
+    #[test]
+    fn pipeline_echoes_valid_udp6() {
+        let mut f = build_udp6_frame();
+        assert_eq!(process_frame(&mut f), FrameAction::Echo);
+        assert_eq!(&f[..6], &[0xCC; 6]);
+        assert_eq!(&f[6..12], &[0xAA; 6]);
+        assert_eq!(f[21], 63); // hop limit
+        assert_eq!(f[14 + 8 + 15], 2); // src is original dst
+        assert_eq!(f[14 + 24 + 15], 1);
     }
 
     #[test]

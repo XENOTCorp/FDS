@@ -12,8 +12,10 @@
 //! every parser and checksum must never panic, and parsing must be
 //! deterministic (each parser runs twice; both results must be equal).
 
-use crate::checksum::{ip_checksum, sctp_checksum, tcp_checksum, udp_checksum};
-use crate::parse::{parse_ipv4, parse_tcp, parse_udp};
+use crate::checksum::{
+    ip_checksum, sctp_checksum, tcp_checksum, tcp_checksum_v6, udp_checksum, udp_checksum_v6,
+};
+use crate::parse::{parse_ipv4, parse_ipv6, parse_tcp, parse_udp};
 
 /// Deterministic xorshift64 PRNG (shifts 13/7/17; full period for any
 /// nonzero seed). The fixed seed keeps every run bit-identical.
@@ -57,6 +59,9 @@ pub fn run(iters: u64) {
         let ip1 = parse_ipv4(data);
         let ip2 = parse_ipv4(data);
         assert_eq!(ip1, ip2, "parse_ipv4 not deterministic");
+        let ip61 = parse_ipv6(data);
+        let ip62 = parse_ipv6(data);
+        assert_eq!(ip61, ip62, "parse_ipv6 not deterministic");
         let udp1 = parse_udp(data);
         let udp2 = parse_udp(data);
         assert_eq!(udp1, udp2, "parse_udp not deterministic");
@@ -68,6 +73,8 @@ pub fn run(iters: u64) {
         let _ = ip_checksum(data);
         let _ = udp_checksum([1, 2, 3, 4], [5, 6, 7, 8], len as u16, data);
         let _ = tcp_checksum([1, 2, 3, 4], [5, 6, 7, 8], len as u16, data);
+        let _ = udp_checksum_v6([0; 16], [0; 16], len as u32, data);
+        let _ = tcp_checksum_v6([0; 16], [0; 16], len as u32, data);
         let _ = sctp_checksum(data);
 
         if (i + 1) % PROGRESS_EVERY == 0 {

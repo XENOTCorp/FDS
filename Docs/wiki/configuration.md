@@ -20,6 +20,8 @@ The schema is `Code/config/config.schema.json`. `fds-detect` generates it.
 - `af_xdp.num_frames`: umem frame count (default 4096).
 - `af_xdp.numa`: bind each worker's umem to its NUMA node with `mbind` (default off).
 - `af_xdp.xskmap`: pinned XSKMAP path. Empty means do not register.
+- `udp.ipv6_only` / `tcp.ipv6_only`: `IPV6_V6ONLY`. Default false is dual-stack.
+- `engine.userspace_tcp`: run userspace TCP (RACK, TSO) on the AF_XDP worker.
 - `udp.incoming_cpu`: default off. On loopback it pins all traffic to one worker. Enable only with NIC RSS and IRQ affinity.
 
 Example:

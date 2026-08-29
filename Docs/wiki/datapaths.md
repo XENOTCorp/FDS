@@ -106,6 +106,28 @@ bash scripts/veth-af-xdp.sh
 Transmit on a physical NIC needs a driver with an XDP queue (ixgbe,
 i40e, ice, mlx5).
 
+## IPv6 and dual-stack
+
+UDP and TCP sockets bind IPv4 or IPv6. An IPv6 bind with `udp.ipv6_only`
+or `tcp.ipv6_only` set to false (the default) is dual-stack: `[::]:port`
+accepts IPv4-mapped clients. IPv4-mapped peers are presented as IPv4
+addresses so echo replies use the same family the client used.
+
+AF_XDP `process_frame` echoes IPv4 and IPv6 UDP. Userspace TCP
+(`fds::ustack`) speaks both families.
+
+## Userspace TCP
+
+`fds::ustack::TcpStack` is a packet-in / packet-out TCP. It does the
+three-way handshake, software TSO (MSS chop), RACK loss detection
+(RFC 8985) and RTO retransmission. Set `engine.userspace_tcp` with an
+AF_XDP device to run it on the XDP worker. Tests drive two stacks over
+a simulated wire, including a loss case.
+
+```sh
+./target/release/fds --bench-ustack 1
+```
+
 ## DPDK
 
 DPDK is not in this tree. AF_XDP native zero-copy is the in-tree

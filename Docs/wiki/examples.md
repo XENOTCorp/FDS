@@ -118,7 +118,27 @@ loop {
 }
 ```
 
-## 10. AF_XDP on a supported NIC
+## 10. Compare epoll and io_uring
+
+```sh
+bash scripts/bench-iouring-epoll.sh 3
+```
+
+The script starts the engine twice and runs `--bench-tcp-against` and
+`--bench-udp-against` against each strategy.
+
+## 11. Compare AF_XDP zero-copy with xdpsock
+
+Needs root and a veth pair (or a NIC with native XDP):
+
+```sh
+sudo bash scripts/bench-afxdp-xdpsock.sh 3
+```
+
+The C helper `scripts/xdpsock_rxdrop.c` is the linux `xdpsock -r` shape:
+native zero-copy bind, count RX, recycle to the fill ring.
+
+## 12. AF_XDP on a supported NIC
 
 Use an XDP-capable NIC (ixgbe, i40e, ice, mlx5). Replace `eth0` with your
 device name. Each worker binds one queue. Native zero-copy is the default.

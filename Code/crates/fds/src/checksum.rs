@@ -35,6 +35,34 @@ pub(crate) fn udp_checksum(src: [u8; 4], dst: [u8; 4], udp_len: u16, data: &[u8]
     checksum_finalize(sum.wrapping_add(sum_u16(data)))
 }
 
+/// IPv6 pseudo-header one's-complement sum (RFC 2460): src, dst, 32-bit
+/// upper-layer length, next-header. Used by TCP and UDP over IPv6.
+fn ipv6_pseudo_sum(src: [u8; 16], dst: [u8; 16], next: u8, len: u32) -> u32 {
+    let mut sum = sum_u16(&src);
+    sum = sum.wrapping_add(sum_u16(&dst));
+    sum = sum.wrapping_add(len >> 16);
+    sum = sum.wrapping_add(len & 0xffff);
+    sum.wrapping_add(next as u32)
+}
+
+/// TCP checksum including the IPv6 pseudo-header (RFC 2460).
+pub(crate) fn tcp_checksum_v6(src: [u8; 16], dst: [u8; 16], tcp_len: u32, data: &[u8]) -> u16 {
+    let sum = ipv6_pseudo_sum(src, dst, 6, tcp_len);
+    checksum_finalize(sum.wrapping_add(sum_u16(data)))
+}
+
+/// UDP checksum including the IPv6 pseudo-header. A computed 0 is
+/// stored as 0xFFFF (RFC 2460: IPv6 UDP checksums are mandatory).
+pub(crate) fn udp_checksum_v6(src: [u8; 16], dst: [u8; 16], udp_len: u32, data: &[u8]) -> u16 {
+    let sum = ipv6_pseudo_sum(src, dst, 17, udp_len);
+    let c = checksum_finalize(sum.wrapping_add(sum_u16(data)));
+    if c == 0 {
+        0xffff
+    } else {
+        c
+    }
+}
+
 /// RFC 3309 / RFC 4960 CRC32c (Castagnoli, poly 0x1EDC6F41 reflected).
 /// Table-driven, byte-at-a-time. Init = all ones, final = complement.
 pub(crate) fn sctp_checksum(data: &[u8]) -> u32 {
@@ -108,6 +136,43 @@ mod tests {
         let mut sum = sum_u16(&src).wrapping_add(sum_u16(&dst));
         sum = sum.wrapping_add(17).wrapping_add(13);
         sum = sum.wrapping_add(sum_u16(&udp)).wrapping_add(c as u32);
+        assert_eq!(checksum_finalize(sum), 0);
+    }
+
+    #[test]
+    fn ipv6_udp_checksum_folds_to_zero() {
+        let mut src = [0u8; 16];
+        let mut dst = [0u8; 16];
+        src[15] = 1;
+        dst[15] = 2;
+        let mut udp = [0u8; 8 + 5];
+        udp[0..2].copy_from_slice(&1234u16.to_be_bytes());
+        udp[2..4].copy_from_slice(&5678u16.to_be_bytes());
+        udp[4..6].copy_from_slice(&13u16.to_be_bytes());
+        udp[8..].copy_from_slice(b"hello");
+        let c = udp_checksum_v6(src, dst, 13, &udp);
+        assert_ne!(c, 0, "IPv6 UDP checksum must not be zero");
+        udp[6..8].copy_from_slice(&c.to_be_bytes());
+        let mut sum = ipv6_pseudo_sum(src, dst, 17, 13);
+        sum = sum.wrapping_add(sum_u16(&udp));
+        assert_eq!(checksum_finalize(sum), 0);
+    }
+
+    #[test]
+    fn ipv6_tcp_checksum_folds_to_zero() {
+        let mut src = [0u8; 16];
+        let mut dst = [0u8; 16];
+        src[15] = 1;
+        dst[15] = 2;
+        let mut tcp = [0u8; 20];
+        tcp[0..2].copy_from_slice(&8080u16.to_be_bytes());
+        tcp[2..4].copy_from_slice(&80u16.to_be_bytes());
+        tcp[12] = 0x50; // data offset 5
+        tcp[13] = 0x02; // SYN
+        let c = tcp_checksum_v6(src, dst, 20, &tcp);
+        tcp[16..18].copy_from_slice(&c.to_be_bytes());
+        let mut sum = ipv6_pseudo_sum(src, dst, 6, 20);
+        sum = sum.wrapping_add(sum_u16(&tcp));
         assert_eq!(checksum_finalize(sum), 0);
     }
 

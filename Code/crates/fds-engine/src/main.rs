@@ -84,6 +84,10 @@ fn main() {
             fuzz::run(iters);
             Ok(())
         }
+        Some("--bench-ustack") => {
+            let secs = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(1);
+            benchmarks::run_ustack(secs)
+        }
         _ => {
             let path = args
                 .first()

@@ -39,6 +39,9 @@ pub struct EngineConfig {
     pub udp_bind: String,
     /// TCP echo bind address ("ip:port").
     pub tcp_bind: String,
+    /// Run the userspace TCP stack (RACK, TSO, loss recovery) on the
+    /// AF_XDP datapath instead of the UDP frame echo.
+    pub userspace_tcp: bool,
 }
 
 impl Default for EngineConfig {
@@ -46,6 +49,7 @@ impl Default for EngineConfig {
         EngineConfig {
             udp_bind: "127.0.0.1:7777".to_string(),
             tcp_bind: "127.0.0.1:7778".to_string(),
+            userspace_tcp: false,
         }
     }
 }
@@ -130,6 +134,9 @@ pub struct UdpConfig {
     pub reuseport: bool,
     /// SO_INCOMING_CPU steering.
     pub incoming_cpu: bool,
+    /// `IPV6_V6ONLY` on IPv6 binds. `false` (default) is dual-stack:
+    /// an `[::]` bind also accepts IPv4-mapped clients.
+    pub ipv6_only: bool,
 }
 
 impl Default for UdpConfig {
@@ -147,6 +154,7 @@ impl Default for UdpConfig {
             // defeating per-core distribution. NIC deployments with
             // RSS/IRQ affinity set it explicitly (see ops-tuning).
             incoming_cpu: false,
+            ipv6_only: false,
         }
     }
 }
@@ -163,6 +171,8 @@ pub struct TcpConfig {
     pub reuseport: bool,
     pub rcvbuf: usize,
     pub sndbuf: usize,
+    /// `IPV6_V6ONLY` on IPv6 binds. `false` (default) is dual-stack.
+    pub ipv6_only: bool,
 }
 
 impl Default for TcpConfig {
@@ -176,6 +186,7 @@ impl Default for TcpConfig {
             reuseport: true,
             rcvbuf: 4 << 20,
             sndbuf: 4 << 20,
+            ipv6_only: false,
         }
     }
 }
@@ -372,11 +383,20 @@ impl Config {
         if let Some(v) = env_flag("FDS_TCP_QUICKACK") {
             self.tcp.quickack = v;
         }
+        if let Some(v) = env_flag("FDS_UDP_IPV6_ONLY") {
+            self.udp.ipv6_only = v;
+        }
+        if let Some(v) = env_flag("FDS_TCP_IPV6_ONLY") {
+            self.tcp.ipv6_only = v;
+        }
         if let Ok(v) = std::env::var("FDS_ENGINE_UDP_BIND") {
             self.engine.udp_bind = v;
         }
         if let Ok(v) = std::env::var("FDS_ENGINE_TCP_BIND") {
             self.engine.tcp_bind = v;
+        }
+        if let Some(v) = env_flag("FDS_ENGINE_USERSPACE_TCP") {
+            self.engine.userspace_tcp = v;
         }
         if let Ok(v) = std::env::var("FDS_METRICS_SOCKET_PATH") {
             self.metrics.socket_path = v;

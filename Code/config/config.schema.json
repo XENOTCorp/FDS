@@ -137,6 +137,13 @@
           "description": "SO_INCOMING_CPU steering.",
           "x-trade-off": "Pins flows to the RX softirq CPU; on loopback that collapses every flow onto one worker; enable only with NIC RSS/IRQ affinity (Docs/wiki/).",
           "x-derived-from": "engine ruling (loopback collapse)"
+        },
+        "ipv6_only": {
+          "type": "boolean",
+          "default": false,
+          "description": "IPV6_V6ONLY on IPv6 UDP binds. false = dual-stack ([::] also accepts IPv4-mapped clients).",
+          "x-trade-off": "Dual-stack uses one socket for both families; ipv6_only=true is for IPv6-only deployments.",
+          "x-derived-from": "engine default (dual-stack)"
         }
       }
     },
@@ -199,6 +206,13 @@
           "description": "SO_SNDBUF per TCP socket, in bytes.",
           "x-trade-off": "Larger absorbs bursts at the cost of memory.",
           "x-derived-from": "D-1 (L3-aware buffer sizing)"
+        },
+        "ipv6_only": {
+          "type": "boolean",
+          "default": false,
+          "description": "IPV6_V6ONLY on IPv6 TCP binds. false = dual-stack.",
+          "x-trade-off": "Dual-stack uses one listener for IPv4 and IPv6; ipv6_only=true rejects IPv4-mapped clients.",
+          "x-derived-from": "engine default (dual-stack)"
         }
       }
     },
@@ -365,6 +379,13 @@
           "default": "127.0.0.1:7778",
           "description": "TCP echo bind address (ip:port).",
           "x-trade-off": "Loopback default; bind 0.0.0.0 for external traffic.",
+          "x-derived-from": "engine default"
+        },
+        "userspace_tcp": {
+          "type": "boolean",
+          "default": false,
+          "description": "Run the userspace TCP stack (RACK, TSO, loss recovery) on the AF_XDP datapath.",
+          "x-trade-off": "Userspace TCP owns congestion and loss; it needs AF_XDP and replaces the UDP frame echo.",
           "x-derived-from": "engine default"
         }
       }

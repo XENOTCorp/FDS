@@ -174,6 +174,14 @@ static UDP_FIELDS: &[FieldDef] = &[
         description: "SO_INCOMING_CPU steering.",
         trade_off: "Pins flows to the RX softirq CPU; on loopback that collapses every flow onto one worker; enable only with NIC RSS/IRQ affinity (Docs/wiki/).",
     },
+    FieldDef {
+        key: "ipv6_only",
+        json_type: JsonType::Bool,
+        default_json: "false",
+        derived_from: "engine default (dual-stack)",
+        description: "IPV6_V6ONLY on IPv6 UDP binds. false = dual-stack ([::] also accepts IPv4-mapped clients).",
+        trade_off: "Dual-stack uses one socket for both families; ipv6_only=true is for IPv6-only deployments.",
+    },
 ];
 
 static TCP_FIELDS: &[FieldDef] = &[
@@ -240,6 +248,14 @@ static TCP_FIELDS: &[FieldDef] = &[
         derived_from: "D-1 (L3-aware buffer sizing)",
         description: "SO_SNDBUF per TCP socket, in bytes.",
         trade_off: "Larger absorbs bursts at the cost of memory.",
+    },
+    FieldDef {
+        key: "ipv6_only",
+        json_type: JsonType::Bool,
+        default_json: "false",
+        derived_from: "engine default (dual-stack)",
+        description: "IPV6_V6ONLY on IPv6 TCP binds. false = dual-stack.",
+        trade_off: "Dual-stack uses one listener for IPv4 and IPv6; ipv6_only=true rejects IPv4-mapped clients.",
     },
 ];
 
@@ -407,6 +423,14 @@ static ENGINE_FIELDS: &[FieldDef] = &[
         derived_from: "engine default",
         description: "TCP echo bind address (ip:port).",
         trade_off: "Loopback default; bind 0.0.0.0 for external traffic.",
+    },
+    FieldDef {
+        key: "userspace_tcp",
+        json_type: JsonType::Bool,
+        default_json: "false",
+        derived_from: "engine default",
+        description: "Run the userspace TCP stack (RACK, TSO, loss recovery) on the AF_XDP datapath.",
+        trade_off: "Userspace TCP owns congestion and loss; it needs AF_XDP and replaces the UDP frame echo.",
     },
 ];
 

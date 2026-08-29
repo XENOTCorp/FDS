@@ -89,3 +89,4 @@ a NUMA socket.
 | `util` | pinning, coarse monotonic ticks |
 | `io_uring_reactor` | completion datapath, feature `io-uring`: multishot recv/accept, registered buffers, SEND_ZC |
 | `af_xdp` | zero-copy frame datapath, feature `af-xdp`: `XDP_ZEROCOPY`, NUMA-local umem, multiqueue |
+| `ustack` | userspace TCP: 3WHS, software TSO, RACK loss recovery, IPv4/IPv6 |

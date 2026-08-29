@@ -32,6 +32,18 @@ pub(crate) struct Ipv4Header {
     pub dst: [u8; 4],
 }
 
+/// Parsed IPv6 header (fixed 40-byte form; extension headers are not a
+/// fast path: `next_header` is the upper-layer protocol or the first
+/// extension).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Ipv6Header {
+    pub payload_len: u16,
+    pub next_header: u8,
+    pub hop_limit: u8,
+    pub src: [u8; 16],
+    pub dst: [u8; 16],
+}
+
 /// Parsed UDP header (8 bytes).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct UdpHeader {
@@ -76,6 +88,29 @@ pub(crate) fn parse_ipv4(input: &[u8]) -> Result<Ipv4Header, ParseError> {
         protocol: input[9],
         src: [input[12], input[13], input[14], input[15]],
         dst: [input[16], input[17], input[18], input[19]],
+    })
+}
+
+/// Parse an IPv6 header. Requires at least 40 bytes; validates version;
+/// never reads past `input.len()`. Extension headers are not walked:
+/// `next_header` is returned as on the wire.
+pub(crate) fn parse_ipv6(input: &[u8]) -> Result<Ipv6Header, ParseError> {
+    if input.len() < 40 {
+        return Err(ParseError::Truncated);
+    }
+    if input[0] >> 4 != 6 {
+        return Err(ParseError::BadVersion);
+    }
+    let mut src = [0u8; 16];
+    let mut dst = [0u8; 16];
+    src.copy_from_slice(&input[8..24]);
+    dst.copy_from_slice(&input[24..40]);
+    Ok(Ipv6Header {
+        payload_len: u16::from_be_bytes([input[4], input[5]]),
+        next_header: input[6],
+        hop_limit: input[7],
+        src,
+        dst,
     })
 }
 
@@ -174,6 +209,52 @@ mod tests {
         assert_eq!(parse_ipv4(&input), Err(ParseError::BadVersion));
     }
 
+    /// A canonical 40-byte IPv6 header (next-header TCP, hop 64).
+    fn ipv6_header() -> [u8; 40] {
+        let mut h = [0u8; 40];
+        h[0] = 0x60; // version 6
+        h[4..6].copy_from_slice(&20u16.to_be_bytes()); // payload_len
+        h[6] = 6; // TCP
+        h[7] = 64;
+        h[8] = 0x20; // src 2001:db8::1
+        h[9] = 0x01;
+        h[10] = 0x0d;
+        h[11] = 0xb8;
+        h[23] = 1;
+        h[24] = 0x20; // dst 2001:db8::2
+        h[25] = 0x01;
+        h[26] = 0x0d;
+        h[27] = 0xb8;
+        h[39] = 2;
+        h
+    }
+
+    #[test]
+    fn valid_ipv6() {
+        let h = parse_ipv6(&ipv6_header()).unwrap();
+        assert_eq!(h.payload_len, 20);
+        assert_eq!(h.next_header, 6);
+        assert_eq!(h.hop_limit, 64);
+        assert_eq!(h.src[0], 0x20);
+        assert_eq!(h.src[15], 1);
+        assert_eq!(h.dst[15], 2);
+    }
+
+    #[test]
+    fn ipv6_truncated() {
+        let full = ipv6_header();
+        for len in 0..40 {
+            assert_eq!(parse_ipv6(&full[..len]), Err(ParseError::Truncated));
+        }
+    }
+
+    #[test]
+    fn ipv6_wrong_version() {
+        let mut input = ipv6_header();
+        input[0] = 0x40;
+        assert_eq!(parse_ipv6(&input), Err(ParseError::BadVersion));
+    }
+
     #[test]
     fn valid_udp() {
         let mut input = [0u8; 8];
@@ -255,6 +336,11 @@ mod tests {
                 assert_eq!(ip, Err(ParseError::Truncated));
             }
             assert_eq!(ip, parse_ipv4(input)); // deterministic
+            let ip6 = parse_ipv6(input);
+            if len < 40 {
+                assert_eq!(ip6, Err(ParseError::Truncated));
+            }
+            assert_eq!(ip6, parse_ipv6(input));
             let ud = parse_udp(input);
             if len < 8 {
                 assert_eq!(ud, Err(ParseError::Truncated));

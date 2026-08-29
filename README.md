@@ -10,7 +10,8 @@ runs on any supported Linux system.
 
 ## Features
 
-- TCP, UDP, and SCTP transports
+- TCP, UDP, and SCTP transports (IPv4, IPv6, dual-stack)
+- Userspace TCP with RACK, software TSO, and loss recovery (`fds::ustack`)
 - Public API: Driver/callback and AsyncRead/AsyncWrite (`fds::api`)
 - epoll, io_uring (multishot recv/accept, registered buffers, SEND_ZC),
   and AF_XDP (native zero-copy, NUMA-local rings) datapaths

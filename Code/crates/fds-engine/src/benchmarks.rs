@@ -938,11 +938,28 @@ pub fn run_tcp_against(addr: std::net::SocketAddr, seconds: u64) -> std::io::Res
         let payload = payload.clone();
         let stop = stop.clone();
         handles.push(std::thread::spawn(move || -> std::io::Result<u64> {
+            use std::io::Read;
             let mut s = std::net::TcpStream::connect(addr)?;
             s.set_nodelay(true)?;
+            s.set_nonblocking(true)?;
             let mut bytes: u64 = 0;
+            let mut rbuf = vec![0u8; 64 * 1024];
             while !stop.load(Ordering::Relaxed) {
-                bytes += s.write(&payload)? as u64;
+                match s.write(&payload) {
+                    Ok(n) => bytes += n as u64,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(e) => return Err(e),
+                }
+                // Drain the echo so the server's send queue (and the
+                // io_uring high watermark) cannot stall the flood.
+                loop {
+                    match s.read(&mut rbuf) {
+                        Ok(0) => break,
+                        Ok(_) => continue,
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                        Err(e) => return Err(e),
+                    }
+                }
             }
             Ok(bytes)
         }));
@@ -1023,6 +1040,77 @@ pub fn run_udp_against(addr: std::net::SocketAddr, seconds: u64) -> std::io::Res
         s as f64 * 8.0 / seconds as f64 / 1e9,
         e as f64 * 8.0 / seconds as f64 / 1e9,
         if s > 0 { 100.0 * e as f64 / s as f64 } else { 0.0 },
+    );
+    Ok(())
+}
+
+/// Userspace TCP microbench: two stacks on a simulated wire. Reports
+/// lossless TSO throughput and a 10% loss + RACK recovery run.
+pub fn run_ustack(seconds: u64) -> std::io::Result<()> {
+    use fds::ustack::{pump, HostAddr, TcpStack};
+    let seconds = seconds.max(1);
+    let mac_s = [1u8; 6];
+    let mac_c = [2u8; 6];
+    let mut srv = TcpStack::new_v4(mac_s, [10, 0, 0, 1], 80);
+    let mut cli = TcpStack::new_v4(mac_c, [10, 0, 0, 2], 12345);
+    srv.listen();
+    cli.connect(mac_s, HostAddr::V4([10, 0, 0, 1]), 80);
+    pump(&mut cli, &mut srv, |_| false);
+    pump(&mut srv, &mut cli, |_| false);
+    pump(&mut cli, &mut srv, |_| false);
+    if !cli.established() || !srv.established() {
+        return Err(std::io::Error::other("ustack handshake failed"));
+    }
+    let chunk = vec![0x5Au8; 16 * 1024];
+    let deadline = Instant::now() + std::time::Duration::from_secs(seconds);
+    let mut bytes = 0u64;
+    let mut echo = vec![0u8; 32 * 1024];
+    while Instant::now() < deadline {
+        let _ = cli.write(&chunk);
+        pump(&mut cli, &mut srv, |_| false);
+        let n = srv.read(&mut echo);
+        if n > 0 {
+            let _ = srv.write(&echo[..n]);
+        }
+        pump(&mut srv, &mut cli, |_| false);
+        bytes += cli.read(&mut echo) as u64;
+        cli.set_now(cli.now_us().saturating_add(100));
+        srv.set_now(srv.now_us().saturating_add(100));
+    }
+    println!(
+        "bench-ustack: lossless {:.2} Gbps over {seconds}s (TSO MSS chop, in-process wire)",
+        bytes as f64 * 8.0 / seconds as f64 / 1e9
+    );
+
+    let mut srv = TcpStack::new_v4(mac_s, [10, 0, 0, 1], 80);
+    let mut cli = TcpStack::new_v4(mac_c, [10, 0, 0, 2], 12345);
+    srv.listen();
+    cli.connect(mac_s, HostAddr::V4([10, 0, 0, 1]), 80);
+    pump(&mut cli, &mut srv, |_| false);
+    pump(&mut srv, &mut cli, |_| false);
+    pump(&mut cli, &mut srv, |_| false);
+    let payload = vec![0x11u8; 8000];
+    assert_eq!(cli.write(&payload), payload.len());
+    let mut n = 0usize;
+    pump(&mut cli, &mut srv, |f| {
+        let data = f.len() > 54;
+        if data {
+            n += 1;
+            n % 10 == 1
+        } else {
+            false
+        }
+    });
+    for t in 1..20 {
+        cli.on_timer(t as u64 * 250_000);
+        pump(&mut cli, &mut srv, |_| false);
+        pump(&mut srv, &mut cli, |_| false);
+    }
+    let mut buf = vec![0u8; 16_000];
+    let got = srv.read(&mut buf);
+    println!(
+        "bench-ustack: 10% data-frame loss, recovered {got}/{} bytes via RACK/RTO",
+        payload.len()
     );
     Ok(())
 }

@@ -132,6 +132,18 @@ cargo run --release -p fds-engine -- --bench-tcp-against 127.0.0.1:7778 5
 
 Published numbers: [benchmarks.md](benchmarks.md).
 
+Compare epoll and io_uring on this host:
+
+```sh
+bash scripts/bench-iouring-epoll.sh 3
+```
+
+Userspace TCP (RACK, TSO) on a simulated wire:
+
+```sh
+./target/release/fds --bench-ustack 1
+```
+
 ## 10. Build the thesis
 
 ```sh

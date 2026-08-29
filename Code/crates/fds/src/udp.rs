@@ -17,7 +17,7 @@
 use crate::config::UdpConfig;
 use std::cell::UnsafeCell;
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 
 /// Maximum datagrams per `recvmmsg`/`sendmmsg` call; the batch arrays in
@@ -48,6 +48,9 @@ pub const UDP_GRO: libc::c_int = 104;
 /// `send_batch` never run concurrently on the same socket.
 pub struct UdpSocket {
     fd: OwnedFd,
+    /// `AF_INET` or `AF_INET6`. Dual-stack sockets are `AF_INET6` with
+    /// `IPV6_V6ONLY=0`.
+    family: libc::c_int,
     rx_hdrs: UnsafeCell<Box<[libc::mmsghdr]>>,
     rx_iovs: UnsafeCell<Box<[libc::iovec]>>,
     rx_names: UnsafeCell<Box<[libc::sockaddr_storage]>>,
@@ -100,55 +103,102 @@ pub fn set_int(fd: i32, level: libc::c_int, opt: libc::c_int, val: libc::c_int) 
     Ok(())
 }
 
-/// Build a `sockaddr_in` from a std address (IPv4 only).
-fn sockaddr_in_from(addr: SocketAddr) -> io::Result<libc::sockaddr_in> {
-    let v4 = match addr {
-        SocketAddr::V4(v4) => v4,
-        SocketAddr::V6(_) => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "UdpSocket is IPv4-only; IPv6 address rejected",
-            ));
+/// Write `addr` into `ss`. On an `AF_INET6` socket an IPv4 destination
+/// is sent as an IPv4-mapped IPv6 address. Returns the sockaddr length.
+fn fill_sockaddr(
+    ss: &mut libc::sockaddr_storage,
+    addr: SocketAddr,
+    sock_family: libc::c_int,
+) -> io::Result<libc::socklen_t> {
+    // SAFETY: sockaddr_storage is a kernel buffer we own; every field
+    // we send is written below.
+    unsafe { std::ptr::write_bytes(ss as *mut libc::sockaddr_storage, 0, 1) };
+    match (sock_family, addr) {
+        (libc::AF_INET, SocketAddr::V4(v4)) => {
+            let sin = ss as *mut libc::sockaddr_storage as *mut libc::sockaddr_in;
+            // SAFETY: ss is zeroed and large enough for sockaddr_in.
+            unsafe {
+                (*sin).sin_family = libc::AF_INET as libc::sa_family_t;
+                (*sin).sin_port = v4.port().to_be();
+                (*sin).sin_addr.s_addr = u32::from_ne_bytes(v4.ip().octets());
+            }
+            Ok(std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t)
         }
-    };
-    // SAFETY: a zeroed `sockaddr_in` has no invalid bit patterns (only
-    // integers and padding); every field is written below.
-    let mut sa: libc::sockaddr_in = unsafe { std::mem::zeroed() };
-    sa.sin_family = libc::AF_INET as libc::sa_family_t;
-    // `sin_port` and `sin_addr.s_addr` are stored in network byte order;
-    // `to_be`/`from_ne_bytes` reproduce the on-wire layout.
-    sa.sin_port = v4.port().to_be();
-    sa.sin_addr.s_addr = u32::from_ne_bytes(v4.ip().octets());
-    Ok(sa)
+        (libc::AF_INET6, SocketAddr::V6(v6)) => {
+            write_sockaddr_in6(ss, v6.ip().octets(), v6.port(), v6.scope_id());
+            Ok(std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t)
+        }
+        (libc::AF_INET6, SocketAddr::V4(v4)) => {
+            let mapped = v4.ip().to_ipv6_mapped();
+            write_sockaddr_in6(ss, mapped.octets(), v4.port(), 0);
+            Ok(std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t)
+        }
+        (libc::AF_INET, SocketAddr::V6(_)) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "IPv6 destination on an IPv4 UDP socket",
+        )),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "UDP socket family is not AF_INET or AF_INET6",
+        )),
+    }
 }
 
-/// Read a `sockaddr_storage` filled by the kernel on an IPv4 socket as
-/// a std address.
+fn write_sockaddr_in6(ss: &mut libc::sockaddr_storage, octets: [u8; 16], port: u16, scope: u32) {
+    let sin6 = ss as *mut libc::sockaddr_storage as *mut libc::sockaddr_in6;
+    // SAFETY: ss is zeroed and large enough for sockaddr_in6.
+    unsafe {
+        (*sin6).sin6_family = libc::AF_INET6 as libc::sa_family_t;
+        (*sin6).sin6_port = port.to_be();
+        (*sin6).sin6_flowinfo = 0;
+        (*sin6).sin6_addr.s6_addr = octets;
+        (*sin6).sin6_scope_id = scope;
+    }
+}
+
+/// Read a `sockaddr_storage` as a std address. IPv4-mapped IPv6
+/// addresses are returned as `SocketAddr::V4` so dual-stack sockets
+/// echo IPv4 peers as IPv4.
 fn addr_from_storage(ss: &libc::sockaddr_storage) -> SocketAddr {
     match ss.ss_family as libc::c_int {
         libc::AF_INET => {
-            // SAFETY: AF_INET guarantees the kernel wrote a `sockaddr_in`
-            // at this address; both structs start with the family field
-            // and `sockaddr_in` is a prefix of `sockaddr_storage`.
+            // SAFETY: AF_INET guarantees the kernel wrote a `sockaddr_in`.
             let sin = unsafe { &*(ss as *const libc::sockaddr_storage).cast::<libc::sockaddr_in>() };
-            // The kernel stores address and port in network byte order.
             SocketAddr::V4(SocketAddrV4::new(
                 Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)),
                 u16::from_be(sin.sin_port),
             ))
         }
-        _ => panic!("IPv4 socket reported a non-AF_INET source address"),
+        libc::AF_INET6 => {
+            // SAFETY: as above, with sockaddr_in6.
+            let sin6 =
+                unsafe { &*(ss as *const libc::sockaddr_storage).cast::<libc::sockaddr_in6>() };
+            let ip = Ipv6Addr::from(sin6.sin6_addr.s6_addr);
+            let port = u16::from_be(sin6.sin6_port);
+            if let Some(v4) = ip.to_ipv4_mapped() {
+                SocketAddr::V4(SocketAddrV4::new(v4, port))
+            } else {
+                SocketAddr::V6(SocketAddrV6::new(ip, port, 0, sin6.sin6_scope_id))
+            }
+        }
+        _ => panic!("UDP socket reported a non-IP source address"),
     }
 }
 
 impl UdpSocket {
-    /// Bind a nonblocking UDP socket (IPv4) to `addr`, applying `cfg`.
+    /// Bind a nonblocking UDP socket (IPv4 or IPv6) to `addr`, applying
+    /// `cfg`. An IPv6 bind with `cfg.ipv6_only == false` is dual-stack
+    /// (`IPV6_V6ONLY=0`): IPv4 clients appear as IPv4-mapped addresses.
     pub fn new(addr: SocketAddr, cfg: &UdpConfig) -> std::io::Result<Self> {
+        let family = match addr {
+            SocketAddr::V4(_) => libc::AF_INET,
+            SocketAddr::V6(_) => libc::AF_INET6,
+        };
         // SAFETY: `socket` returns a fresh descriptor (or -1); the flags
         // are plain bitwise constants.
         let fd = unsafe {
             libc::socket(
-                libc::AF_INET,
+                family,
                 libc::SOCK_DGRAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC,
                 0,
             )
@@ -205,17 +255,26 @@ impl UdpSocket {
             // argument, so zerocopy sends use the sendmsg path.
             set_int(owned.as_raw_fd(), libc::SOL_SOCKET, 60, 1)?;
         }
+        if family == libc::AF_INET6 {
+            set_int(
+                owned.as_raw_fd(),
+                libc::IPPROTO_IPV6,
+                libc::IPV6_V6ONLY,
+                i32::from(cfg.ipv6_only),
+            )?;
+        }
 
         // Bind after the options so SO_REUSEPORT is already set (the
         // kernel requires it before bind for reuseport group admission).
-        let sa = sockaddr_in_from(addr)?;
-        // SAFETY: `sa` is fully initialized and `bind` copies it into the
+        let mut ss: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+        let slen = fill_sockaddr(&mut ss, addr, family)?;
+        // SAFETY: `ss` is fully initialized and `bind` copies it into the
         // kernel without retaining the pointer.
         let ret = unsafe {
             libc::bind(
                 owned.as_raw_fd(),
-                (&sa as *const libc::sockaddr_in).cast::<libc::sockaddr>(),
-                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+                (&ss as *const libc::sockaddr_storage).cast::<libc::sockaddr>(),
+                slen,
             )
         };
         if ret < 0 {
@@ -224,6 +283,7 @@ impl UdpSocket {
 
         Ok(UdpSocket {
             fd: owned,
+            family,
             rx_hdrs: UnsafeCell::new(zeroed_array()),
             rx_iovs: UnsafeCell::new(zeroed_array()),
             rx_names: UnsafeCell::new(zeroed_array()),
@@ -349,7 +409,8 @@ impl UdpSocket {
 
     /// Send one datagram (single datagram path).
     pub fn send_to(&self, data: &[u8], dst: SocketAddr) -> std::io::Result<usize> {
-        let sa = sockaddr_in_from(dst)?;
+        let mut ss: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+        let slen = fill_sockaddr(&mut ss, dst, self.family)?;
         // SAFETY: `data` is a valid byte slice for the call duration; the
         // kernel copies the payload before `sendto` returns.
         let ret = unsafe {
@@ -358,8 +419,8 @@ impl UdpSocket {
                 data.as_ptr().cast::<libc::c_void>(),
                 data.len(),
                 0,
-                (&sa as *const libc::sockaddr_in).cast::<libc::sockaddr>(),
-                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+                (&ss as *const libc::sockaddr_storage).cast::<libc::sockaddr>(),
+                slen,
             )
         };
         if ret < 0 {
@@ -384,7 +445,8 @@ impl UdpSocket {
     /// cannot do zerocopy.
     pub fn send_to_zerocopy(&self, data: &[u8], dst: SocketAddr) -> std::io::Result<usize> {
         const MSG_ZEROCOPY: libc::c_int = 0x4000000;
-        let sa = sockaddr_in_from(dst)?;
+        let mut ss: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+        let slen = fill_sockaddr(&mut ss, dst, self.family)?;
         let mut iov = libc::iovec {
             // SAFETY: the kernel treats the iovec target as read-only;
             // the mutable pointer is required by the struct layout.
@@ -392,10 +454,8 @@ impl UdpSocket {
             iov_len: data.len(),
         };
         let mut hdr: libc::msghdr = unsafe { std::mem::zeroed() };
-        hdr.msg_name = (&sa as *const libc::sockaddr_in)
-            .cast_mut()
-            .cast::<libc::c_void>();
-        hdr.msg_namelen = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
+        hdr.msg_name = (&mut ss as *mut libc::sockaddr_storage).cast::<libc::c_void>();
+        hdr.msg_namelen = slen;
         hdr.msg_iov = &mut iov;
         hdr.msg_iovlen = 1;
         // SAFETY: `hdr` is fully initialized above and `data` stays valid
@@ -479,22 +539,13 @@ impl UdpSocket {
         let names = unsafe { &mut *self.tx_names.get() };
         for i in 0..n {
             let (data, dst) = msgs[i];
-            let sa = sockaddr_in_from(dst)?;
-            // SAFETY: `names[i]` is `sockaddr_storage`-sized (larger than
-            // a `sockaddr_in`); the copy writes only the prefix.
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    &sa as *const libc::sockaddr_in,
-                    (&mut names[i] as *mut libc::sockaddr_storage).cast::<libc::sockaddr_in>(),
-                    1,
-                );
-            }
+            let slen = fill_sockaddr(&mut names[i], dst, self.family)?;
             let hdr = &mut hdrs[i];
-            // SAFETY: `names[i]` holds a fully initialized `sockaddr_in`;
+            // SAFETY: `names[i]` holds a fully initialized sockaddr;
             // the kernel copies it before returning.
             hdr.msg_hdr.msg_name =
                 (&mut names[i] as *mut libc::sockaddr_storage).cast::<libc::c_void>();
-            hdr.msg_hdr.msg_namelen = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
+            hdr.msg_hdr.msg_namelen = slen;
             // SAFETY: `iovs[i]` lives in the preallocated array for the
             // duration of the syscall.
             hdr.msg_hdr.msg_iov = &mut iovs[i];
@@ -828,5 +879,57 @@ mod tests {
             }
             Err(e) => panic!("GSO send failed: {e}"),
         }
+    }
+
+    #[test]
+    fn udp_ipv6_loopback_roundtrip() {
+        let cfg = test_cfg();
+        let a = match UdpSocket::new("[::1]:0".parse().unwrap(), &cfg) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("skipping: IPv6 UDP bind unavailable ({e})");
+                return;
+            }
+        };
+        let b = UdpSocket::new("[::1]:0".parse().unwrap(), &cfg).unwrap();
+        let baddr = b.local_addr().unwrap();
+        assert!(baddr.is_ipv6());
+        let payload = b"hello fds udp6";
+        assert_eq!(a.send_to(payload, baddr).unwrap(), payload.len());
+        let mut bufs: [mol::Buffer<2048>; 1] = std::array::from_fn(|_| mol::Buffer::new());
+        let mut out: [RecvResult; 1] = std::array::from_fn(|_| recv_slot());
+        let n = b.recv_batch(&mut bufs, &mut out).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(bufs[0].as_slice(), payload);
+        assert!(out[0].src.is_ipv6());
+    }
+
+    #[test]
+    fn udp_dualstack_v4_client() {
+        let cfg = UdpConfig {
+            ipv6_only: false,
+            ..test_cfg()
+        };
+        let server = match UdpSocket::new("[::]:0".parse().unwrap(), &cfg) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("skipping: IPv6 UDP bind unavailable ({e})");
+                return;
+            }
+        };
+        let port = server.local_addr().unwrap().port();
+        let client = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let dst: SocketAddr = (std::net::Ipv4Addr::LOCALHOST, port).into();
+        client.send_to(b"dual", dst).unwrap();
+        let mut bufs: [mol::Buffer<2048>; 1] = std::array::from_fn(|_| mol::Buffer::new());
+        let mut out: [RecvResult; 1] = std::array::from_fn(|_| recv_slot());
+        let n = server.recv_batch(&mut bufs, &mut out).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(bufs[0].as_slice(), b"dual");
+        assert!(out[0].src.is_ipv4(), "mapped peer must present as IPv4");
+        server.send_to(b"ack", out[0].src).unwrap();
+        let mut back = [0u8; 8];
+        let (n, _) = client.recv_from(&mut back).unwrap();
+        assert_eq!(&back[..n], b"ack");
     }
 }
