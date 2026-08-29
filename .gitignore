@@ -3,7 +3,7 @@ Code/target/
 Docs/paper/verify/target/
 target/
 
-# Generated bench output (published snapshot lives in Docs/benchmarks/sota-*)
+# Generated bench output (published snapshots live in Docs/benchmarks/YYYY-MM-DD/)
 Code/bench-results/
 
 # Editor and OS noise

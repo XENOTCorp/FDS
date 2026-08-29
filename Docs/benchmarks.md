@@ -1,8 +1,8 @@
 # FDS benchmarks
 
 Measured comparisons of the FDS engine against existing network stacks.
-Raw files: `Docs/benchmarks/sota-2026-08-28/` (stack ranking) and
-`Docs/benchmarks/sota-2026-08-29/` (datapath comparison). Transport
+Raw files: `Docs/benchmarks/2026-08-28/` (stack ranking) and
+`Docs/benchmarks/2026-08-29/` (datapath comparison). Transport
 only: TCP, UDP, SCTP. No HTTP. No Atomos.
 
 The FDS / libuv / tokio ranking (UDP echo, UDP latency, TCP lockstep,
@@ -195,7 +195,7 @@ Same machine, kernel 7.2.0_1, loopback. Event-driven (`busy_poll=0`).
 One worker per logical CPU. Fresh engine per row. Idle 2 s between
 rows. Throughput 5 s. Latency and SCTP 3 s. TCP client writes and
 reads (drain-echo) so the io_uring high watermark cannot stall.
-Raw files: `Docs/benchmarks/sota-2026-08-29/`. Runner:
+Raw files: `Docs/benchmarks/2026-08-29/`. Runner:
 `Code/scripts/bench-datapaths.sh`.
 
 UDP echo and TCP drain-echo, isolated engines:
@@ -234,11 +234,10 @@ In-process (no second process): UDP `--bench` 62.7 kpps / 83.7 MB/s;
 `--bench-large` 60 KiB send 14.53 Gbps, recv 12.53 Gbps; `--latency`
 p50 26.4 µs; `--latency-tcp` p50 33.8 µs; `--bench-sctp` 6.4 Gbps.
 
-AF_XDP vs xdpsock (veth, user+net namespace, no host root): both
-sockets bound in copy mode. RX 0 pps on both. veth does not steer
-frames into an XSK without an attached XDP redirect program, and
-this account cannot load BPF (`CAP_BPF` / bpffs). TX zero-copy pps
-needs a NIC with native XDP. Bind is proven; pps is not.
+AF_XDP vs xdpsock (veth, user+net namespace): both sockets bound in
+copy mode. RX 0 pps on both. veth delivers frames to an XSK only
+when an XDP redirect program is attached. BPF attach needs
+`CAP_BPF`. TX zero-copy pps needs a NIC with native XDP.
 
 SQPOLL was not re-run: the extra kernel thread still contends with
 four workers on two physical cores.
@@ -268,9 +267,8 @@ four workers on two physical cores.
 
 ## Stacks not run on this platform
 
-The following stacks require hardware or build tooling that this
-machine does not provide. Their published results are not reproduced
-here. A measurement on this machine would not be apples-to-apples.
+The following stacks need hardware or build tooling this machine
+does not provide. They are not measured here.
 
 - DPDK and F-Stack: require a NIC with DPDK-capable drivers. The only
   live link here is Wi-Fi. The wired port has no carrier.

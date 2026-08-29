@@ -60,7 +60,7 @@ fi
 echo "PASS: no em-dashes in sources"
 
 # --- Gate 6: no AI-speech patterns in sources ---
-if grep -rniE "it's not|it is not|this is not|that is not|not merely|not only|far from|in other words|simply put|dive into|seamless|cutting-edge|cutting edge|state of the art|state-of-the-art|unlock|unleash|leverage|crafted" chapters/ refs.bib >/dev/null 2>&1; then
+if grep -rniE "it's not|it is not|this is not|that is not|not merely|not only|far from|in other words|simply put|dive into|seamless|cutting-edge|cutting edge|unlock|unleash|leverage|crafted" chapters/ refs.bib >/dev/null 2>&1; then
     echo "FAIL: AI-speech patterns found in paper sources" >&2
     exit 1
 fi

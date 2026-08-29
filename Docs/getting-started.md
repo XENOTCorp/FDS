@@ -144,7 +144,7 @@ Userspace TCP (RACK, TSO) on a simulated wire:
 ./target/release/fds --bench-ustack 5
 ```
 
-Full transport battery (writes `Docs/benchmarks/sota-YYYY-MM-DD/`):
+Full transport battery (writes `Docs/benchmarks/YYYY-MM-DD/`):
 
 ```sh
 bash scripts/bench-datapaths.sh 5

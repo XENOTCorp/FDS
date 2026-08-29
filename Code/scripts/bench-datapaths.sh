@@ -2,7 +2,7 @@
 # FDS transport datapath battery (2026-08-29).
 # In-process benches, dual-stack echo, epoll vs io_uring, userspace TCP,
 # and AF_XDP vs xdpsock. Writes Code/bench-results/ (gitignored) and
-# copies the measured lines to Docs/benchmarks/sota-YYYY-MM-DD/.
+# copies the measured lines to Docs/benchmarks/YYYY-MM-DD/.
 # Usage: bash scripts/bench-datapaths.sh [throughput-seconds]
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -11,7 +11,7 @@ cd "$ROOT"
 SECS="${1:-5}"
 LAT_SECS=3
 OUT="$ROOT/bench-results"
-SNAP="$REPO/Docs/benchmarks/sota-$(date -u +%F)"
+SNAP="$REPO/Docs/benchmarks/$(date -u +%F)"
 mkdir -p "$OUT" "$SNAP"
 FDS="$ROOT/target/release/fds"
 
