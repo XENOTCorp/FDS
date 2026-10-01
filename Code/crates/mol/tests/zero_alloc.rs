@@ -9,7 +9,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use mol::{Buffer, Molecule, MpmcRing, Pool, PureFn, SpscRing, par, then, u16_checksum};
+use mol::{par, then, u16_checksum, Buffer, Molecule, MpmcRing, Pool, PureFn, SpscRing};
 
 struct CountingAllocator;
 
@@ -107,10 +107,7 @@ fn reactor_pipeline_allocates_nothing() {
     // Construction (setup, before the watermark): a pool arena is
     // heap-backed (see `Pool` docs), so build it here; the hot path
     // below only does allocate/return cycles.
-    let pool: Pool<u64, 8> = Pool::new();
-    for i in 0..8 {
-        pool.initialize(i, i as u64);
-    }
+    let pool: Pool<u64, 8> = Pool::new_with(|i| i as u64);
 
     // Snapshot the allocation count, then run the whole hot path. Any heap
     // allocation inside it fails the test.

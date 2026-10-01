@@ -1,30 +1,34 @@
-# FDS Build Profiles & Flag Matrix (sub-project 3)
+# Build profiles and flags
 
 Three layers compose the final build flags, lowest to highest precedence:
 
 1. **Workspace baseline:** `Cargo.toml` `[profile.*]` (portable: opt-level, LTO,
    panic, overflow-checks, codegen-units). This file is the contract for every
    machine; it is deliberately *not* machine-specific.
-2. **Host baseline:** `~/.cargo/config.toml` (per-developer: `target-cpu=native`,
-   mold, relocation-model). On cargo 1.97 the home config overrides the project
-   `.cargo/config.toml`.
-3. **Adaptive layer:** `build/build.sh`, which detects the machine and injects
-   `build.rustflags=[...]` via `cargo --config` (highest precedence, beats both
-   config files). This is where hardware-tailored codegen happens.
+2. **Cargo configuration:** user and project config files may supply flags
+   and linker choices. More local configuration takes precedence.
+3. **Build wrapper:** `build/build.sh` reports hardware and supplies
+   `CARGO_ENCODED_RUSTFLAGS`, overriding both generic and target-specific
+   Cargo config flags. `build.rustflags` is also printed for inspection.
+
+Explicit caller `RUSTFLAGS` or `CARGO_ENCODED_RUSTFLAGS` environments remain
+authoritative and produce a warning; unset them for wrapper-controlled
+builds. Generic `build.rustflags` alone is insufficient because Cargo
+prefers `target.<triple>.rustflags`, even from a user's global config.
 
 ## Flag matrix
 
 | Flag | debug | release | Adaptive? | Effect / trade-off |
 |------|-------|---------|-----------|--------------------|
 | `opt-level` | 1 (own), 3 (deps) | 3 | no | 0 keeps debug symbols/stepping; 3 is the silicon target. Deps at 3 in dev: compiled once, cached. |
-| `target-cpu` |; | `native` | **yes** | `native` enables every feature this CPU has (fastest, but the binary won't run on older CPUs). Pin with `TARGET_CPU=haswell` etc. for reproducible cross-machine builds. |
-| `target-feature` |; | via `TARGET_CPU` | **yes** | With `TARGET_CPU` pinned, the detected SIMD set (`build/detect.sh` → `FDS_SIMD`) is fed back as `-C target-feature=+avx2,+sse4.2,...` so the pinned build still uses this machine's instruction set. `native` needs no explicit features (the compiler enables them). |
+| `target-cpu` | `native` with wrapper | `native` with wrapper | **yes** | `native` targets the build host. Pin `TARGET_CPU=haswell` or `x86-64-v3` for a fixed CPU baseline. Plain Cargo uses its configured baseline. |
+| `target-feature` | CPU baseline | CPU baseline | no | The compiler derives features from `target-cpu`; pinned builds never add detected host features. Explicit extra flags remain the caller's responsibility. |
 | `lto` | off | fat | no | fat LTO across crates at release; slows the build, best codegen. |
 | `codegen-units` | 16 | 1 | no | 1 unit = whole-crate optimization; 16 = fast parallel debug builds. |
 | `panic` | unwind | abort | no | abort shrinks the binary and removes landing pads from the hot path; the test profile always unwinds (cargo forces it). |
 | `overflow-checks` | on | off | no | On in debug: silent wraparound is the classic buffer bug; off at release is the size/speed trade (the dataplane validates lengths explicitly, see `parse.rs`). |
 | `debug-assertions` | on | off | no | On in debug for invariant checks (e.g. ring indices); off at release. |
-| `relocation-model` | pic | pic | no | Position-independent code is the distro default; `-C relocation-model=pic` pins it (baseline config). |
+| `relocation-model` | target default | target default | no | Cargo/rustc target defaults apply unless overridden by user configuration. |
 | `RUSTFLAGS_EXTRA` | env | env | **yes** | Anything extra, appended verbatim (space-separated). Highest override knob. |
 
 The matrix is the decision-matrix baseline from sub-project 2's design spec,

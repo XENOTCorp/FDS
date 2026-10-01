@@ -8,9 +8,8 @@ use std::collections::BTreeSet;
 use std::fs;
 
 /// rustc `target-feature` names keyed by their `/proc/cpuinfo` flag names.
-/// The mapping mirrors what `target-cpu=native` would enable on this CPU,
-/// and is what a pinned (non-`native`) `TARGET_CPU` build feeds back via
-/// `-C target-feature=+...`.
+/// Used for reporting only. A pinned `TARGET_CPU` build must not inherit
+/// instructions available only on the build host.
 const FLAG_TO_TARGET_FEATURE: &[(&str, &str)] = &[
     ("avx2", "avx2"),
     ("avx512f", "avx512f"),
@@ -70,10 +69,16 @@ impl Hardware {
 /// an empty/`None` field rather than an error.
 pub(crate) fn detect() -> Hardware {
     let mut hw = Hardware::default();
-    parse_cpuinfo(&fs::read_to_string("/proc/cpuinfo").unwrap_or_default(), &mut hw);
+    parse_cpuinfo(
+        &fs::read_to_string("/proc/cpuinfo").unwrap_or_default(),
+        &mut hw,
+    );
     hw.l3_bytes = l3_bytes();
     hw.numa_nodes = numa_nodes();
-    parse_meminfo(&fs::read_to_string("/proc/meminfo").unwrap_or_default(), &mut hw);
+    parse_meminfo(
+        &fs::read_to_string("/proc/meminfo").unwrap_or_default(),
+        &mut hw,
+    );
     hw.simd.sort();
     hw.simd.dedup();
     hw
@@ -88,7 +93,9 @@ fn parse_cpuinfo(text: &str, hw: &mut Hardware) {
     let mut cores = BTreeSet::new();
     let mut seen_flags = false;
     for line in text.lines() {
-        let Some((k, v)) = line.split_once(':') else { continue };
+        let Some((k, v)) = line.split_once(':') else {
+            continue;
+        };
         let k = k.trim();
         let v = v.trim();
         match k {
@@ -138,7 +145,7 @@ pub(crate) fn parse_size(s: &str) -> Option<u64> {
         "T" | "TB" | "TIB" => 1 << 40,
         _ => return None,
     };
-    Some(num * mult)
+    num.checked_mul(mult)
 }
 
 /// Count NUMA nodes from `/sys/devices/system/node/node<digits>` entries.
@@ -159,7 +166,9 @@ fn numa_nodes() -> Option<usize> {
 /// Parse `/proc/meminfo` hugepage counters.
 fn parse_meminfo(text: &str, hw: &mut Hardware) {
     for line in text.lines() {
-        let Some((k, v)) = line.split_once(':') else { continue };
+        let Some((k, v)) = line.split_once(':') else {
+            continue;
+        };
         let n = v
             .split_whitespace()
             .next()
@@ -219,8 +228,21 @@ core id         : 1
         hw.simd.sort();
         hw.simd.dedup();
         let expected = [
-            "aes", "avx2", "avx512bw", "avx512dq", "avx512f", "avx512vl", "bmi1", "bmi2",
-            "f16c", "fma", "movbe", "pclmulqdq", "popcnt", "sse4.2", "ssse3",
+            "aes",
+            "avx2",
+            "avx512bw",
+            "avx512dq",
+            "avx512f",
+            "avx512vl",
+            "bmi1",
+            "bmi2",
+            "f16c",
+            "fma",
+            "movbe",
+            "pclmulqdq",
+            "popcnt",
+            "sse4.2",
+            "ssse3",
         ];
         assert_eq!(hw.simd, expected, "unexpected simd set");
     }

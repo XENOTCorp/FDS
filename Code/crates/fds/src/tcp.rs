@@ -6,12 +6,8 @@
 //! FASTOPEN config-gated with the spoofing caveat documented, CORK
 //! opt-in). Connection state uses [`crate::conn`] hot/cold halves.
 //!
-//! CONTRACT (implementer): implement [`TcpListener`] and [`TcpStream`]
-//! with the exact public API below (the crate compiles with these stubs;
-//! replace `todo!()` bodies). Hot path must not allocate. Tests:
-//! loopback accept/connect, echo roundtrip over partial reads (write in
-//! small chunks), NODELAY/QUICKACK set on the accepted stream, splice of
-//! a temp file to the stream, drain-to-EAGAIN on the reader.
+//! Tests cover loopback accept/connect, partial reads, accepted-stream
+//! options, file splicing, and drain-to-EAGAIN behavior.
 
 use crate::config::TcpConfig;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -61,7 +57,8 @@ fn sockaddr_to_socket_addr(ss: &libc::sockaddr_storage) -> SocketAddr {
             // SAFETY: AF_INET guarantees the kernel wrote a `sockaddr_in`
             // at this address; both structs start with the family field
             // and `sockaddr_in` is a prefix of `sockaddr_storage`.
-            let sin = unsafe { &*(ss as *const libc::sockaddr_storage).cast::<libc::sockaddr_in>() };
+            let sin =
+                unsafe { &*(ss as *const libc::sockaddr_storage).cast::<libc::sockaddr_in>() };
             SocketAddr::new(
                 std::net::IpAddr::V4(Ipv4Addr::from(sin.sin_addr.s_addr.to_ne_bytes())),
                 u16::from_be(sin.sin_port),
@@ -69,13 +66,19 @@ fn sockaddr_to_socket_addr(ss: &libc::sockaddr_storage) -> SocketAddr {
         }
         libc::AF_INET6 => {
             // SAFETY: as above, with `sockaddr_in6`.
-            let sin6 = unsafe { &*(ss as *const libc::sockaddr_storage).cast::<libc::sockaddr_in6>() };
+            let sin6 =
+                unsafe { &*(ss as *const libc::sockaddr_storage).cast::<libc::sockaddr_in6>() };
             let ip = std::net::Ipv6Addr::from(sin6.sin6_addr.s6_addr);
             let port = u16::from_be(sin6.sin6_port);
             if let Some(v4) = ip.to_ipv4_mapped() {
                 SocketAddr::new(std::net::IpAddr::V4(v4), port)
             } else {
-                SocketAddr::new(std::net::IpAddr::V6(ip), port)
+                SocketAddr::V6(std::net::SocketAddrV6::new(
+                    ip,
+                    port,
+                    u32::from_be(sin6.sin6_flowinfo),
+                    sin6.sin6_scope_id,
+                ))
             }
         }
         _ => panic!("socket reported a non-IP address family"),
@@ -208,6 +211,9 @@ impl TcpListener {
         }
         rustix::net::sockopt::set_socket_recv_buffer_size(fd, cfg.rcvbuf)?;
         rustix::net::sockopt::set_socket_send_buffer_size(fd, cfg.sndbuf)?;
+        if cfg.defer_accept {
+            set_int_sockopt(fd, libc::IPPROTO_TCP, libc::TCP_DEFER_ACCEPT, 1)?;
+        }
         if cfg.fastopen > 0 {
             // The value is passed to the kernel as the TFO backlog hint.
             // Spoofing caveat: the userland number only influences the
@@ -216,7 +222,12 @@ impl TcpListener {
             // inflate the queue, so TFO is treated as off unless both are
             // set. Kernels without TFO reject the option (EOPNOTSUPP);
             // that is tolerated, everything else is an error.
-            match set_int_sockopt(fd, libc::IPPROTO_TCP, libc::TCP_FASTOPEN, cfg.fastopen as libc::c_int) {
+            match set_int_sockopt(
+                fd,
+                libc::IPPROTO_TCP,
+                libc::TCP_FASTOPEN,
+                cfg.fastopen as libc::c_int,
+            ) {
                 Err(e) if e.raw_os_error() != Some(libc::EOPNOTSUPP) => return Err(e),
                 _ => {}
             }
@@ -266,11 +277,6 @@ impl TcpListener {
             // waiting to piggyback; a per-packet kernel toggle.
             set_int_sockopt(stream, libc::IPPROTO_TCP, libc::TCP_QUICKACK, 1)?;
         }
-        if cfg.defer_accept {
-            // TCP_DEFER_ACCEPT (9): delay the accept-data handshake until
-            // the first real payload arrives (value = seconds).
-            set_int_sockopt(stream, libc::IPPROTO_TCP, libc::TCP_DEFER_ACCEPT, 1)?;
-        }
         if cfg.cork {
             rustix::net::sockopt::set_tcp_cork(stream, true)?;
         }
@@ -318,12 +324,6 @@ impl TcpStream {
         };
         if n < 0 {
             let err = std::io::Error::last_os_error();
-            if would_block(&err) {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::WouldBlock,
-                    "tcp: read EAGAIN",
-                ));
-            }
             return Err(err);
         }
         Ok(n as usize)
@@ -349,58 +349,36 @@ impl TcpStream {
         };
         if n < 0 {
             let err = std::io::Error::last_os_error();
-            if would_block(&err) {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::WouldBlock,
-                    "tcp: write EAGAIN",
-                ));
-            }
             return Err(err);
         }
         Ok(n as usize)
     }
 
-    /// Scatter-gather read into `bufs`, chunked over a stack `[iovec; 16]`.
+    /// Read into at most the first 16 buffers in one syscall. The result
+    /// is the length of a contiguous prefix; later buffers are untouched.
+    /// A short read must not skip to a subsequent group of buffers.
     pub fn readv(&mut self, bufs: &mut [&mut [u8]]) -> std::io::Result<usize> {
-        let mut total = 0usize;
-        let mut off = 0usize;
-        while off < bufs.len() {
-            let end = (off + 16).min(bufs.len());
-            let mut iov: [libc::iovec; 16] = unsafe { std::mem::zeroed() };
-            for (i, b) in bufs[off..end].iter_mut().enumerate() {
-                iov[i] = libc::iovec {
-                    iov_base: b.as_mut_ptr() as *mut libc::c_void,
-                    iov_len: b.len(),
-                };
-            }
-            // SAFETY: every iovec points into a caller-owned mutable
-            // slice valid for the call; readv fills them in order.
-            let n = unsafe {
-                libc::readv(self.fd.as_raw_fd(), iov.as_ptr(), (end - off) as libc::c_int)
+        let count = bufs.len().min(16);
+        let mut iov: [libc::iovec; 16] = unsafe { std::mem::zeroed() };
+        for (entry, buf) in iov.iter_mut().zip(bufs.iter_mut()).take(count) {
+            *entry = libc::iovec {
+                iov_base: buf.as_mut_ptr().cast(),
+                iov_len: buf.len(),
             };
-            if n < 0 {
-                let err = std::io::Error::last_os_error();
-                if would_block(&err) {
-                    if total > 0 {
-                        return Ok(total);
-                    }
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::WouldBlock,
-                        "tcp: readv EAGAIN",
-                    ));
-                }
-                return Err(err);
-            }
-            total += n as usize;
-            if n == 0 {
-                break; // EOF: no more data from the peer.
-            }
-            off = end;
         }
-        Ok(total)
+        // SAFETY: the first count entries point into distinct mutable
+        // caller-owned slices; the syscall does not retain those pointers.
+        let n = unsafe { libc::readv(self.fd.as_raw_fd(), iov.as_ptr(), count as libc::c_int) };
+        if n < 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(n as usize)
+        }
     }
 
-    /// Write all of `data` (handles partial writes internally).
+    /// Write all of `data` without waiting for readiness. If this returns
+    /// `WouldBlock`, a prefix may already have been sent; use [`Self::write`]
+    /// with an explicit offset when retrying reliable nonblocking delivery.
     pub fn write_all(&mut self, mut data: &[u8]) -> std::io::Result<()> {
         // MSG_NOSIGNAL: the process does not ignore SIGPIPE, so writes to
         // a reset connection must not raise it.
@@ -417,59 +395,43 @@ impl TcpStream {
             };
             if n < 0 {
                 let err = std::io::Error::last_os_error();
+                if err.kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
                 // Do not spin: report WouldBlock so the caller retries
                 // when the socket is writable again.
-                if would_block(&err) {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::WouldBlock,
-                        "tcp: write_all EAGAIN",
-                    ));
-                }
                 return Err(err);
+            }
+            if n == 0 {
+                return Err(std::io::ErrorKind::WriteZero.into());
             }
             data = &data[n as usize..];
         }
         Ok(())
     }
 
-    /// Gathered write over a stack `[iovec; 16]`.
+    /// Write at most the first 16 buffers in one syscall, returning the
+    /// accepted prefix length. Suppresses SIGPIPE just like [`Self::write`].
     pub fn writev(&mut self, bufs: &[&[u8]]) -> std::io::Result<usize> {
-        let mut total = 0usize;
-        let mut off = 0usize;
-        while off < bufs.len() {
-            let end = (off + 16).min(bufs.len());
-            let mut iov: [libc::iovec; 16] = unsafe { std::mem::zeroed() };
-            for (i, b) in bufs[off..end].iter().enumerate() {
-                iov[i] = libc::iovec {
-                    iov_base: b.as_ptr() as *mut libc::c_void,
-                    iov_len: b.len(),
-                };
-            }
-            // SAFETY: every iovec points into a caller-owned slice valid
-            // for the call; writev reads them in order.
-            let n = unsafe {
-                libc::writev(self.fd.as_raw_fd(), iov.as_ptr(), (end - off) as libc::c_int)
+        let count = bufs.len().min(16);
+        let mut iov: [libc::iovec; 16] = unsafe { std::mem::zeroed() };
+        for (entry, buf) in iov.iter_mut().zip(bufs).take(count) {
+            *entry = libc::iovec {
+                iov_base: buf.as_ptr().cast_mut().cast(),
+                iov_len: buf.len(),
             };
-            if n < 0 {
-                let err = std::io::Error::last_os_error();
-                if would_block(&err) {
-                    if total > 0 {
-                        return Ok(total);
-                    }
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::WouldBlock,
-                        "tcp: writev EAGAIN",
-                    ));
-                }
-                return Err(err);
-            }
-            total += n as usize;
-            if n == 0 {
-                break; // Defensive: a zero-byte writev makes no progress.
-            }
-            off = end;
         }
-        Ok(total)
+        let mut msg: libc::msghdr = unsafe { std::mem::zeroed() };
+        msg.msg_iov = iov.as_mut_ptr();
+        msg.msg_iovlen = count;
+        // SAFETY: initialized iovecs reference readable caller-owned
+        // buffers for the syscall duration; no pointers are retained.
+        let n = unsafe { libc::sendmsg(self.fd.as_raw_fd(), &msg, libc::MSG_NOSIGNAL) };
+        if n < 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(n as usize)
+        }
     }
 
     /// Zero-copy splice: send `len` bytes from the seekable fd `src_fd`
@@ -532,6 +494,32 @@ impl TcpStream {
 mod tests {
     use super::*;
     use std::io::{Read, Write};
+
+    #[test]
+    fn ipv6_address_conversion_preserves_scope_and_flowinfo() {
+        let mut storage: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+        let address = libc::sockaddr_in6 {
+            sin6_family: libc::AF_INET6 as _,
+            sin6_port: 1234u16.to_be(),
+            sin6_flowinfo: 42u32.to_be(),
+            sin6_scope_id: 7,
+            sin6_addr: libc::in6_addr {
+                s6_addr: "fe80::1".parse::<std::net::Ipv6Addr>().unwrap().octets(),
+            },
+        };
+        // SAFETY: storage is aligned and large enough for sockaddr_in6.
+        unsafe {
+            (&mut storage as *mut libc::sockaddr_storage)
+                .cast::<libc::sockaddr_in6>()
+                .write(address)
+        };
+        let SocketAddr::V6(result) = sockaddr_to_socket_addr(&storage) else {
+            panic!("IPv6 lost")
+        };
+        assert_eq!(result.scope_id(), 7);
+        assert_eq!(result.flowinfo(), 42);
+        assert_eq!(result.port(), 1234);
+    }
 
     fn wait() {
         std::thread::sleep(std::time::Duration::from_millis(1));
@@ -603,17 +591,14 @@ mod tests {
     fn tcp_ipv6_loopback_echo() {
         // IPv6 loopback is unavailable in some sandboxes; skip gracefully.
         let cfg = TcpConfig::default();
-        let listener = match TcpListener::bind(
-            SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 0)),
-            &cfg,
-            128,
-        ) {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!("skipping: IPv6 loopback unavailable ({e})");
-                return;
-            }
-        };
+        let listener =
+            match TcpListener::bind(SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 0)), &cfg, 128) {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("skipping: IPv6 loopback unavailable ({e})");
+                    return;
+                }
+            };
         let addr = listener.local_addr().unwrap();
         assert!(addr.is_ipv6(), "local addr must be IPv6: {addr}");
         let mut client = std::net::TcpStream::connect(addr).unwrap();
@@ -648,7 +633,10 @@ mod tests {
             }
         };
         let (mut stream, peer) = accept_ready(&listener);
-        assert!(peer.is_ipv4(), "IPv4-mapped peer must present as IPv4: {peer}");
+        assert!(
+            peer.is_ipv4(),
+            "IPv4-mapped peer must present as IPv4: {peer}"
+        );
         stream.write_all(b"ds").unwrap();
         let mut back = [0u8; 2];
         client.read_exact(&mut back).unwrap();
@@ -716,11 +704,8 @@ mod tests {
         // collide on the same path.
         static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "fds-tcp-splice-{}-{}",
-            std::process::id(),
-            seq
-        ));
+        let path =
+            std::env::temp_dir().join(format!("fds-tcp-splice-{}-{}", std::process::id(), seq));
         std::fs::write(&path, content).unwrap();
         let file = std::fs::File::open(&path).unwrap();
 

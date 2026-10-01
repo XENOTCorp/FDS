@@ -10,11 +10,9 @@
 //! bound on 127.0.0.1 and echoed back; packets and bytes are counted and
 //! per-second pps / MB/s are printed to stdout. Sending and receiving go
 //! through [`fds::udp::UdpSocket`]'s documented API (`send_batch` /
-//! `recv_batch`); while that transport is still a `todo!()` stub the
-//! harness detects the panic and falls back to a plain
-//! [`std::net::UdpSocket`] pair so the measurement still runs. The hot
-//! loop allocates nothing: payload, message vector and receive buffers
-//! are preallocated once.
+//! `recv_batch`). Setup and transport errors fail the measurement rather
+//! than silently benchmarking a different backend. The hot loop allocates
+//! nothing: payload, message vector and receive buffers are preallocated once.
 //!
 //! `--bench-large` is the byte-ceiling measurement: one-way, per
 //! direction, with datagrams up to the IPv4 UDP wire maximum; the
@@ -50,83 +48,31 @@ struct Stats {
     seconds: u64,
 }
 
-/// The measured endpoint: the crate socket when the transport is
-/// implemented, otherwise a plain std socket.
-enum Measured {
-    Engine(UdpSocket),
-    Std(std::net::UdpSocket),
-}
-
 /// One datapath: measured endpoint + the std echo peer it talks to.
 struct Datapath {
-    measured: Measured,
+    measured: UdpSocket,
     peer: std::net::UdpSocket,
     peer_addr: SocketAddr,
 }
 
-/// Call `f`, mapping a `todo!()` stub panic (or any error) to `None`.
-/// With `panic = "abort"` in release this cannot catch, which is fine:
-/// the engine path only runs once the transport is implemented.
-fn try_io<T>(f: impl FnOnce() -> std::io::Result<T>) -> Option<T> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
-        .ok()?
-        .ok()
-}
-
-/// Try the crate-socket datapath; `None` when the transport is still a
-/// stub or the sockets cannot be set up.
-fn try_engine_datapath() -> Option<Datapath> {
-    let sock = try_io(|| {
-        UdpSocket::new(SocketAddr::from(([127, 0, 0, 1], 0)), &UdpConfig::default())
-    })?;
-    let peer = std::net::UdpSocket::bind("127.0.0.1:0").ok()?;
-    peer.set_nonblocking(true).ok()?;
-    let peer_addr = peer.local_addr().ok()?;
-    Some(Datapath {
-        measured: Measured::Engine(sock),
-        peer,
-        peer_addr,
-    })
-}
-
-/// The std fallback datapath (used while `udp.rs` is still a stub).
-fn try_std_datapath() -> Option<Datapath> {
-    let rx = std::net::UdpSocket::bind("127.0.0.1:0").ok()?;
-    rx.set_nonblocking(true).ok()?;
-    let peer = std::net::UdpSocket::bind("127.0.0.1:0").ok()?;
-    peer.set_nonblocking(true).ok()?;
-    let peer_addr = peer.local_addr().ok()?;
-    Some(Datapath {
-        measured: Measured::Std(rx),
+/// Set up the FDS socket and its loopback echo peer.
+fn engine_datapath() -> std::io::Result<Datapath> {
+    let sock = UdpSocket::new(SocketAddr::from(([127, 0, 0, 1], 0)), &UdpConfig::default())?;
+    let peer = std::net::UdpSocket::bind("127.0.0.1:0")?;
+    peer.set_nonblocking(true)?;
+    let peer_addr = peer.local_addr()?;
+    Ok(Datapath {
+        measured: sock,
         peer,
         peer_addr,
     })
 }
 
 /// Send `chunk` datagrams from the measured endpoint to the peer.
-fn send_chunk(
-    dp: &Datapath,
-    msgs: &[(&[u8], SocketAddr)],
-    chunk: usize,
-) -> std::io::Result<()> {
-    match &dp.measured {
-        Measured::Engine(sock) => {
-            let mut sent = 0;
-            while sent < chunk {
-                sent += sock.send_batch(&msgs[sent..chunk])?;
-            }
-        }
-        Measured::Std(rx) => {
-            for &(data, dst) in &msgs[..chunk] {
-                loop {
-                    match rx.send_to(data, dst) {
-                        Ok(_) => break,
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
-                        Err(e) => return Err(e),
-                    }
-                }
-            }
-        }
+fn send_chunk(dp: &Datapath, msgs: &[(&[u8], SocketAddr)], chunk: usize) -> std::io::Result<()> {
+    let mut sent = 0;
+    while sent < chunk {
+        sent += dp.measured.send_batch(&msgs[sent..chunk])?;
     }
     Ok(())
 }
@@ -156,31 +102,15 @@ fn recv_chunk(
     dp: &Datapath,
     bufs: &mut [mol::Buffer<RCV_CAP>],
     out: &mut [RecvResult],
-    scratch: &mut [u8],
 ) -> std::io::Result<(usize, usize)> {
     let mut received = 0;
     let mut bytes = 0;
     while received < CHUNK {
-        match &dp.measured {
-            Measured::Engine(sock) => {
-                let n = sock.recv_batch(bufs, out)?;
-                if n == 0 {
-                    continue; // would-block; echoes are in flight on loopback
-                }
-                for r in &out[..n] {
-                    bytes += r.len;
-                }
-                received += n;
-            }
-            Measured::Std(rx) => match rx.recv_from(scratch) {
-                Ok((n, _)) => {
-                    received += 1;
-                    bytes += n;
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
-                Err(e) => return Err(e),
-            },
+        let n = dp.measured.recv_batch(bufs, out)?;
+        for r in &out[..n] {
+            bytes += r.len;
         }
+        received += n;
     }
     Ok((received, bytes))
 }
@@ -206,13 +136,7 @@ pub fn run(seconds: u64) -> std::io::Result<()> {
 /// the engine targets (standard \[OBS\] cost model).
 pub fn run_latency(seconds: u64) -> std::io::Result<()> {
     let seconds = seconds.max(1);
-    let sock = try_io(|| {
-        UdpSocket::new(
-            SocketAddr::from(([127, 0, 0, 1], 0)),
-            &UdpConfig::default(),
-        )
-    })
-    .ok_or_else(|| std::io::Error::other("no UDP datapath available"))?;
+    let sock = UdpSocket::new(SocketAddr::from(([127, 0, 0, 1], 0)), &UdpConfig::default())?;
     let peer = std::net::UdpSocket::bind("127.0.0.1:0")?;
     let peer_addr = peer.local_addr()?;
     // A dedicated echo thread keeps the peer's half of the loopback
@@ -299,13 +223,7 @@ fn report_latency(label: &str, samples: &mut [u64], count: u64, dur: f64) {
 /// engine's busy-poll loop targets.
 pub fn run_engine_latency(addr: SocketAddr, seconds: u64) -> std::io::Result<()> {
     let seconds = seconds.max(1);
-    let sock = try_io(|| {
-        UdpSocket::new(
-            SocketAddr::from(([127, 0, 0, 1], 0)),
-            &UdpConfig::default(),
-        )
-    })
-    .ok_or_else(|| std::io::Error::other("no UDP datapath available"))?;
+    let sock = UdpSocket::new(SocketAddr::from(([127, 0, 0, 1], 0)), &UdpConfig::default())?;
 
     let payload = [0u8; 32];
     let mut bufs = [mol::Buffer::<RCV_CAP>::new()];
@@ -334,7 +252,12 @@ pub fn run_engine_latency(addr: SocketAddr, seconds: u64) -> std::io::Result<()>
                     samples.len()
                 );
                 let dur = seconds as f64;
-                report_latency(&format!("engine latency vs {addr}"), &mut samples, count, dur);
+                report_latency(
+                    &format!("engine latency vs {addr}"),
+                    &mut samples,
+                    count,
+                    dur,
+                );
                 return Ok(());
             }
         }
@@ -342,16 +265,19 @@ pub fn run_engine_latency(addr: SocketAddr, seconds: u64) -> std::io::Result<()>
         count += 1;
     }
     let dur = seconds as f64;
-    report_latency(&format!("engine latency vs {addr}"), &mut samples, count, dur);
+    report_latency(
+        &format!("engine latency vs {addr}"),
+        &mut samples,
+        count,
+        dur,
+    );
     Ok(())
 }
 
 /// The measurement proper (also used by the smoke test).
 fn run_inner(seconds: u64) -> std::io::Result<Stats> {
     let seconds = seconds.max(1);
-    let dp = try_engine_datapath()
-        .or_else(try_std_datapath)
-        .ok_or_else(|| std::io::Error::other("no UDP datapath available"))?;
+    let dp = engine_datapath()?;
 
     // Preallocate everything up front; the loop below allocates nothing.
     let mut payload = [0u8; DATAGRAM];
@@ -388,7 +314,7 @@ fn run_inner(seconds: u64) -> std::io::Result<Stats> {
         for _ in 0..BATCH / CHUNK {
             send_chunk(&dp, &msgs, CHUNK)?;
             echo_chunk(&dp, &mut scratch)?;
-            let (got, bytes) = recv_chunk(&dp, &mut bufs, &mut out, &mut scratch)?;
+            let (got, bytes) = recv_chunk(&dp, &mut bufs, &mut out)?;
             stats.packets += got as u64;
             stats.bytes += bytes as u64;
             interval_packets += got as u64;
@@ -452,17 +378,18 @@ pub fn run_large(datagram: usize, seconds: u64) -> std::io::Result<()> {
 /// Phase 1 of [`run_large`]: engine-side sender (batched `sendmmsg`) to
 /// a std drain socket. Returns (bytes, packets, elapsed seconds) as
 /// counted at the drain.
-fn large_send(
-    datagram: usize,
-    seconds: u64,
-    cfg: &UdpConfig,
-) -> std::io::Result<(u64, u64, f64)> {
+fn large_send(datagram: usize, seconds: u64, cfg: &UdpConfig) -> std::io::Result<(u64, u64, f64)> {
     let sock = UdpSocket::new(SocketAddr::from(([127, 0, 0, 1], 0)), cfg)?;
     let drain = std::net::UdpSocket::bind("127.0.0.1:0")?;
     drain.set_nonblocking(true)?;
     // Kernel clamps SO_RCVBUF to rmem_max, then doubles: 16 MiB lands
     // well above the default rmem_max for jumbo-datagram headroom.
-    set_int(drain.as_raw_fd(), libc::SOL_SOCKET, libc::SO_RCVBUF, 16 << 20)?;
+    set_int(
+        drain.as_raw_fd(),
+        libc::SOL_SOCKET,
+        libc::SO_RCVBUF,
+        16 << 20,
+    )?;
     let dst = drain.local_addr()?;
 
     let stop = Arc::new(AtomicBool::new(false));
@@ -518,11 +445,7 @@ fn large_send(
 /// receiver (batched `recvmmsg` into [`fds::udp::MAX_DATAGRAM`]
 /// buffers). Returns (bytes, packets, elapsed seconds) as counted by the
 /// engine datapath.
-fn large_recv(
-    datagram: usize,
-    seconds: u64,
-    cfg: &UdpConfig,
-) -> std::io::Result<(u64, u64, f64)> {
+fn large_recv(datagram: usize, seconds: u64, cfg: &UdpConfig) -> std::io::Result<(u64, u64, f64)> {
     let sock = UdpSocket::new(SocketAddr::from(([127, 0, 0, 1], 0)), cfg)?;
     let dst = sock.local_addr()?;
 
@@ -539,17 +462,14 @@ fn large_recv(
         while !stop_sender.load(Ordering::Relaxed) {
             match tx.send_to(&payload, dst) {
                 Ok(_) => sent += 1,
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::yield_now()
-                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::yield_now(),
                 Err(_) => break,
             }
         }
         sent
     });
 
-    let mut bufs: Vec<mol::Buffer<{ fds::udp::MAX_DATAGRAM }>> =
-        vec![mol::Buffer::new(); SLOTS];
+    let mut bufs: Vec<mol::Buffer<{ fds::udp::MAX_DATAGRAM }>> = vec![mol::Buffer::new(); SLOTS];
     let mut out: Vec<RecvResult> = (0..SLOTS)
         .map(|_| RecvResult {
             len: 0,
@@ -583,102 +503,12 @@ fn large_recv(
     Ok((bytes, pkts, elapsed))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Smoke: measure 1s and require the loopback datapath to have moved
-    /// packets. Tolerant: while the crate UDP transport is still a
-    /// `todo!()` stub (any panic), the run is skipped instead of failing.
-    /// The std fallback still exercises the harness.
-    #[test]
-    fn bench_smoke() {
-        match std::panic::catch_unwind(|| run_inner(1)) {
-            Ok(Ok(stats)) => {
-                assert!(stats.packets > 0, "bench moved no packets");
-                eprintln!("bench smoke: {} packets in 1s", stats.packets);
-            }
-            Ok(Err(e)) => eprintln!("bench smoke: skipped ({e})"),
-            Err(_) => eprintln!("bench smoke: skipped (UdpSocket still a stub)"),
-        }
-    }
-
-    /// Smoke: 60 KiB one-way datagrams must move bytes in BOTH directions
-    /// through the crate socket (send path and recv path).
-    #[test]
-    fn bench_large_smoke() {
-        let cfg = UdpConfig {
-            rcvbuf: 16 << 20,
-            sndbuf: 16 << 20,
-            ..Default::default()
-        };
-        let (sb, sp, _) = large_send(60_000, 1, &cfg).unwrap();
-        let (rb, rp, _) = large_recv(60_000, 1, &cfg).unwrap();
-        assert!(sp > 0 && sb > 0, "large send moved no data: {sp} pkts {sb} B");
-        assert!(rp > 0 && rb > 0, "large recv moved no data: {rp} pkts {rb} B");
-        eprintln!(
-            "bench-large smoke: send {sp} pkts/{sb} B, recv {rp} pkts/{rb} B in 1s each"
-        );
-    }
-
-    use crate::alloc_count;
-
-    #[test]
-    fn alloc_counter_observes_allocations() {
-        // Control: prove the harness itself works (a Vec::with_capacity
-        // must be observed), so a zero count is a real signal.
-        alloc_count::reset();
-        let _v: Vec<u8> = Vec::with_capacity(1024);
-        assert!(
-            alloc_count::count() > 0,
-            "control: the counter must observe Vec::with_capacity"
-        );
-        alloc_count::reset();
-        assert_eq!(alloc_count::count(), 0, "reset clears the counter");
-    }
-
-    #[test]
-    fn udp_echo_datapath_allocates_nothing() {
-        // Machine-checked zero-allocation: the hot loop of
-        // the UDP echo datapath; send_batch -> peer echo -> recv_batch ;
-        // must perform zero allocations. Runs on a dedicated thread so
-        // concurrent tests (per-thread counter) cannot pollute it.
-        std::thread::spawn(|| {
-            let dp = try_engine_datapath()
-                .or_else(try_std_datapath)
-                .expect("UDP datapath must be constructible");
-            let payload = [0xabu8; DATAGRAM];
-            let msgs: Vec<(&[u8], SocketAddr)> = vec![(&payload, dp.peer_addr); BATCH];
-            let mut bufs: Vec<mol::Buffer<RCV_CAP>> = vec![mol::Buffer::new(); SLOTS];
-            let mut out: Vec<RecvResult> = (0..SLOTS)
-                .map(|_| RecvResult {
-                    len: 0,
-                    src: SocketAddr::from(([0, 0, 0, 0], 0)),
-                    truncated: false,
-                })
-                .collect();
-            let mut scratch = [0u8; 2048];
-            // Warmup round: loopback buffers fill, and any one-time lazy
-            // init happens here; before the measured region.
-            send_chunk(&dp, &msgs, CHUNK).expect("warmup send");
-            echo_chunk(&dp, &mut scratch).expect("warmup echo");
-            recv_chunk(&dp, &mut bufs, &mut out, &mut scratch).expect("warmup recv");
-            alloc_count::reset();
-            for _ in 0..50 {
-                send_chunk(&dp, &msgs, CHUNK).expect("send");
-                echo_chunk(&dp, &mut scratch).expect("echo");
-                recv_chunk(&dp, &mut bufs, &mut out, &mut scratch).expect("recv");
-            }
-            let n = alloc_count::count();
-            assert_eq!(
-                n,
-                0,
-                "the UDP echo datapath performed {n} allocations across 50 hot-loop rounds"
-            );
-        })
-        .join()
-        .expect("datapath thread panicked");
-    }
+#[cfg(not(feature = "sctp"))]
+pub fn run_sctp(_seconds: u64) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "SCTP benchmark requires the sctp feature",
+    ))
 }
 
 /// One-way SCTP stream throughput over loopback (`--bench-sctp <secs>`):
@@ -687,6 +517,7 @@ mod tests {
 /// receiver thread counts bytes. Requires the kernel SCTP module
 /// (`modprobe sctp`); absent it, prints a note and returns Ok (the
 /// in-module transport tests skip the same way).
+#[cfg(feature = "sctp")]
 pub fn run_sctp(seconds: u64) -> std::io::Result<()> {
     use fds::config::SctpConfig;
     use fds::sctp::{is_notification, unsupported, SctpSocket};
@@ -847,18 +678,6 @@ pub fn run_sctp(seconds: u64) -> std::io::Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod sctp_tests {
-    use super::*;
-
-    #[test]
-    fn sctp_bench_runs_or_skips() {
-        // Without the kernel module this prints a note and returns Ok;
-        // with it, a 1 s run completes and reports.
-        run_sctp(1).expect("bench-sctp must not error");
-    }
-}
-
 /// Pull the engine's metrics report from its Unix socket and print it
 /// (`--metrics-pull [path]`): the observability counterpart to the
 /// in-engine `MetricsServer` (used by the cross-tool bench to read the
@@ -979,7 +798,9 @@ pub fn run_tcp_against(addr: std::net::SocketAddr, seconds: u64) -> std::io::Res
     stop.store(true, Ordering::Relaxed);
     let mut total: u64 = 0;
     for h in handles {
-        total += h.join().map_err(|_| std::io::Error::other("client thread panicked"))??;
+        total += h
+            .join()
+            .map_err(|_| std::io::Error::other("client thread panicked"))??;
     }
     let elapsed = seconds as f64;
     println!(
@@ -1129,3 +950,6 @@ pub fn run_ustack(seconds: u64) -> std::io::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+#[path = "benchmarks_tests.rs"]
+mod tests;

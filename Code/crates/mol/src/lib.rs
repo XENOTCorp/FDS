@@ -42,6 +42,6 @@ pub use feedback::{delay, fixed_iter, tr, Delay, FixedIter, Tr};
 pub use layout::{cache_line_size, CachePadded, HotCold, PaddedCounter};
 pub use mem::{huge_page, leak_box, zeroed, HugePageGuard};
 pub use molecule::{EffectfulMolecule, HybridMolecule, Molecule, PureFn, PureMolecule};
-pub use ring::{MpmcRing, SpscRing};
+pub use ring::{MpmcRing, SpscConsumer, SpscProducer, SpscRing};
 pub use simd::{checksum_finalize, sum_u16, sum_u16_scalar, u16_checksum};
 pub use stack::Stack;

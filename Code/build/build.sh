@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# FDS adaptive build (sub-project 3): detect hardware -> derive rustflags ->
-# cargo. The adaptive layer lives HERE; the workspace Cargo.toml stays the
-# portable baseline and ~/.cargo/config.toml the host baseline. Flags are
-# passed via `cargo --config build.rustflags=[...]`, which has the highest
-# precedence (overrides project and home config), so this script genuinely
-# controls codegen on every machine. See build/PROFILES.md.
+# Host-tuned build wrapper. Cargo.toml remains the portable baseline.
+# Encoded flags override target-specific Cargo config as well as generic
+# build.rustflags. Explicit caller flag environments still take precedence.
+# See build/PROFILES.md.
 #
 # Usage:
 #   build/build.sh [--release] [--profile NAME] [--features LIST]
@@ -12,8 +10,7 @@
 #
 # Overrides (env):
 #   TARGET_CPU         pin a specific uarch (e.g. haswell, skylake-avx512)
-#                      instead of `native`; detected SIMD features are then
-#                      fed back as -C target-feature=+...
+#                      instead of `native`; never add host-only features
 #   RUSTFLAGS_EXTRA    extra rustflags appended verbatim (space-separated)
 #
 # Determinism: the detection summary and the final rustflags are printed on
@@ -46,30 +43,24 @@ EOF
 
 # Minimal JSON string-array quoting for `cargo --config build.rustflags=[...]`.
 json_array() {
-  local out="[" first=1 arg
+  local out="[" first=1 arg escaped
   for arg in "$@"; do
     [[ $first -eq 1 ]] || out+=","
     first=0
-    out+="\"$(printf '%s' "$arg" | sed 's/\\/\\\\/g; s/"/\\"/g')\""
+    escaped="${arg//\\/\\\\}"
+    escaped="${escaped//\"/\\\"}"
+    out+="\"$escaped\""
   done
   out+="]"
   printf '%s' "$out"
 }
 
-derive_rustflags_json() {
-  local flags=("-C" "target-cpu=$TARGET_CPU")
-  if [[ "$TARGET_CPU" != "native" && -n "$FDS_SIMD" ]]; then
-    local f
-    IFS=',' read -r -a feats <<<"$FDS_SIMD"
-    for f in "${feats[@]}"; do
-      flags+=("-C" "target-feature=+$f")
-    done
-  fi
+derive_rustflags() {
+  flags=("-C" "target-cpu=$TARGET_CPU")
   if [[ -n "$RUSTFLAGS_EXTRA" ]]; then
     read -r -a extra <<<"$RUSTFLAGS_EXTRA"
     flags+=("${extra[@]}")
   fi
-  json_array "${flags[@]}"
 }
 
 print_summary() {
@@ -113,8 +104,15 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --release) release=1 ;;
-      --profile) shift; profile="${1:-}" ;;
-      --features) shift; features="${1:-}" ;;
+      --profile|--features)
+        local option="$1"
+        if [[ $# -lt 2 || -z "$2" || "$2" == -* ]]; then
+          printf 'build.sh: %s requires a value\n' "$option" >&2
+          return 2
+        fi
+        shift
+        if [[ "$option" == "--profile" ]]; then profile="$1"; else features="$1"; fi
+        ;;
       --check-deps) check_deps=1 ;;
       --emit-config) emit_config=1 ;;
       --summary) summary=1 ;;
@@ -124,6 +122,11 @@ main() {
     esac
     shift
   done
+
+  if [[ "$release" -eq 1 && -n "$profile" ]]; then
+    printf 'build.sh: --release and --profile are mutually exclusive\n' >&2
+    return 2
+  fi
 
   print_summary
 
@@ -137,8 +140,10 @@ main() {
     check_deps
   fi
 
-  local rustflags_json
-  rustflags_json="$(derive_rustflags_json)"
+  local flags=() rustflags_json encoded_flags
+  derive_rustflags
+  rustflags_json="$(json_array "${flags[@]}")"
+  encoded_flags="$(IFS=$'\x1f'; printf '%s' "${flags[*]}")"
   printf '== cargo ==\n'
   printf 'build.rustflags=%s\n' "$rustflags_json"
 
@@ -147,7 +152,15 @@ main() {
   [[ -n "$profile" ]] && cmd+=(--profile "$profile")
   [[ -n "$features" ]] && cmd+=(--features "$features")
   cmd+=("${cargo_args[@]}")
-  (cd "$ROOT" && "${cmd[@]}")
+  if [[ -v RUSTFLAGS || -v CARGO_ENCODED_RUSTFLAGS ]]; then
+    printf 'build.sh: caller RUSTFLAGS/CARGO_ENCODED_RUSTFLAGS overrides derived flags\n' >&2
+    (cd "$ROOT" && "${cmd[@]}")
+  else
+    # build.rustflags alone loses to target.<triple>.rustflags, including
+    # host-only CPU features in a developer's global config. Cargo's
+    # encoded environment preserves argument boundaries and wins both.
+    (cd "$ROOT" && CARGO_ENCODED_RUSTFLAGS="$encoded_flags" "${cmd[@]}")
+  fi
 }
 
 main "$@"

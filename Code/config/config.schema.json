@@ -19,6 +19,7 @@
         },
         "threads": {
           "type": "integer",
+          "minimum": 0,
           "default": 0,
           "description": "Worker thread count; 0 = one per logical CPU.",
           "x-trade-off": "More workers give more parallelism but per-core caches and queues must fit; oversubscription adds scheduling noise (see the measured p999 tails in Docs/wiki/).",
@@ -26,6 +27,7 @@
         },
         "stack_bytes": {
           "type": "integer",
+          "minimum": 0,
           "default": 1048576,
           "description": "Worker thread stack size, in bytes.",
           "x-trade-off": "Larger stacks waste address space; smaller risks overflow in deep call paths (pool buffers are heap-backed).",
@@ -50,6 +52,7 @@
         },
         "max_events": {
           "type": "integer",
+          "minimum": 0,
           "default": 256,
           "description": "Preallocated event array capacity per reactor.",
           "x-trade-off": "Too small drops events per drain; too large wastes memory per worker.",
@@ -64,6 +67,8 @@
         },
         "timeout_ms": {
           "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
           "default": 0,
           "description": "Poll timeout in milliseconds when not busy-polling.",
           "x-trade-off": "0 with busy-poll off blocks indefinitely; a small timeout bounds wake latency at the cost of syscall rate.",
@@ -71,6 +76,8 @@
         },
         "io_uring_entries": {
           "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
           "default": 256,
           "description": "io_uring ring entries (strategy io-uring).",
           "x-trade-off": "Larger rings hold more in-flight ops; entries are power-of-two and floored by the datapath (UDP slots + accept + timeout).",
@@ -78,8 +85,10 @@
         },
         "io_uring_sq_thread": {
           "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
           "default": 0,
-          "description": "io_uring SQPOLL thread CPU; 0 = no SQPOLL (plain ring).",
+          "description": "SQPOLL idle timeout in milliseconds; 0 disables SQPOLL. This does not select a CPU.",
           "x-trade-off": "SQPOLL removes submission syscalls but needs CAP_SYS_ADMIN; the ring falls back to a plain ring when creation is rejected.",
           "x-derived-from": "engine default"
         }
@@ -91,6 +100,7 @@
       "properties": {
         "rcvbuf": {
           "type": "integer",
+          "minimum": 0,
           "default": 4194304,
           "description": "SO_RCVBUF per UDP socket, in bytes.",
           "x-trade-off": "Larger absorbs bursts and jumbo datagrams at the cost of memory; sized from the L3 budget by fds-detect.",
@@ -98,6 +108,7 @@
         },
         "sndbuf": {
           "type": "integer",
+          "minimum": 0,
           "default": 4194304,
           "description": "SO_SNDBUF per UDP socket, in bytes.",
           "x-trade-off": "Larger absorbs bursts at the cost of memory; the kernel doubles the value it reports.",
@@ -105,6 +116,7 @@
         },
         "gso_segment_size": {
           "type": "integer",
+          "minimum": 0,
           "default": 0,
           "description": "UDP_SEGMENT (GSO) max segment size; 0 = off.",
           "x-trade-off": "Fewer, larger sends amortize syscalls but the kernel must segment each; 0 keeps software segmentation.",
@@ -174,6 +186,8 @@
         },
         "fastopen": {
           "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
           "default": 0,
           "description": "TCP_FASTOPEN queue length; 0 = off.",
           "x-trade-off": "Saves an RTT on repeat connections but is spoofable and needs a server-side queue budget.",
@@ -195,6 +209,7 @@
         },
         "rcvbuf": {
           "type": "integer",
+          "minimum": 0,
           "default": 4194304,
           "description": "SO_RCVBUF per TCP socket, in bytes.",
           "x-trade-off": "Larger absorbs bursts at the cost of memory; the kernel doubles the value it reports.",
@@ -202,6 +217,7 @@
         },
         "sndbuf": {
           "type": "integer",
+          "minimum": 0,
           "default": 4194304,
           "description": "SO_SNDBUF per TCP socket, in bytes.",
           "x-trade-off": "Larger absorbs bursts at the cost of memory.",
@@ -229,6 +245,8 @@
         },
         "init_max_streams": {
           "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
           "default": 10,
           "description": "SCTP_INITMSG max streams (in/out).",
           "x-trade-off": "More streams support more concurrent message flows per association at the cost of per-stream state.",
@@ -236,6 +254,8 @@
         },
         "partial_delivery_point": {
           "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
           "default": 0,
           "description": "SCTP_PARTIAL_DELIVERY_POINT, in bytes.",
           "x-trade-off": "Smaller delivers partial messages sooner (latency) at the cost of fragmented reads.",
@@ -243,6 +263,8 @@
         },
         "max_burst": {
           "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
           "default": 0,
           "description": "SCTP_MAX_BURST; 0 = kernel default.",
           "x-trade-off": "Limits packet bursts per association (loss avoidance) at the cost of throughput bursts.",
@@ -310,6 +332,8 @@
         },
         "queue": {
           "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
           "default": 0,
           "description": "Queue id on the AF_XDP device (used when queues is empty).",
           "x-trade-off": "Binding a queue dedicates it to the XDP path.",
@@ -319,7 +343,8 @@
           "type": "array",
           "items": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "maximum": 4294967295
           },
           "default": [],
           "description": "Per-worker queue ids; workers take queues round-robin.",
@@ -335,6 +360,8 @@
         },
         "ring_size": {
           "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
           "default": 256,
           "description": "Per-ring entry count (power of two).",
           "x-trade-off": "Larger rings absorb bursts; smaller rings reduce memory.",
@@ -342,6 +369,8 @@
         },
         "num_frames": {
           "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
           "default": 4096,
           "description": "Umem frame count (one page each).",
           "x-trade-off": "The umem is the RX/TX buffer pool; it must cover the ring depth plus in-flight frames.",

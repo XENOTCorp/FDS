@@ -40,7 +40,8 @@ fn emit_config(path: Option<&String>) -> ExitCode {
         Ok(()) => {
             println!(
                 "fds-detect: wrote {path} (D-1 socket buffers from L3: {} bytes)",
-                hw.l3_bytes.map_or_else(|| "unknown".to_string(), |n| n.to_string())
+                hw.l3_bytes
+                    .map_or_else(|| "unknown".to_string(), |n| n.to_string())
             );
             ExitCode::SUCCESS
         }
@@ -52,7 +53,9 @@ fn emit_config(path: Option<&String>) -> ExitCode {
 }
 
 fn generate_schema(path: Option<&String>) -> ExitCode {
-    let path = path.map(String::as_str).unwrap_or("config/config.schema.json");
+    let path = path
+        .map(String::as_str)
+        .unwrap_or("config/config.schema.json");
     match std::fs::write(path, config_model::generate_schema()) {
         Ok(()) => {
             println!("fds-detect: wrote {path}");
@@ -92,34 +95,62 @@ fn validate_config(path: Option<&String>) -> ExitCode {
 
 fn print_summary(hw: &detect::Hardware) {
     println!("fds-detect: hardware summary (deterministic; see build/detect.sh)");
-    println!("  cpu:      {}", if hw.model.is_empty() { "unknown" } else { &hw.model });
-    println!("  vendor:   {}", if hw.vendor.is_empty() { "unknown" } else { &hw.vendor });
+    println!(
+        "  cpu:      {}",
+        if hw.model.is_empty() {
+            "unknown"
+        } else {
+            &hw.model
+        }
+    );
+    println!(
+        "  vendor:   {}",
+        if hw.vendor.is_empty() {
+            "unknown"
+        } else {
+            &hw.vendor
+        }
+    );
     let tpc = hw
         .threads_per_core()
         .map_or_else(|| "?".to_string(), |n| n.to_string());
     println!(
         "  cores:    {} logical / {} physical ({} threads/core)",
-        hw.logical_cores.map_or_else(|| "?".to_string(), |n| n.to_string()),
-        hw.physical_cores.map_or_else(|| "?".to_string(), |n| n.to_string()),
+        hw.logical_cores
+            .map_or_else(|| "?".to_string(), |n| n.to_string()),
+        hw.physical_cores
+            .map_or_else(|| "?".to_string(), |n| n.to_string()),
         tpc
     );
     println!(
         "  simd:     {}",
-        if hw.simd.is_empty() { "none detected".to_string() } else { hw.simd.join(", ") }
+        if hw.simd.is_empty() {
+            "none detected".to_string()
+        } else {
+            hw.simd.join(", ")
+        }
     );
     println!(
         "  l3:       {}",
-        hw.l3_bytes.map_or_else(|| "unknown".to_string(), |n| format!("{n} bytes"))
+        hw.l3_bytes
+            .map_or_else(|| "unknown".to_string(), |n| format!("{n} bytes"))
     );
     println!(
         "  numa:     {} node(s)",
-        hw.numa_nodes.map_or_else(|| "?".to_string(), |n| n.to_string())
+        hw.numa_nodes
+            .map_or_else(|| "?".to_string(), |n| n.to_string())
     );
     println!(
         "  hugepages: total {} ({}), {}",
-        hw.hugepages_total.map_or_else(|| "?".to_string(), |n| n.to_string()),
-        hw.hugepages_free.map_or_else(|| "?".to_string(), |n| n.to_string()),
-        if hw.hugepages_available() { "available" } else { "unavailable" }
+        hw.hugepages_total
+            .map_or_else(|| "?".to_string(), |n| n.to_string()),
+        hw.hugepages_free
+            .map_or_else(|| "?".to_string(), |n| n.to_string()),
+        if hw.hugepages_available() {
+            "available"
+        } else {
+            "unavailable"
+        }
     );
     println!("  suggested:");
     println!("    build:  target-cpu=native (TARGET_CPU to pin; SIMD follows automatically)");

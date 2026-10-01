@@ -14,22 +14,43 @@
 //! loop scales with the core count. The transports are the real code
 //! (recvmmsg batches, edge-triggered drain, hot/cold connection state);
 //! application protocol logic is meant to replace the echo handlers.
-//! Limitation (documented): on an echo-write `WouldBlock` the engine
-//! counts a drop and keeps draining the read side to EAGAIN; a
-//! per-connection send ring (the spec's design) is the production
-//! replacement. The data path never blocks (IO-01).
+//! The epoll TCP echo path retains a bounded unsent suffix and pauses
+//! reads on write backpressure. The data path never blocks (IO-01);
+//! connection setup allocates one reusable 64 KiB buffer.
 
+use crate::signals;
 use fds::config::Config;
-use fds::conn::{ConnTable, Connection, ConnectionId, CONN_CAP};
+use fds::conn::{ConnTable, ConnectionId, CONN_CAP};
 use fds::metrics::Metrics;
 use fds::reactor::{Interest, Reactor};
-use crate::signals;
-use fds::util::{now_ticks, physical_cpus, pin_to_core};
+use fds::util::{available_cpus, now_ticks, physical_cpus, pin_to_core};
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
-type TcpSlots<'a> =
-    Vec<Option<(fds::tcp::TcpStream, fds::conn::ConnectionSlot<'a, CONN_CAP>)>>;
+const TCP_BUFFER_SIZE: usize = 64 * 1024;
+
+/// One bounded echo buffer per connection. It is never overwritten until
+/// the last unsent byte reaches the kernel, so backpressure pauses reads.
+struct TcpConnection<'a> {
+    stream: fds::tcp::TcpStream,
+    slot: fds::conn::ConnectionSlot<'a, CONN_CAP>,
+    buffer: Box<[u8]>,
+    written: usize,
+    len: usize,
+    write_blocked: bool,
+}
+
+type TcpSlots<'a> = Vec<Option<TcpConnection<'a>>>;
+
+struct WorkerShutdown(Arc<AtomicBool>);
+impl Drop for WorkerShutdown {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
 
 /// Hint the kernel to back `slice` with 2 MiB pages. Best-effort: the
 /// 4 MiB UDP receive slab is otherwise a thousand 4 KiB TLB entries.
@@ -39,9 +60,17 @@ fn advise_hugepage<T>(slice: &[T]) {
     if ptr.is_null() || len == 0 {
         return;
     }
-    // SAFETY: ptr/len cover a live allocation; MADV_HUGEPAGE is a hint.
+    // madvise requires page alignment. Advise only complete pages inside
+    // the allocation; rounding outward could include allocator metadata
+    // or another allocation. This Linux/x86-64 engine uses 4 KiB pages.
+    let start = (ptr as usize + 4095) & !4095;
+    let end = (ptr as usize + len) & !4095;
+    if end <= start {
+        return;
+    }
+    // SAFETY: this page-aligned range is contained in the live allocation.
     unsafe {
-        libc::madvise(ptr, len, libc::MADV_HUGEPAGE);
+        libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_HUGEPAGE);
     }
 }
 
@@ -65,11 +94,24 @@ pub fn run(cfg: &Config) -> std::io::Result<()> {
 /// runs the AF_XDP zero-copy loop on a queue instead of the kernel
 /// socket path. The binary passes [`signals::interrupted`]; tests pass
 /// their own flag.
-fn run_until(
-    cfg: &Config,
-    stop: Arc<dyn Fn() -> bool + Send + Sync>,
-) -> std::io::Result<()> {
+fn run_until(cfg: &Config, stop: Arc<dyn Fn() -> bool + Send + Sync>) -> std::io::Result<()> {
+    cfg.validate()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+    if cfg.udp.zerocopy || cfg.zero_copy.udp_zerocopy {
+        return Err(std::io::Error::new(std::io::ErrorKind::Unsupported,
+            "UDP zero-copy echo is disabled until send-ID ranges and owned-buffer lifetimes are tracked"));
+    }
     let threads = worker_count(&cfg.core);
+    if threads > 1 && (!cfg.udp.reuseport || !cfg.tcp.reuseport) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "multiple workers require TCP and UDP reuseport",
+        ));
+    }
+    let allowed = available_cpus();
+    let physical = physical_cpus();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let mut first_error = None;
     let metrics = Arc::new(Metrics::new(threads));
     eprintln!(
         "fds: starting {threads} workers (core.threads={}, pin_cores={}, udp_rx_slots={})",
@@ -86,27 +128,39 @@ fn run_until(
         let cfg = cfg.clone();
         let metrics = metrics.clone();
         let stop = stop.clone();
-        workers.push(
-            std::thread::Builder::new()
-                .name(format!("fds-worker-{id}"))
-                .stack_size(cfg.core.stack_bytes)
-                .spawn(move || worker_main(id, &cfg, &metrics, &*stop))
-                .map_err(|e| std::io::Error::other(format!("spawn worker {id}: {e}")))?,
-        );
+        let worker_shutdown = shutdown.clone();
+        let cpu = worker_cpu(id, threads, &allowed, &physical);
+        match std::thread::Builder::new()
+            .name(format!("fds-worker-{id}"))
+            .stack_size(cfg.core.stack_bytes)
+            .spawn(move || {
+                // Also runs during unwinding: any worker exit stops peers
+                // before the parent blocks joining an earlier worker.
+                let _shutdown = WorkerShutdown(worker_shutdown.clone());
+                let should_stop = || worker_shutdown.load(Ordering::Acquire) || stop();
+                worker_main(id, cpu, &cfg, &metrics, &should_stop)
+            }) {
+            Ok(worker) => workers.push(worker),
+            Err(error) => {
+                shutdown.store(true, Ordering::Release);
+                first_error = Some(std::io::Error::other(format!("spawn worker {id}: {error}")));
+                break;
+            }
+        }
     }
 
     for w in workers {
-        // The outer `?` propagates a worker panic; the inner one
-        // propagates the worker's own error (e.g. a bind failure) instead
-        // of letting `thread::spawn` drop it silently.
+        // Join every worker even on failure; never detach live threads.
         let result = w
             .join()
-            .map_err(|_| std::io::Error::other("worker panicked"))?;
-        result?;
+            .unwrap_or_else(|_| Err(std::io::Error::other("worker panicked")));
+        if let Err(error) = result {
+            first_error.get_or_insert(error);
+        }
     }
     let (p, b, d) = metrics.totals();
     eprintln!("fds: engine stopped ({p} packets, {b} bytes, {d} drops)");
-    Ok(())
+    first_error.map_or(Ok(()), Err)
 }
 
 /// Worker thread count: the configured value, or one per logical CPU.
@@ -137,13 +191,13 @@ fn udp_rx_slots() -> usize {
 
 /// Logical CPU for worker `id`: the first SMT thread of a distinct
 /// physical core when the worker count fits on the physical cores,
-/// otherwise logical index `id` (explicit oversubscription).
-fn worker_cpu(id: usize, nworkers: usize) -> usize {
-    let phys = physical_cpus();
-    if nworkers <= phys.len() {
-        phys[id]
+/// otherwise round-robin across allowed logical CPUs. Topology is read
+/// once at startup, not once per worker.
+fn worker_cpu(id: usize, nworkers: usize, allowed: &[usize], physical: &[usize]) -> usize {
+    if nworkers <= physical.len() {
+        physical[id]
     } else {
-        id
+        allowed.get(id % allowed.len().max(1)).copied().unwrap_or(0)
     }
 }
 
@@ -151,13 +205,12 @@ fn worker_cpu(id: usize, nworkers: usize) -> usize {
 /// run the configured strategy's loop until `stop`.
 fn worker_main(
     id: usize,
+    cpu: usize,
     cfg: &Config,
     metrics: &Metrics,
     stop: &(dyn Fn() -> bool + Send + Sync),
 ) -> std::io::Result<()> {
     if cfg.core.pin_cores {
-        let nworkers = worker_count(&cfg.core);
-        let cpu = worker_cpu(id, nworkers);
         match pin_to_core(cpu) {
             Ok(()) => eprintln!("fds: worker {id} pinned to cpu {cpu}"),
             Err(e) => eprintln!("fds: worker {id} pinning unavailable ({e}), unpinned"),
@@ -180,8 +233,8 @@ fn worker_main(
         }
     }
 
-    let udp_addr: SocketAddr = parse_addr(&cfg.engine.udp_bind, "127.0.0.1:7777");
-    let tcp_addr: SocketAddr = parse_addr(&cfg.engine.tcp_bind, "127.0.0.1:7778");
+    let udp_addr = parse_addr(&cfg.engine.udp_bind)?;
+    let tcp_addr = parse_addr(&cfg.engine.tcp_bind)?;
 
     // SO_REUSEPORT (config default) lets every worker bind the same
     // address; the kernel steers datagrams/connections across workers.
@@ -261,7 +314,11 @@ fn worker_epoll_loop(
 ) -> std::io::Result<()> {
     let mut reactor = Reactor::new(cfg.reactor.max_events)?;
     reactor.register(udp_sock.as_raw_fd(), TOKEN_UDP, Interest::Readable)?;
-    reactor.register(tcp_listener.as_raw_fd(), TOKEN_TCP_LISTENER, Interest::Readable)?;
+    reactor.register(
+        tcp_listener.as_raw_fd(),
+        TOKEN_TCP_LISTENER,
+        Interest::Readable,
+    )?;
     if let Some(s) = metrics_server {
         reactor.register(s.as_raw_fd(), TOKEN_METRICS, Interest::Readable)?;
     }
@@ -272,9 +329,6 @@ fn worker_epoll_loop(
     // it releases the table slot, so releasing it again at close would
     // double-release (a free-list ring spin).
     let conns: ConnTable<CONN_CAP> = ConnTable::new();
-    for i in 0..CONN_CAP {
-        conns.initialize(i, Connection::new("0.0.0.0:0".parse().unwrap(), 0));
-    }
     let mut streams: TcpSlots<'_> = (0..CONN_CAP).map(|_| None).collect();
 
     // Preallocated receive batch (hot path allocates nothing). Buffers
@@ -287,8 +341,7 @@ fn worker_epoll_loop(
     // send pages until the error-queue notification, so a set cannot be
     // reused until then); rx_bufs stays as the auto-disable fallback.
     let slots = udp_rx_slots();
-    let mut rx_bufs: Vec<mol::Buffer<{ fds::udp::MAX_DATAGRAM }>> =
-        vec![mol::Buffer::new(); slots];
+    let mut rx_bufs: Vec<mol::Buffer<{ fds::udp::MAX_DATAGRAM }>> = vec![mol::Buffer::new(); slots];
     advise_hugepage(&rx_bufs);
     let mut rx_out: Vec<fds::udp::RecvResult> = (0..slots)
         .map(|_| fds::udp::RecvResult {
@@ -297,11 +350,6 @@ fn worker_epoll_loop(
             truncated: false,
         })
         .collect();
-    let mut zc: Option<ZcState> = if cfg.udp.zerocopy {
-        Some(ZcState::new())
-    } else {
-        None
-    };
 
     // Idle poll bound: the loop must wake periodically to observe the
     // stop flag (the io_uring datapath mirrors this with a submitted
@@ -318,9 +366,12 @@ fn worker_epoll_loop(
             tv_nsec: 0,
         })
     } else if cfg.reactor.timeout_ms > 0 {
+        // A cooperative stop/error flag cannot wake epoll itself. Cap
+        // idle waits so a large configured timeout cannot stall joins.
+        let ms = i64::from(cfg.reactor.timeout_ms).min(IDLE_POLL_MS);
         Some(rustix::event::Timespec {
-            tv_sec: (cfg.reactor.timeout_ms / 1000) as i64,
-            tv_nsec: ((cfg.reactor.timeout_ms % 1000) as i64) * 1_000_000,
+            tv_sec: ms / 1000,
+            tv_nsec: (ms % 1000) * 1_000_000,
         })
     } else {
         // Event-driven: block in the kernel until an event is ready,
@@ -334,7 +385,11 @@ fn worker_epoll_loop(
     let mut evbuf = vec![fds::reactor::EpollEvent::default(); cfg.reactor.max_events.max(1)];
 
     while !stop() {
-        let n = reactor.poll_timeout(timeout.as_ref())?;
+        let n = match reactor.poll_timeout(timeout.as_ref()) {
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
         if n == 0 {
             continue;
         }
@@ -342,19 +397,10 @@ fn worker_epoll_loop(
         for ev in evbuf.iter().take(m) {
             if ev.error {
                 metrics.add_drops(id, 1);
-                continue;
             }
             match ev.token {
                 TOKEN_UDP => {
-                    if let Some(z) = &mut zc {
-                        if z.disabled {
-                            drain_udp(udp_sock, &mut rx_bufs, &mut rx_out, metrics, id)?;
-                        } else {
-                            drain_udp_zc(udp_sock, z, metrics, id)?;
-                        }
-                    } else {
-                        drain_udp(udp_sock, &mut rx_bufs, &mut rx_out, metrics, id)?;
-                    }
+                    drain_udp(udp_sock, &mut rx_bufs, &mut rx_out, metrics, id)?;
                 }
                 TOKEN_TCP_LISTENER => {
                     drain_accept(tcp_listener, &mut reactor, &conns, &mut streams, id)?;
@@ -367,7 +413,7 @@ fn worker_epoll_loop(
                         while let Ok(true) = s.poll_once(metrics) {}
                     }
                 }
-                tok => drain_tcp(tok, &mut reactor, &conns, &mut streams, metrics, id)?,
+                tok => drain_tcp(tok, &mut reactor, &mut streams, metrics, id)?,
             }
         }
     }
@@ -388,7 +434,13 @@ fn worker_io_uring_loop(
     metrics: &Metrics,
     stop: &(dyn Fn() -> bool + Send + Sync),
 ) -> std::io::Result<()> {
-    let mut datapath = fds::io_uring_reactor::IoUringDatapath::new(
+    let constructor =
+        if std::env::var_os("FDS_IOU_LEGACY").as_deref() == Some(std::ffi::OsStr::new("1")) {
+            fds::io_uring_reactor::IoUringDatapath::new_legacy
+        } else {
+            fds::io_uring_reactor::IoUringDatapath::new
+        };
+    let mut datapath = constructor(
         id,
         udp_sock.as_raw_fd(),
         tcp_listener.as_raw_fd(),
@@ -400,20 +452,12 @@ fn worker_io_uring_loop(
         "fds: worker {id}: io_uring datapath ({} entries, sq_thread {})",
         cfg.reactor.io_uring_entries, cfg.reactor.io_uring_sq_thread
     );
-    datapath.run(
-        stop,
-        metrics,
-        id,
-        metrics_server,
-        cfg.reactor.busy_poll,
-    )
+    datapath.run(stop, metrics, id, metrics_server, cfg.reactor.busy_poll)
 }
 
-fn parse_addr(s: &str, fallback: &str) -> SocketAddr {
-    s.parse().unwrap_or_else(|_| {
-        eprintln!("fds: bad bind address {s:?}; using {fallback}");
-        fallback.parse().unwrap()
-    })
+fn parse_addr(s: &str) -> std::io::Result<SocketAddr> {
+    s.parse()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))
 }
 
 /// Presence probes for the optional transports (feature-gated; absence is
@@ -468,7 +512,9 @@ fn worker_af_xdp_loop(
     let queue = queues[id % queues.len()];
 
     let Ok(dev) = CString::new(cfg.af_xdp.device.as_str()) else {
-        return Err(std::io::Error::other("af_xdp device name contains a NUL byte"));
+        return Err(std::io::Error::other(
+            "af_xdp device name contains a NUL byte",
+        ));
     };
     // SAFETY: `dev` is a valid NUL-terminated C string for the call.
     let ifindex = unsafe { libc::if_nametoindex(dev.as_ptr()) };
@@ -516,7 +562,7 @@ fn worker_af_xdp_loop(
         xsk.mode()
     );
 
-    let tcp_port = parse_addr(&cfg.engine.tcp_bind, "127.0.0.1:7778").port();
+    let tcp_port = parse_addr(&cfg.engine.tcp_bind)?.port();
     let mut ustack = if cfg.engine.userspace_tcp {
         eprintln!("fds: worker {id}: userspace TCP (RACK/TSO) listen port {tcp_port}");
         let mut s = fds::ustack::TcpStack::new_v4([0; 6], [0; 4], tcp_port);
@@ -590,9 +636,7 @@ fn worker_af_xdp_loop(
             xsk.wait_rx(1);
         }
     }
-    eprintln!(
-        "fds: worker {id}: af_xdp stopped ({forwarded} forwarded, {dropped} dropped)"
-    );
+    eprintln!("fds: worker {id}: af_xdp stopped ({forwarded} forwarded, {dropped} dropped)");
     Ok(())
 }
 
@@ -648,166 +692,6 @@ fn drain_udp(
     Ok(())
 }
 
-/// Smallest datagram that pays for the MSG_ZEROCOPY per-datagram
-/// sendmsg syscall (below it, the batched sendmmsg copy is cheaper).
-const ZC_MIN_DATAGRAM: usize = 4096;
-
-/// MSG_ZEROCOPY echo state: two receive-buffer sets alternate. The
-/// kernel references (does not copy) send pages, so a set whose
-/// zero-copy sends are in flight cannot be reused until their
-/// error-queue notifications are drained. This kernel reports empty
-/// byte ranges on UDP ZC notifications (verified empirically), so
-/// recycling is by notification COUNT: the error queue is FIFO and
-/// sends are ordered, so cumulative counts are exact.
-struct ZcState {
-    bufs: [Vec<mol::Buffer<{ fds::udp::MAX_DATAGRAM }>>; 2],
-    out: [Vec<fds::udp::RecvResult>; 2],
-    /// Per set: (cumulative ZC sends before this set, ZC sends from
-    /// this set); `None` = reusable.
-    in_flight: [Option<(u64, u64)>; 2],
-    /// Cumulative ZC notifications drained from the error queue.
-    acked_notifs: u64,
-    /// Cumulative ZC datagrams sent (across both sets).
-    sent_total: u64,
-    /// The set the next recv targets (prefer alternating).
-    next: usize,
-    /// Set when notifications stop arriving (this kernel silently
-    /// copies UDP MSG_ZEROCOPY sends, so none ever come); the worker
-    /// then falls back to the copy path so it never wedges.
-    disabled: bool,
-    /// When both sets have been in flight without a free one.
-    stall_start: Option<std::time::Instant>,
-}
-
-impl ZcState {
-    fn new() -> Self {
-        let mk_out = || {
-            (0..64)
-                .map(|_| fds::udp::RecvResult {
-                    len: 0,
-                    src: "0.0.0.0:0".parse().unwrap(),
-                    truncated: false,
-                })
-                .collect()
-        };
-        let bufs = [vec![mol::Buffer::new(); 64], vec![mol::Buffer::new(); 64]];
-        advise_hugepage(&bufs[0]);
-        advise_hugepage(&bufs[1]);
-        Self {
-            bufs,
-            out: [mk_out(), mk_out()],
-            in_flight: [None, None],
-            acked_notifs: 0,
-            sent_total: 0,
-            next: 0,
-            disabled: false,
-            stall_start: None,
-        }
-    }
-
-    /// Drain the error queue and free any set whose sends have all been
-    /// notified.
-    fn recycle(&mut self, udp: &fds::udp::UdpSocket) -> std::io::Result<()> {
-        self.acked_notifs += udp.drain_zerocopy_notifications()?;
-        for slot in self.in_flight.iter_mut() {
-            if let Some((before, count)) = *slot {
-                if self.acked_notifs >= before + count {
-                    *slot = None;
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-/// `drain_udp` variant for `cfg.udp.zerocopy`: large datagrams are
-/// echoed with MSG_ZEROCOPY (the send buffer pages are referenced, not
-/// copied), small ones through the batched copy path. A set is only
-/// reused after its in-flight sends are notified, so receive and send
-/// stay safe without allocating on the datapath.
-fn drain_udp_zc(
-    udp: &fds::udp::UdpSocket,
-    zc: &mut ZcState,
-    metrics: &Metrics,
-    core: usize,
-) -> std::io::Result<()> {
-    zc.recycle(udp)?;
-    loop {
-        let set = if zc.in_flight[zc.next].is_none() {
-            zc.next
-        } else if zc.in_flight[1 - zc.next].is_none() {
-            1 - zc.next
-        } else {
-            // Both sets in flight: wait for notifications. Kernels that
-            // silently COPY UDP MSG_ZEROCOPY sends (this kernel does,
-            // verified: pages never referenced, no notifications) would
-            // wedge the worker forever; after a short grace, disable ZC
-            // for this worker and fall back to the copy path.
-            zc.recycle(udp)?;
-            if zc.in_flight[zc.next].is_some() && zc.in_flight[1 - zc.next].is_some() {
-                if zc.stall_start.is_none() {
-                    zc.stall_start = Some(std::time::Instant::now());
-                }
-                if zc.stall_start.unwrap().elapsed() >= std::time::Duration::from_millis(5) {
-                    eprintln!(
-                        "fds: worker {core}: udp zerocopy sends not completing (kernel copies \
-                         silently?); disabling zerocopy for this worker"
-                    );
-                    zc.disabled = true;
-                    break;
-                }
-            } else {
-                zc.stall_start = None;
-            }
-            continue;
-        };
-        let n = udp.recv_batch(&mut zc.bufs[set], &mut zc.out[set])?;
-        if n == 0 {
-            break;
-        }
-        let mut copy_msgs: [(&[u8], SocketAddr); 64] = [(&[], "0.0.0.0:0".parse().unwrap()); 64];
-        let mut cm = 0;
-        let mut zc_sent: u64 = 0;
-        for (idx, r) in zc.out[set].iter().take(n).enumerate() {
-            if r.truncated {
-                metrics.add_drops(core, 1);
-                continue;
-            }
-            metrics.add_packets(core, 1);
-            metrics.add_bytes(core, r.len as u64);
-            let payload = &zc.bufs[set][idx].as_slice()[..r.len];
-            if r.len >= ZC_MIN_DATAGRAM {
-                match udp.send_to_zerocopy(payload, r.src) {
-                    Ok(sent) => {
-                        zc_sent += 1;
-                        zc.sent_total += 1;
-                        debug_assert_eq!(sent, r.len);
-                    }
-                    // Fall back to the copy path; the buffer is safe to
-                    // hand to sendmmsg because it copies before returning.
-                    Err(_) => {
-                        copy_msgs[cm] = (payload, r.src);
-                        cm += 1;
-                    }
-                }
-            } else {
-                copy_msgs[cm] = (payload, r.src);
-                cm += 1;
-            }
-        }
-        if cm > 0 {
-            let _ = udp.send_batch(&copy_msgs[..cm]);
-        }
-        zc.in_flight[set] = if zc_sent > 0 {
-            Some((zc.sent_total - zc_sent, zc_sent))
-        } else {
-            None
-        };
-        zc.next = 1 - set;
-    }
-    Ok(())
-}
-
 /// Accept connections until EAGAIN; register each with the worker's
 /// reactor and store its stream + slot guard keyed by its
 /// [`ConnectionId`] token. The guard is held for the connection's
@@ -822,46 +706,79 @@ fn drain_accept<'a>(
     loop {
         match listener.accept()? {
             None => break,
-            Some((stream, peer)) => {
-                match conns.try_acquire() {
-                    Some(mut slot) => {
-                        let idx = slot.index();
-                        slot.conn_mut().cold.peer = peer;
-                        let token = ConnectionId::new(core as u32, idx as u32).as_u64();
-                        reactor.register(stream.as_raw_fd(), token, Interest::Readable)?;
-                        streams[idx] = Some((stream, slot));
-                    }
-                    None => {
-                        eprintln!("fds: connection table full; dropping peer {peer}");
-                    }
+            Some((stream, peer)) => match conns.try_acquire() {
+                Some(mut slot) => {
+                    let idx = slot.index();
+                    *slot.conn_mut() = fds::conn::Connection::new(peer, now_ticks());
+                    slot.conn_mut().hot.fd = stream.as_raw_fd();
+                    let token = ConnectionId::new(core as u32, idx as u32).as_u64();
+                    reactor.register(stream.as_raw_fd(), token, Interest::Readable)?;
+                    streams[idx] = Some(TcpConnection {
+                        stream,
+                        slot,
+                        buffer: vec![0; TCP_BUFFER_SIZE].into_boxed_slice(),
+                        written: 0,
+                        len: 0,
+                        write_blocked: false,
+                    });
                 }
-            }
+                None => {
+                    eprintln!("fds: connection table full; dropping peer {peer}");
+                }
+            },
         }
     }
     Ok(())
 }
 
-/// Drain one TCP connection: echo received bytes back until EAGAIN.
-/// `WouldBlock` during the echo write counts a drop and discards the
-/// remainder of the read burst (see module docs).
+/// Flush pending bytes before reading more. On backpressure retain the
+/// unsent suffix, pause reads, and resume on a writable edge.
 fn drain_tcp<'a>(
     token: u64,
     reactor: &mut Reactor,
-    conns: &'a ConnTable<CONN_CAP>,
     streams: &mut TcpSlots<'a>,
     metrics: &Metrics,
     core: usize,
 ) -> std::io::Result<()> {
     let slot = ConnectionId::from_u64(token).slot() as usize;
     let close = {
-        let stream = match streams.get_mut(slot).and_then(|s| s.as_mut()) {
-            Some((s, _)) => s,
+        let connection = match streams.get_mut(slot).and_then(|s| s.as_mut()) {
+            Some(pair) => pair,
             None => return Ok(()),
         };
         let mut close = false;
-        loop {
-            let mut buf = [0u8; 65536];
-            match stream.readv(&mut [&mut buf]) {
+        'drain: loop {
+            while connection.written < connection.len {
+                match connection
+                    .stream
+                    .write(&connection.buffer[connection.written..connection.len])
+                {
+                    Ok(0) => {
+                        close = true;
+                        break 'drain;
+                    }
+                    Ok(n) => connection.written += n,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        if !connection.write_blocked {
+                            reactor.modify(
+                                connection.stream.as_raw_fd(),
+                                token,
+                                Interest::Writable,
+                            )?;
+                            connection.write_blocked = true;
+                        }
+                        break 'drain;
+                    }
+                    Err(_) => {
+                        close = true;
+                        break 'drain;
+                    }
+                }
+            }
+            connection.written = 0;
+            connection.len = 0;
+            match connection.stream.read(&mut connection.buffer) {
                 Ok(0) => {
                     close = true;
                     break;
@@ -871,22 +788,18 @@ fn drain_tcp<'a>(
                     metrics.add_bytes(core, n as u64);
                     // Hot state: sequence + activity on every step (the
                     // per-connection hot/cold split in action).
-                    let hot = &mut conns.conn_mut(slot).hot;
+                    let hot = &mut connection.slot.conn_mut().hot;
                     hot.seq = hot.seq.wrapping_add(n as u32);
                     hot.last_activity = now_ticks();
-                    match stream.write_all(&buf[..n]) {
-                        Ok(()) => {}
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            metrics.add_drops(core, 1);
-                            continue; // discard the rest of the burst
-                        }
-                        Err(_) => {
-                            close = true;
-                            break;
-                        }
-                    }
+                    connection.len = n;
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if connection.write_blocked {
+                        reactor.modify(connection.stream.as_raw_fd(), token, Interest::Readable)?;
+                        connection.write_blocked = false;
+                    }
+                    break;
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(_) => {
                     close = true;
@@ -897,11 +810,11 @@ fn drain_tcp<'a>(
         close
     };
     if close {
-        // Removing the (stream, slot) tuple drops the slot guard, which
+        // Removing the connection drops its slot guard, which
         // releases the table slot exactly once; never call
         // `release_slot` here (that would double-release).
-        if let Some((stream, _slot)) = streams.get_mut(slot).and_then(|s| s.take()) {
-            let _ = reactor.unregister(stream.as_raw_fd());
+        if let Some(connection) = streams.get_mut(slot).and_then(|s| s.take()) {
+            let _ = reactor.unregister(connection.stream.as_raw_fd());
         }
     }
     Ok(())
@@ -915,19 +828,116 @@ mod tests {
     use std::time::{Duration, Instant};
 
     #[test]
+    fn failed_worker_stops_and_joins_peers() {
+        let mut cfg = Config::default();
+        cfg.core.threads = 2;
+        cfg.core.pin_cores = false;
+        cfg.engine.udp_bind = "127.0.0.1:0".into();
+        cfg.engine.tcp_bind = "127.0.0.1:0".into();
+        cfg.metrics.socket_path = format!(
+            "/tmp/fds-missing-parent-{}/metrics.sock",
+            std::process::id()
+        );
+        let start = Instant::now();
+        assert!(run_until(&cfg, Arc::new(|| false)).is_err());
+        assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn unsafe_udp_zerocopy_engine_mode_is_rejected() {
+        let mut cfg = Config::default();
+        cfg.udp.zerocopy = true;
+        assert_eq!(
+            run_until(&cfg, Arc::new(|| false)).unwrap_err().kind(),
+            std::io::ErrorKind::Unsupported
+        );
+    }
+
+    #[test]
+    fn tcp_backpressure_preserves_bytes_without_hot_path_allocations() {
+        std::thread::spawn(|| {
+            let cfg = fds::config::TcpConfig {
+                sndbuf: 4096,
+                ..Default::default()
+            };
+            let listener =
+                fds::tcp::TcpListener::bind(([127, 0, 0, 1], 0).into(), &cfg, 8).unwrap();
+            let mut peer = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            peer.set_nonblocking(true).unwrap();
+            let conns = ConnTable::<CONN_CAP>::new();
+            let mut streams: TcpSlots<'_> = (0..CONN_CAP).map(|_| None).collect();
+            let mut reactor = Reactor::new(8).unwrap();
+            let metrics = Metrics::new(1);
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while streams.iter().all(Option::is_none) {
+                drain_accept(&listener, &mut reactor, &conns, &mut streams, 0).unwrap();
+                assert!(Instant::now() < deadline);
+            }
+            let index = streams.iter().position(Option::is_some).unwrap();
+            let token = ConnectionId::new(0, index as u32).as_u64();
+            let payload: Vec<u8> = (0..1024 * 1024)
+                .map(|i| ((i * 17 + i / 65536) % 251) as u8)
+                .collect();
+            let mut sent = 0;
+            let mut echoed = 0;
+            let mut observed_backpressure = false;
+            let mut closed_write = false;
+            let mut buffer = [0; 65536];
+            crate::alloc_count::reset();
+            while echoed < payload.len() {
+                if sent < payload.len() {
+                    match peer.write(&payload[sent..]) {
+                        Ok(n) => sent += n,
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                        Err(e) => panic!("send: {e}"),
+                    }
+                } else if !closed_write {
+                    peer.shutdown(std::net::Shutdown::Write).unwrap();
+                    closed_write = true;
+                }
+                drain_tcp(token, &mut reactor, &mut streams, &metrics, 0).unwrap();
+                observed_backpressure |= streams[index].as_ref().is_some_and(|c| c.write_blocked);
+                // Delay receiving until the server actually hits a full
+                // send buffer. This makes the regression deterministic.
+                if observed_backpressure {
+                    loop {
+                        match peer.read(&mut buffer) {
+                            Ok(0) => {
+                                assert_eq!(echoed, payload.len());
+                                break;
+                            }
+                            Ok(n) => {
+                                assert_eq!(&buffer[..n], &payload[echoed..echoed + n]);
+                                echoed += n;
+                            }
+                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                            Err(e) => panic!("receive: {e}"),
+                        }
+                    }
+                }
+                assert!(Instant::now() < deadline, "TCP backpressure stalled");
+            }
+            assert!(observed_backpressure);
+            assert_eq!(metrics.totals().2, 0, "TCP backpressure dropped bytes");
+            assert_eq!(crate::alloc_count::count(), 0, "TCP hot path allocated");
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
     fn udp_rx_slots_clamps() {
         assert!((1..=64).contains(&udp_rx_slots()));
     }
 
     #[test]
     fn worker_cpu_uses_physical_when_it_fits() {
-        let phys = physical_cpus();
-        assert!(!phys.is_empty());
-        for (i, cpu) in phys.iter().copied().enumerate() {
-            assert_eq!(worker_cpu(i, phys.len()), cpu);
-        }
-        // Oversubscription falls back to logical index.
-        assert_eq!(worker_cpu(0, phys.len() + 1), 0);
+        let allowed = [4, 6, 8, 10];
+        let physical = [4, 8];
+        assert_eq!(worker_cpu(0, 2, &allowed, &physical), 4);
+        assert_eq!(worker_cpu(1, 2, &allowed, &physical), 8);
+        assert_eq!(worker_cpu(1, 4, &allowed, &physical), 6);
+        assert_eq!(worker_cpu(5, 6, &allowed, &physical), 6);
     }
 
     /// Multi-worker engine smoke: run `run_until` with 2 workers on

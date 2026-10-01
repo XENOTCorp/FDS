@@ -71,8 +71,8 @@ fds_l3_bytes() {
 }
 
 fds_simd_features() {
-  # /proc/cpuinfo flags -> rustc target-feature names (the set
-  # target-cpu=native would enable; also fed back for pinned TARGET_CPU).
+  # /proc/cpuinfo flags -> rustc target-feature names, for reporting.
+  # Pinned TARGET_CPU builds must not inherit these host-only features.
   local pair flag feat out=""
   for pair in \
     avx2:avx2 avx512f:avx512f avx512bw:avx512bw avx512cd:avx512cd \

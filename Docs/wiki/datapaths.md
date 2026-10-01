@@ -8,9 +8,10 @@ path. DPDK is not in this tree.
 
 The engine runs on the kernel socket path: epoll readiness, recvmmsg and
 sendmmsg with a D-1/D-4 batch (default 4 datagrams on the reference CPU
-so 4 × 60 KiB stays in L2; override `FDS_UDP_RX_SLOTS`), readv and writev
-on TCP. This is the default. On the reference machine it is the fastest
-strategy. See [benchmarks](../benchmarks.md).
+so 4 × 60 KiB stays in L2; override `FDS_UDP_RX_SLOTS`). TCP uses a
+reusable 64 KiB buffer per connection and retains short-write tails,
+pausing reads on backpressure. Historical rankings refer to older engine
+semantics; remeasure the current code. See [benchmarks](../benchmarks.md).
 
 ## io_uring
 
@@ -22,18 +23,20 @@ reactor uses the modern path:
   accepts)
 - `IORING_OP_RECVMSG_MULTI` into a provided-buffer group (one
   submission, many receives)
-- `IORING_OP_SEND_ZC` against a registered buffer pool (no fresh iovec
-  per send)
-- a completion plus a notification per zero-copy send. The buffer
-  returns to the pool only when the inflight count for that buffer
-  reaches zero. A partial send re-submits the tail of the same buffer.
+- ordinary `IORING_OP_SEND` against the provided/registered buffer pool;
+  the current path does not submit SEND_ZC
+- one send in flight per stream, so asynchronous execution and short-write
+  retries cannot reorder TCP bytes; submission batching spans connections
 - high/low watermarks cancel and re-arm receive so a write flood cannot
   grow an unbounded send queue
 - submission batching: `io_uring_enter` runs when the submission queue
   reaches the flush threshold, not on every opcode
 
 On an older kernel the reactor falls back to single-shot Accept, Read,
-and Write.
+and Write. `FDS_IOU_LEGACY=1` explicitly selects this path without a
+registered pool. Runtime multishot rejection fails closed: switching modes
+while modern requests still reference buffers is unsafe. Each datapath
+instance may run only once; construct a new instance to restart it.
 
 SQPOLL (`reactor.io_uring_sq_thread`) starts a kernel submission thread.
 On a two-core machine that thread can starve the workers. Leave SQPOLL
@@ -51,14 +54,16 @@ The `af-xdp` path is a first-class worker datapath. When
 `af_xdp.device` is set, each worker binds one queue of that device and
 runs the zero-copy frame loop instead of the kernel socket path.
 
-The socket binds with `XDP_ZEROCOPY` so the umem is the NIC memory. If
+The socket binds with `XDP_ZEROCOPY` so the NIC DMA accesses UMEM directly. If
 the driver rejects zero-copy, the socket falls back to `XDP_COPY`.
 `XDP_USE_NEED_WAKEUP` is always set. `kick` wakes the kernel only when
 the fill or TX ring sets `XDP_RING_NEED_WAKEUP`.
 
 Receive checks a frame out of the umem. The handler processes the frame
 in place. Echo transmits the same umem slot. Drop returns the slot to
-the fill ring. Completions recycle transmitted slots.
+the fill ring. Completions recycle transmitted slots. Socket identities
+and checkout generations reject stale, duplicate, and cross-socket frame
+handles before exposing mutable memory.
 
 Multiqueue: `af_xdp.queues` lists the queue ids. Worker `i` binds
 `queues[i % len]`. Each worker has its own umem and rings.

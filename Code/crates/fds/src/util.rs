@@ -6,18 +6,37 @@ use std::collections::BTreeMap;
 /// Pin the calling thread to logical CPU `core` (`sched_setaffinity`).
 pub fn pin_to_core(core: usize) -> std::io::Result<()> {
     let mut set = rustix::thread::CpuSet::new();
+    if core >= rustix::thread::CpuSet::MAX_CPU {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "CPU index exceeds affinity mask",
+        ));
+    }
     set.set(core);
     rustix::thread::sched_setaffinity(None, &set).map_err(std::io::Error::from)
 }
 
-/// First logical CPU of each physical core, sorted, from sysfs sibling
+/// Logical CPUs allowed by the calling thread's affinity mask. CPU IDs
+/// need not start at zero or be contiguous (containers and taskset).
+pub fn available_cpus() -> Vec<usize> {
+    match rustix::thread::sched_getaffinity(None) {
+        Ok(set) => (0..rustix::thread::CpuSet::MAX_CPU)
+            .filter(|&cpu| set.is_set(cpu))
+            .collect(),
+        Err(_) => vec![0],
+    }
+}
+
+/// First allowed logical CPU of each physical core, sorted, from sysfs sibling
 /// groups. Two SMT threads of the same core share L1/L2; pinning two
 /// workers there (logical 0 then 1 on this machine) puts both on one
-/// core and leaves the other idle. Empty/unreadable sysfs yields `[0]`.
+/// core and leaves the other idle. Unreadable topology falls back to the
+/// allowed logical CPUs rather than selecting disallowed CPU zero.
 pub fn physical_cpus() -> Vec<usize> {
+    let allowed = available_cpus();
     let mut groups: BTreeMap<String, usize> = BTreeMap::new();
     let Ok(rd) = std::fs::read_dir("/sys/devices/system/cpu") else {
-        return vec![0];
+        return allowed;
     };
     for ent in rd.flatten() {
         let name = ent.file_name();
@@ -31,6 +50,9 @@ pub fn physical_cpus() -> Vec<usize> {
         let Ok(cpu) = rest.parse::<usize>() else {
             continue;
         };
+        if !allowed.contains(&cpu) {
+            continue;
+        }
         let path = ent.path().join("topology/thread_siblings_list");
         let Ok(s) = std::fs::read_to_string(path) else {
             continue;
@@ -47,7 +69,7 @@ pub fn physical_cpus() -> Vec<usize> {
     let mut v: Vec<usize> = groups.into_values().collect();
     v.sort_unstable();
     if v.is_empty() {
-        vec![0]
+        allowed
     } else {
         v
     }
@@ -75,7 +97,7 @@ fn parse_sysfs_size(s: &str) -> Option<u64> {
         "G" | "GB" | "GIB" => 1 << 30,
         _ => return None,
     };
-    Some(num * mult)
+    num.checked_mul(mult)
 }
 
 /// Coarse monotonic ticks (seconds since first call) for hot-state

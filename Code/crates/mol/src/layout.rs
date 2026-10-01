@@ -80,7 +80,7 @@ impl<Hot, Cold> HotCold<Hot, Cold> {
 
 /// Compile-time size/alignment checks for shared structures.
 ///
-/// Usage: `layout::assert_align::<CachePadded<u64>, 64>();` in a test.
+/// Usage: `layout::assert_align::<CachePadded<u64>>(64);` in a test.
 pub const fn assert_align<T>(expected: usize) {
     assert!(core::mem::align_of::<T>() == expected);
 }

@@ -2,7 +2,9 @@
 //! the `io-uring` crate, tokio-rs): SQPOLL-capable setup, registered
 //! buffers (IORING_REGISTER_BUFFERS), provided buffers
 //! (IORING_OP_PROVIDE_BUFFERS), multishot recv and accept, and
-//! IORING_OP_SEND_ZC with a completion/recycle protocol.
+//! ordinary IORING_OP_SEND from pool-owned buffers. No SEND_ZC SQEs
+//! are currently submitted; notification bookkeeping is retained from
+//! the earlier prototype, not an advertised zero-copy send feature.
 //!
 //! Two TCP modes, chosen at runtime:
 //!
@@ -21,20 +23,19 @@
 //!   Submission is batched: re-submits from one completion batch are
 //!   flushed in one `io_uring_enter`; with SQPOLL the kernel thread
 //!   drains the SQ without an enter at all.
-//! - **Legacy** (kernel < 6.0, or when registration/multishot is
-//!   rejected at runtime): the previous single-shot accept/read/write
-//!   datapath on blocking fds.
+//! - **Legacy** (kernel < 6.0, or when buffer registration is rejected): the previous single-shot accept/read/write
+//!   datapath on nonblocking fds, retrying short writes and waiting for
+//!   writability when the send buffer is full.
+//!   A runtime multishot rejection fails closed rather than switching
+//!   lifecycle interpretation while modern operations remain in flight.
 //!
-//! CONTRACT (implementer): the `io-uring` crate (tokio-rs) against the
-//! system io_uring (the 0.7 series is pure-syscall; it does not link
-//! liburing). Tests: setup + registration succeeds on this kernel;
-//! socketpair read/write roundtrip through the ring; SQPOLL setup skips
-//! gracefully (needs CAP_SYS_ADMIN) without failing the test suite; the
-//! datapath echoes UDP and TCP over loopback; a TCP write flood echoes
-//! to completion (no stall) with bounded buffering.
+//! The `io-uring` dependency uses syscalls directly, not liburing.
+//! Tests cover registration, socketpair I/O, loopback echo, and TCP write
+//! floods in both runtime-selected and forced-legacy modes. SQPOLL tests
+//! explicitly skip when the required capability is unavailable.
 #![cfg(feature = "io-uring")]
 
-use crate::conn::{ConnTable, Connection, ConnectionId, CONN_CAP};
+use crate::conn::{ConnTable, ConnectionId, CONN_CAP};
 use crate::metrics::{Metrics, MetricsServer};
 use crate::reactor::Interest;
 use io_uring::squeue::Flags;
@@ -44,8 +45,6 @@ use std::collections::VecDeque;
 pub struct IoUringReactor {
     /// The io_uring instance (SQPOLL when requested and permitted).
     ring: io_uring::IoUring,
-    /// user_data tokens of requests submitted but not yet drained.
-    pending: Vec<u64>,
 }
 
 impl IoUringReactor {
@@ -59,46 +58,54 @@ impl IoUringReactor {
         if sq_thread > 0 {
             builder.setup_sqpoll(sq_thread);
         }
-        // Preallocate the pending-token table so submit_*/drain never
-        // allocate for the steady state.
-        let pending: Vec<u64> = Vec::with_capacity(entries as usize + 64);
         match builder.build(entries) {
-            Ok(ring) => Ok(Self { ring, pending }),
+            Ok(ring) => Ok(Self { ring }),
             // setup_sqpoll only sets a flag; the io_uring_setup(2) syscall
             // in `build` is what fails with EPERM for unprivileged users.
             Err(e) if sq_thread > 0 && e.raw_os_error() == Some(libc::EPERM) => Ok(Self {
                 ring: io_uring::IoUring::builder().build(entries)?,
-                pending,
             }),
             Err(e) => Err(e),
         }
     }
 
     /// Push a prepared submission queue entry with `user_data` as its
-    /// token and record the token as pending. The entry's referenced
+    /// token. The entry's referenced
     /// memory (iovecs, buffers, sockaddrs) must stay valid and untouched
     /// until the corresponding completion is drained; the kernel may
     /// read or write it at any time up to that point.
-    pub fn push(
+    ///
+    /// # Safety
+    /// All entry pointers must remain valid, correctly initialized and
+    /// exclusively accessible as required by the operation until it ends.
+    /// The SQE's user_data must match `user_data`.
+    pub unsafe fn push(
         &mut self,
         user_data: u64,
         entry: io_uring::squeue::Entry,
     ) -> std::io::Result<()> {
+        debug_assert_eq!(entry.get_user_data(), user_data);
         // SAFETY: `push` copies the entry into the ring's SQ memory, so
         // the entry itself need not outlive this call; the buffers it
         // references are kept alive by the datapath's lifecycle contract
         // (see the module docs).
-        unsafe { self.ring.submission().push(&entry) }
-            .map_err(|_| {
-                std::io::Error::new(std::io::ErrorKind::WouldBlock, "io_uring submission queue full")
-            })?;
-        self.pending.push(user_data);
+        unsafe { self.ring.submission().push(&entry) }.map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "io_uring submission queue full",
+            )
+        })?;
         Ok(())
     }
 
     /// Register `bufs` with IORING_REGISTER_BUFFERS (returns Err when
     /// unsupported; caller falls back).
-    pub fn register_buffers(&mut self, bufs: &mut [&mut [u8]]) -> std::io::Result<()> {
+    ///
+    /// # Safety
+    /// Buffers must remain allocated at stable addresses until unregistered
+    /// or the ring is dropped. Operations also require proper exclusive
+    /// write access or shared immutable read access until completion.
+    pub unsafe fn register_buffers(&mut self, bufs: &mut [&mut [u8]]) -> std::io::Result<()> {
         let iovs: Vec<libc::iovec> = bufs
             .iter_mut()
             .map(|b| libc::iovec {
@@ -116,26 +123,31 @@ impl IoUringReactor {
     /// Submit a single-shot poll for `fd`'s readiness (`flags` are
     /// `<poll.h>` bits, e.g. `POLLIN`) with `user_data` as the token.
     /// Completes once; the caller re-arms by submitting again.
-    pub fn submit_poll(
-        &mut self,
-        fd: i32,
-        flags: u32,
-        user_data: u64,
-    ) -> std::io::Result<()> {
+    pub fn submit_poll(&mut self, fd: i32, flags: u32, user_data: u64) -> std::io::Result<()> {
         let entry = io_uring::opcode::PollAdd::new(io_uring::types::Fd(fd), flags)
             .build()
             .user_data(user_data);
         // SAFETY: a poll has no buffer, so the only lifetime is the fd,
         // which outlives the datapath.
-        unsafe { self.ring.submission().push(&entry) }
-            .map_err(|_| {
-                std::io::Error::new(
-                    std::io::ErrorKind::WouldBlock,
-                    "io_uring submission queue full",
-                )
-            })?;
-        self.pending.push(user_data);
+        unsafe { self.ring.submission().push(&entry) }.map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "io_uring submission queue full",
+            )
+        })?;
         Ok(())
+    }
+
+    pub(crate) fn capacities(&self) -> (usize, usize) {
+        (
+            self.ring.params().sq_entries() as usize,
+            self.ring.params().cq_entries() as usize,
+        )
+    }
+
+    pub(crate) fn as_raw_fd(&self) -> i32 {
+        use std::os::fd::AsRawFd;
+        self.ring.as_raw_fd()
     }
 
     /// Submit everything currently in the submission queue (no wait).
@@ -160,10 +172,12 @@ impl IoUringReactor {
             .user_data(0);
         // SAFETY: push copies the entry into the ring's SQ memory; the
         // cancel carries no buffer pointer.
-        unsafe { self.ring.submission().push(&entry) }
-            .map_err(|_| {
-                std::io::Error::new(std::io::ErrorKind::WouldBlock, "io_uring submission queue full")
-            })?;
+        unsafe { self.ring.submission().push(&entry) }.map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "io_uring submission queue full",
+            )
+        })?;
         self.ring.submit().map(|_| ())
     }
 
@@ -190,9 +204,6 @@ impl IoUringReactor {
         for cqe in cq {
             let user_data = cqe.user_data();
             f(user_data, result(cqe.result()), cqe.flags());
-            if let Some(pos) = self.pending.iter().position(|&t| t == user_data) {
-                self.pending.swap_remove(pos);
-            }
             n += 1;
         }
         n
@@ -339,6 +350,9 @@ struct TcpRingConn {
     recv_msg: Box<libc::msghdr>,
     /// Legacy-mode read buffer (single-shot path; unused in modern).
     legacy_buf: Box<[u8; CONN_BUF]>,
+    /// Unsent range in the legacy buffer; no read may overwrite it.
+    legacy_sent: usize,
+    legacy_len: usize,
     /// Buffer ids in this connection's provided group, in provide order
     /// (the kernel removes from the group head, FIFO).
     provided: VecDeque<u32>,
@@ -365,6 +379,8 @@ impl TcpRingConn {
             fd,
             recv_msg: Box::new(tcp_recv_msg()),
             legacy_buf: Box::new([0u8; CONN_BUF]),
+            legacy_sent: 0,
+            legacy_len: 0,
             provided: VecDeque::new(),
             to_send: VecDeque::new(),
             in_kernel: Vec::new(),
@@ -379,6 +395,7 @@ impl TcpRingConn {
 
 /// The modern-mode buffer pool: registered once as fixed buffers and
 /// provided to per-connection groups.
+#[derive(Default)]
 struct BufferPool {
     pool: Box<[Box<[u8; CONN_BUF]>]>,
     states: Vec<BufState>,
@@ -487,7 +504,7 @@ pub struct IoUringDatapath {
     /// Accept-scratch (legacy single-shot accept; multishot accept has
     /// no address output, the peer is read with getpeername).
     accept_addr: Box<libc::sockaddr_storage>,
-    accept_len: libc::socklen_t,
+    accept_len: Box<libc::socklen_t>,
     /// token -> connection (accepted fds are owned by the datapath and
     /// closed on drop).
     conns: std::collections::HashMap<u64, TcpRingConn>,
@@ -495,14 +512,16 @@ pub struct IoUringDatapath {
     conn_table: ConnTable<CONN_CAP>,
     metrics_fd: Option<i32>,
     /// Stable address for the periodic timeout op.
-    timeout: io_uring::types::Timespec,
-    /// Modern (multishot + provided/registered buffers + SEND_ZC) or
+    timeout: Box<io_uring::types::Timespec>,
+    /// Modern (multishot + provided/registered buffers + SEND) or
     /// legacy (single-shot) datapath.
     legacy: bool,
     pool: BufferPool,
     /// True while the multishot accept is armed (its CQEs carry MORE
     /// until the listener closes).
     accept_multi: bool,
+    debug: bool,
+    started: bool,
 }
 
 /// Per-UDP-slot lifecycle: exactly one ring op references the slot at a
@@ -528,7 +547,7 @@ impl IoUringDatapath {
     /// Build the datapath for one worker. `udp_fd`/`listen_fd` are
     /// borrowed (owned by the engine's sockets). On kernels >= 6.0 the
     /// modern path runs (multishot, provided/registered buffers,
-    /// SEND_ZC); otherwise (or when registration fails) the legacy
+    /// ordinary SEND); otherwise (or when registration fails) the legacy
     /// single-shot path runs.
     pub fn new(
         core: usize,
@@ -537,6 +556,35 @@ impl IoUringDatapath {
         metrics_fd: Option<i32>,
         entries: u32,
         sq_thread: u32,
+    ) -> std::io::Result<Self> {
+        Self::build(
+            core, udp_fd, listen_fd, metrics_fd, entries, sq_thread, true,
+        )
+    }
+
+    /// Build only the ordered single-shot path, without a registered
+    /// buffer pool. Useful on restricted or incompletely supported kernels.
+    pub fn new_legacy(
+        core: usize,
+        udp_fd: i32,
+        listen_fd: i32,
+        metrics_fd: Option<i32>,
+        entries: u32,
+        sq_thread: u32,
+    ) -> std::io::Result<Self> {
+        Self::build(
+            core, udp_fd, listen_fd, metrics_fd, entries, sq_thread, false,
+        )
+    }
+
+    fn build(
+        core: usize,
+        udp_fd: i32,
+        listen_fd: i32,
+        metrics_fd: Option<i32>,
+        entries: u32,
+        sq_thread: u32,
+        allow_modern: bool,
     ) -> std::io::Result<Self> {
         assert!(
             core < (1 << 28),
@@ -551,33 +599,39 @@ impl IoUringDatapath {
             listen_fd,
             slots: Box::new([]),
             accept_addr: Box::new(unsafe { std::mem::zeroed() }),
-            accept_len: std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t,
+            accept_len: Box::new(std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t),
             conns: std::collections::HashMap::with_capacity(CONN_CAP + 64),
             conn_table: ConnTable::new(),
             metrics_fd,
-            timeout: io_uring::types::Timespec::from(std::time::Duration::from_millis(TIMEOUT_MS)),
+            timeout: Box::new(io_uring::types::Timespec::from(
+                std::time::Duration::from_millis(TIMEOUT_MS),
+            )),
             legacy: true,
-            pool: BufferPool::new(),
+            pool: BufferPool::default(),
             accept_multi: false,
+            debug: std::env::var_os("FDS_IOU_DEBUG").is_some(),
+            started: false,
         };
-        for i in 0..CONN_CAP {
-            datapath
-                .conn_table
-                .initialize(i, Connection::new("0.0.0.0:0".parse().unwrap(), 0));
-        }
 
         // Modern path needs: kernel >= 6.0, registered buffers, and the
         // provided-buffer machinery. Fall back to legacy when any piece
         // is unavailable so the datapath never fails to start.
-        if modern_capable() {
+        if allow_modern && modern_capable() {
+            datapath.pool = BufferPool::new();
             let mut bufs: Vec<&mut [u8]> = datapath
                 .pool
                 .pool
                 .iter_mut()
                 .map(|b| b.as_mut_slice())
                 .collect();
-            if datapath.ring.register_buffers(&mut bufs).is_ok() {
+            // SAFETY: pool buffers are boxed; the ring is dropped before
+            // the pool even when the datapath itself is moved.
+            if unsafe { datapath.ring.register_buffers(&mut bufs) }.is_ok() {
                 datapath.legacy = false;
+            } else {
+                // Failed registration retains no references. Legacy I/O
+                // has its own buffers and does not need this 4 MiB arena.
+                datapath.pool = BufferPool::default();
             }
         }
 
@@ -601,8 +655,8 @@ impl IoUringDatapath {
     /// Run the completion-driven loop until `stop`. When `busy_poll` is
     /// set, the loop submits and syncs the CQ without blocking;
     /// otherwise `submit_and_wait` blocks on the next completion. All
-    /// buffers and the ring live for the datapath's lifetime; nothing
-    /// allocates per event. Re-submits accumulate in the SQ and are
+    /// buffers and the ring live for the datapath's lifetime. A datapath
+    /// may run only once: queued operations can remain after stop. Re-submits accumulate in the SQ and are
     /// flushed once per loop pass (one enter); with SQPOLL the kernel
     /// thread drains the SQ without an enter.
     pub fn run(
@@ -613,6 +667,13 @@ impl IoUringDatapath {
         metrics_server: &mut Option<MetricsServer>,
         busy_poll: bool,
     ) -> std::io::Result<()> {
+        if self.started {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "io_uring datapath can only run once; outstanding operations own its buffers",
+            ));
+        }
+        self.started = true;
         for slot in 0..self.slots.len() {
             self.submit_udp_recv(slot)?;
         }
@@ -624,7 +685,8 @@ impl IoUringDatapath {
         self.ring.submit_all()?;
 
         // Preallocated completion buffer, reused every iteration.
-        let mut completions: Vec<(u64, std::io::Result<u32>, u32)> = Vec::with_capacity(64);
+        let mut completions: Vec<(u64, std::io::Result<u32>, u32)> =
+            Vec::with_capacity(self.ring.ring.params().cq_entries() as usize);
         let mut last_beat = std::time::Instant::now();
         while !stop() {
             if busy_poll {
@@ -635,7 +697,7 @@ impl IoUringDatapath {
             completions.clear();
             self.ring
                 .drain_full(|ud, res, flags| completions.push((ud, res, flags)));
-            if std::env::var_os("FDS_IOU_DEBUG").is_some() && last_beat.elapsed().as_millis() >= 500 {
+            if self.debug && last_beat.elapsed().as_millis() >= 500 {
                 let (p, b, d) = metrics.totals();
                 let free = self.pool.free.len();
                 let outstanding: usize = self.conns.values().map(|c| c.outstanding).sum();
@@ -670,7 +732,7 @@ impl IoUringDatapath {
         core: usize,
         metrics_server: &mut Option<MetricsServer>,
     ) -> std::io::Result<()> {
-        if std::env::var_os("FDS_IOU_DEBUG").is_some() {
+        if self.debug {
             eprintln!(
                 "iou: dispatch kind={:#x} ud={:#x} res={:?} flags={:#x}",
                 user_data & KIND_MASK,
@@ -715,7 +777,11 @@ impl IoUringDatapath {
                 if let Some(c) = self.conns.get_mut(&token) {
                     c.poll_out = false;
                 }
-                self.flush_sends(token)?;
+                if self.legacy {
+                    self.submit_legacy_tcp_write(token)?;
+                } else {
+                    self.flush_sends(token)?;
+                }
             }
             KIND_TCP_CLOSE => {
                 // RemoveBuffers completion: `res` = buffers removed from
@@ -772,7 +838,8 @@ impl IoUringDatapath {
             };
             match self.conn_table.acquire_index() {
                 Some(idx) => {
-                    self.conn_table.conn_mut(idx).cold.peer = peer;
+                    // SAFETY: idx was just acquired and is exclusively owned here.
+                    unsafe { self.conn_table.conn_mut(idx) }.cold.peer = peer;
                     let token = ConnectionId::new(self.core as u32, idx as u32).as_u64();
                     self.conns.insert(token, TcpRingConn::new(fd));
                     if self.legacy {
@@ -829,10 +896,10 @@ impl IoUringDatapath {
                 // the payload offset and length.
                 // SAFETY: the buffer is pool-owned and registered; the
                 // kernel wrote the header before completing.
-                let hdr = unsafe {
-                    (self.pool.ptr_mut(buf_id) as *const RecvMsgOut).read_unaligned()
-                };
-                let off = std::mem::size_of::<RecvMsgOut>() + hdr.namelen as usize
+                let hdr =
+                    unsafe { (self.pool.ptr_mut(buf_id) as *const RecvMsgOut).read_unaligned() };
+                let off = std::mem::size_of::<RecvMsgOut>()
+                    + hdr.namelen as usize
                     + hdr.controllen as usize;
                 let plen = hdr.payloadlen as usize;
                 if off + plen > CONN_BUF {
@@ -848,7 +915,8 @@ impl IoUringDatapath {
                 c.to_send.push_back(buf_id);
                 c.outstanding += 1;
                 let slot = ConnectionId::from_u64(token).slot() as usize;
-                let hot = &mut self.conn_table.conn_mut(slot).hot;
+                // SAFETY: the live connection owns this slot; worker access is serialized.
+                let hot = &mut unsafe { self.conn_table.conn_mut(slot) }.hot;
                 hot.seq = hot.seq.wrapping_add(plen as u32);
                 hot.last_activity = crate::util::now_ticks();
                 metrics.add_packets(core, 1);
@@ -886,11 +954,13 @@ impl IoUringDatapath {
                         self.provide_and_arm_recv(token)?;
                     }
                 } else if errno == Some(libc::EINVAL) || errno == Some(libc::EOPNOTSUPP) {
-                    // Multishot rejected at runtime: downgrade the whole
-                    // datapath to legacy (single-shot) mode.
-                    let _ = c;
-                    self.downgrade_to_legacy()?;
-                    self.close_tcp(token, metrics, core)?;
+                    // Do not reinterpret still-live modern CQEs as legacy
+                    // operations or free buffers they still reference.
+                    // Fail closed; dropping the ring precedes buffer teardown.
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Unsupported,
+                        "multishot recv rejected; restart with a legacy-only ring",
+                    ));
                 } else {
                     metrics.add_drops(core, 1);
                     c.recv_armed = false;
@@ -915,8 +985,34 @@ impl IoUringDatapath {
         if self.legacy {
             let token = user_data & !KIND_MASK;
             match res {
-                Ok(_) => self.submit_legacy_tcp_read(token)?,
-                Err(_) => {
+                Ok(n) if n > 0 => {
+                    let Some(c) = self.conns.get_mut(&token) else {
+                        return Ok(());
+                    };
+                    c.legacy_sent += n as usize;
+                    if c.legacy_sent < c.legacy_len {
+                        self.submit_legacy_tcp_write(token)?;
+                    } else {
+                        self.submit_legacy_tcp_read(token)?;
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                    self.submit_legacy_tcp_write(token)?;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    let Some(c) = self.conns.get_mut(&token) else {
+                        return Ok(());
+                    };
+                    if !c.poll_out {
+                        self.ring.submit_poll(
+                            c.fd,
+                            poll_flags(Interest::Writable),
+                            KIND_TCP_POLLOUT | token,
+                        )?;
+                        c.poll_out = true;
+                    }
+                }
+                _ => {
                     metrics.add_drops(core, 1);
                     self.close_tcp(token, metrics, core)?;
                 }
@@ -1016,8 +1112,11 @@ impl IoUringDatapath {
                         self.pool.mark_owned(buf_id, meta.off, meta.len);
                     }
                     if !c.poll_out {
-                        self.ring
-                            .submit_poll(c.fd, poll_flags(Interest::Writable), KIND_TCP_POLLOUT | token)?;
+                        self.ring.submit_poll(
+                            c.fd,
+                            poll_flags(Interest::Writable),
+                            KIND_TCP_POLLOUT | token,
+                        )?;
                         c.poll_out = true;
                     }
                 }
@@ -1028,10 +1127,11 @@ impl IoUringDatapath {
                 }
             }
         }
+        self.flush_sends(token)?;
         Ok(())
     }
 
-    /// Submit IORING_OP_SEND for every buffer queued on `token`.
+    /// Submit the next ordered IORING_OP_SEND for `token`.
     /// The kernel accepts what its send buffer holds and completes the
     /// rest with -EAGAIN (handled in [`Self::dispatch_tcp_send`]);
     /// POLLOUT then arms the writable edge.
@@ -1040,7 +1140,11 @@ impl IoUringDatapath {
             let outcome = {
                 let c = self.conns.get_mut(&token);
                 let Some(c) = c else { return Ok(()) };
-                if c.closing {
+                // One send per stream preserves TCP byte order even when
+                // ASYNC SQEs are executed by different kernel workers.
+                // Batch across connections, not unsynchronized writes to
+                // the same stream; a short-send tail must go first.
+                if c.closing || c.poll_out || !c.in_kernel.is_empty() {
                     return Ok(());
                 }
                 let Some(buf_id) = c.to_send.front().copied() else {
@@ -1049,19 +1153,17 @@ impl IoUringDatapath {
                 let meta = self.pool.metas[buf_id as usize];
                 let ptr = unsafe { self.pool.ptr(buf_id).add(meta.off as usize) };
                 let user_data = KIND_TCP_SEND | ((buf_id as u64) << 32) | (token & 0xFFFF_FFFF);
-                let entry = io_uring::opcode::Send::new(
-                    io_uring::types::Fd(c.fd),
-                    ptr,
-                    meta.len as u32,
-                )
-                .build()
-                .flags(Flags::ASYNC)
-                .user_data(user_data);
+                let entry =
+                    io_uring::opcode::Send::new(io_uring::types::Fd(c.fd), ptr, meta.len as u32)
+                        .build()
+                        .flags(Flags::ASYNC)
+                        .user_data(user_data);
                 // Push BEFORE moving the buffer between lists: a failed
                 // push must leave the queue untouched (the buffer is
                 // retried on the next flush).
                 let queued = self.ring.queued();
-                match self.ring.push(user_data, entry) {
+                // SAFETY: pool bytes remain untouched until completion.
+                match unsafe { self.ring.push(user_data, entry) } {
                     Ok(()) => {
                         c.to_send.pop_front();
                         c.in_kernel.push(buf_id);
@@ -1106,7 +1208,9 @@ impl IoUringDatapath {
             let (id, addr) = {
                 let c = self.conns.get_mut(&token);
                 let Some(c) = c else { break };
-                let Some(id) = self.pool.take_free() else { break };
+                let Some(id) = self.pool.take_free() else {
+                    break;
+                };
                 c.provided.push_back(id);
                 (id, self.pool.ptr_mut(id))
             };
@@ -1122,7 +1226,7 @@ impl IoUringDatapath {
             .user_data(user_data);
             // SAFETY: the buffer is pool-owned and stays valid until a
             // recv consumes it (the lifecycle in the module docs).
-            self.ring.push(user_data, entry)?;
+            unsafe { self.ring.push(user_data, entry) }?;
         }
         self.submit_modern_recv(token)
     }
@@ -1138,14 +1242,18 @@ impl IoUringDatapath {
             return Ok(());
         }
         let user_data = KIND_TCP_READ | token;
-        let conn_msg = self.conns.get(&token).map(|c| &*c.recv_msg as *const libc::msghdr);
+        let conn_msg = self
+            .conns
+            .get(&token)
+            .map(|c| &*c.recv_msg as *const libc::msghdr);
         let Some(msg) = conn_msg else { return Ok(()) };
         // SAFETY: `recv_msg` is boxed and lives until the op terminates;
         // only msg_namelen/msg_controllen are read for a stream socket.
         let entry = io_uring::opcode::RecvMsgMulti::new(io_uring::types::Fd(fd), msg, token as u16)
             .build()
             .user_data(user_data);
-        self.ring.push(user_data, entry)?;
+        // SAFETY: boxed msghdr lives until recv terminates.
+        unsafe { self.ring.push(user_data, entry) }?;
         if let Some(c) = self.conns.get_mut(&token) {
             c.recv_armed = true;
         }
@@ -1212,7 +1320,7 @@ impl IoUringDatapath {
             .build()
             .user_data(user_data);
         // SAFETY: the entry carries no user buffer.
-        self.ring.push(user_data, entry)
+        unsafe { self.ring.push(user_data, entry) }
     }
 
     /// Remove the conn state and release the table slot once no kernel
@@ -1226,17 +1334,10 @@ impl IoUringDatapath {
         if done {
             if let Some(_c) = self.conns.remove(&token) {
                 let slot = ConnectionId::from_u64(token).slot() as usize;
-                self.conn_table.release_slot(slot);
+                // SAFETY: the removed connection owned this slot; no references remain.
+                unsafe { self.conn_table.release_slot(slot) };
             }
         }
-        Ok(())
-    }
-
-    /// Multishot rejected at runtime: tear down the modern state and run
-    /// the legacy single-shot path from here on.
-    fn downgrade_to_legacy(&mut self) -> std::io::Result<()> {
-        self.legacy = true;
-        self.accept_multi = false;
         Ok(())
     }
 
@@ -1272,7 +1373,7 @@ impl IoUringDatapath {
         .build()
         .flags(Flags::ASYNC)
         .user_data(user_data);
-        self.ring.push(user_data, entry)
+        unsafe { self.ring.push(user_data, entry) }
     }
 
     /// Echo the datagram received into `slot` (n bytes) back to its
@@ -1297,7 +1398,7 @@ impl IoUringDatapath {
         .build()
         .flags(Flags::ASYNC)
         .user_data(user_data);
-        self.ring.push(user_data, entry)
+        unsafe { self.ring.push(user_data, entry) }
     }
 
     /// Submit an accept on the listener: multishot when the modern path
@@ -1311,22 +1412,23 @@ impl IoUringDatapath {
                 .user_data(KIND_ACCEPT);
             // SAFETY: multishot accept has no user buffer; the accepted
             // fds are owned by the datapath.
-            self.ring.push(KIND_ACCEPT, entry)?;
+            unsafe { self.ring.push(KIND_ACCEPT, entry) }?;
             self.accept_multi = true;
             return Ok(());
         }
-        self.accept_len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+        *self.accept_len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
         // SAFETY: the accept scratch lives for the datapath's lifetime
         // and is untouched until the completion is dispatched.
         let entry = io_uring::opcode::Accept::new(
             io_uring::types::Fd(self.listen_fd),
             (&mut *self.accept_addr as *mut libc::sockaddr_storage).cast::<libc::sockaddr>(),
-            &mut self.accept_len as *mut libc::socklen_t,
+            &mut *self.accept_len as *mut libc::socklen_t,
         )
         .flags(libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC)
         .build()
         .user_data(KIND_ACCEPT);
-        self.ring.push(KIND_ACCEPT, entry)
+        // SAFETY: accept outputs are boxed and stable until completion.
+        unsafe { self.ring.push(KIND_ACCEPT, entry) }
     }
 
     // -----------------------------------------------------------------
@@ -1349,7 +1451,8 @@ impl IoUringDatapath {
         let entry = io_uring::opcode::Read::new(io_uring::types::Fd(fd), buf, CONN_BUF as u32)
             .build()
             .user_data(user_data);
-        self.ring.push(user_data, entry)?;
+        // SAFETY: boxed buffer remains exclusively recv-owned.
+        unsafe { self.ring.push(user_data, entry) }?;
         if let Some(c) = self.conns.get_mut(&token) {
             c.recv_armed = true;
         }
@@ -1374,10 +1477,14 @@ impl IoUringDatapath {
                 metrics.add_packets(core, 1);
                 metrics.add_bytes(core, n as u64);
                 let slot = ConnectionId::from_u64(token).slot() as usize;
-                let hot = &mut self.conn_table.conn_mut(slot).hot;
+                // SAFETY: the live connection owns this slot; worker access is serialized.
+                let hot = &mut unsafe { self.conn_table.conn_mut(slot) }.hot;
                 hot.seq = hot.seq.wrapping_add(n as u32);
                 hot.last_activity = crate::util::now_ticks();
-                self.submit_legacy_tcp_write(token, n)?;
+                let c = self.conns.get_mut(&token).expect("live connection");
+                c.legacy_sent = 0;
+                c.legacy_len = n;
+                self.submit_legacy_tcp_write(token)?;
             }
             Ok(_) => {
                 self.close_tcp(token, metrics, core)?;
@@ -1390,20 +1497,25 @@ impl IoUringDatapath {
         Ok(())
     }
 
-    /// Echo `n` received bytes back to `token`'s connection (legacy).
-    fn submit_legacy_tcp_write(&mut self, token: u64, n: usize) -> std::io::Result<()> {
-        let (fd, buf) = {
+    /// Echo the unsent suffix without overwriting it on a short write.
+    fn submit_legacy_tcp_write(&mut self, token: u64) -> std::io::Result<()> {
+        let (fd, buf, n) = {
             let c = self.conns.get_mut(&token);
             let Some(c) = c else { return Ok(()) };
-            (c.fd, c.legacy_buf.as_ptr())
+            let n = c.legacy_len - c.legacy_sent;
+            if n == 0 || c.closing {
+                return Ok(());
+            }
+            (c.fd, c.legacy_buf[c.legacy_sent..].as_ptr(), n)
         };
-        // SAFETY: the buffer holds `n` received bytes; the kernel only
-        // reads them for the duration of the write op.
+        // SAFETY: the unsent range holds `n` received bytes; no read is
+        // armed until the entire range has completed its writes.
         let user_data = KIND_TCP_SEND | token;
         let entry = io_uring::opcode::Write::new(io_uring::types::Fd(fd), buf, n as u32)
             .build()
             .user_data(user_data);
-        self.ring.push(user_data, entry)
+        // SAFETY: no read overwrites the boxed buffer until send completes.
+        unsafe { self.ring.push(user_data, entry) }
     }
 
     fn close_legacy_tcp(&mut self, token: u64) -> std::io::Result<()> {
@@ -1416,7 +1528,8 @@ impl IoUringDatapath {
                     libc::close(c.fd);
                 }
             }
-            self.conn_table.release_slot(slot);
+            // SAFETY: the removed connection owned this slot; no references remain.
+            unsafe { self.conn_table.release_slot(slot) };
         }
         Ok(())
     }
@@ -1424,7 +1537,9 @@ impl IoUringDatapath {
     /// Submit the single-shot poll for the metrics listener.
     fn submit_poll(&mut self) -> std::io::Result<()> {
         match self.metrics_fd {
-            Some(fd) => self.ring.submit_poll(fd, poll_flags(Interest::Readable), KIND_POLL),
+            Some(fd) => self
+                .ring
+                .submit_poll(fd, poll_flags(Interest::Readable), KIND_POLL),
             None => Ok(()),
         }
     }
@@ -1433,11 +1548,13 @@ impl IoUringDatapath {
     fn submit_timeout(&mut self) -> std::io::Result<()> {
         // SAFETY: `self.timeout` has a stable address for the datapath's
         // lifetime; the kernel reads it while the op is pending.
-        let entry = io_uring::opcode::Timeout::new(&self.timeout as *const io_uring::types::Timespec)
-            .count(1)
-            .build()
-            .user_data(KIND_TIMEOUT);
-        self.ring.push(KIND_TIMEOUT, entry)
+        let entry =
+            io_uring::opcode::Timeout::new(&*self.timeout as *const io_uring::types::Timespec)
+                .count(1)
+                .build()
+                .user_data(KIND_TIMEOUT);
+        // SAFETY: boxed timeout outlives operations and moves.
+        unsafe { self.ring.push(KIND_TIMEOUT, entry) }
     }
 }
 
@@ -1537,10 +1654,13 @@ mod tests {
         )?;
         let mut reactor = IoUringReactor::new(8, 0)?;
         let mut buf = [0u8; 64];
-        let entry =
-            io_uring::opcode::Read::new(io_uring::types::Fd(r.as_raw_fd()), buf.as_mut_ptr(), buf.len() as u32)
-                .build()
-                .user_data(1);
+        let entry = io_uring::opcode::Read::new(
+            io_uring::types::Fd(r.as_raw_fd()),
+            buf.as_mut_ptr(),
+            buf.len() as u32,
+        )
+        .build()
+        .user_data(1);
         // SAFETY: push copies the entry into the SQ; `buf` stays alive
         // until the completion is drained below.
         unsafe { reactor.ring.submission().push(&entry) }
@@ -1570,7 +1690,26 @@ mod tests {
         let mut a = [0u8; 64];
         let mut b = [0u8; 64];
         let mut bufs: Vec<&mut [u8]> = vec![&mut a, &mut b];
-        let _ = reactor.register_buffers(&mut bufs);
+        // SAFETY: unregister before the stack buffers go out of scope.
+        if unsafe { reactor.register_buffers(&mut bufs) }.is_ok() {
+            reactor.ring.submitter().unregister_buffers().unwrap();
+        }
+    }
+
+    #[test]
+    fn stopped_datapath_cannot_rearm_buffers_while_old_ops_exist() {
+        let udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut datapath =
+            IoUringDatapath::new(0, udp.as_raw_fd(), tcp.as_raw_fd(), None, 128, 0).unwrap();
+        let metrics = Metrics::new(1);
+        datapath
+            .run(&|| true, &metrics, 0, &mut None, false)
+            .unwrap();
+        let error = datapath
+            .run(&|| true, &metrics, 0, &mut None, false)
+            .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
     }
 
     #[test]
@@ -1623,7 +1762,13 @@ mod tests {
         });
 
         datapath
-            .run(&(move || stop.load(Ordering::Relaxed)), &metrics, 0, &mut None, true)
+            .run(
+                &(move || stop.load(Ordering::Relaxed)),
+                &metrics,
+                0,
+                &mut None,
+                true,
+            )
             .expect("datapath run failed");
         client.join().unwrap();
     }
@@ -1636,6 +1781,15 @@ mod tests {
     /// the full payload must echo back.
     #[test]
     fn datapath_tcp_write_flood_echoes() {
+        tcp_write_flood(false);
+    }
+
+    #[test]
+    fn legacy_datapath_tcp_write_flood_echoes() {
+        tcp_write_flood(true);
+    }
+
+    fn tcp_write_flood(force_legacy: bool) {
         let udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         let tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let tcp_addr = tcp.local_addr().unwrap();
@@ -1659,8 +1813,15 @@ mod tests {
             }
         }
 
-        let mut datapath =
-            IoUringDatapath::new(0, udp.as_raw_fd(), tcp.as_raw_fd(), None, 512, 0).unwrap();
+        let constructor = if force_legacy {
+            IoUringDatapath::new_legacy
+        } else {
+            IoUringDatapath::new
+        };
+        let mut datapath = constructor(0, udp.as_raw_fd(), tcp.as_raw_fd(), None, 512, 0).unwrap();
+        if force_legacy {
+            assert!(datapath.pool.pool.is_empty());
+        }
         let stop = Arc::new(AtomicBool::new(false));
         let stop2 = stop.clone();
         let metrics = Metrics::new(1);
@@ -1688,7 +1849,9 @@ mod tests {
                     );
                 }
             }
-            let payload = vec![0x42u8; CHUNK];
+            let payload: Vec<u8> = (0..TOTAL)
+                .map(|i| ((i * 31 + i / 8192) % 251) as u8)
+                .collect();
             let mut sent = 0usize;
             let mut echoed = 0usize;
             let mut rbuf = [0u8; 64 * 1024];
@@ -1701,6 +1864,11 @@ mod tests {
                     match stream.read(&mut rbuf) {
                         Ok(0) => panic!("server closed mid-flood"),
                         Ok(n) => {
+                            assert_eq!(
+                                &rbuf[..n],
+                                &payload[echoed..echoed + n],
+                                "TCP echo changed byte order at {echoed}"
+                            );
                             echoed += n;
                             progressed = true;
                         }
@@ -1709,8 +1877,8 @@ mod tests {
                     }
                 }
                 if sent < TOTAL {
-                    let want = (TOTAL - sent).min(payload.len());
-                    match stream.write(&payload[..want]) {
+                    let want = (TOTAL - sent).min(CHUNK);
+                    match stream.write(&payload[sent..sent + want]) {
                         Ok(n) => {
                             sent += n;
                             progressed = true;
@@ -1727,15 +1895,18 @@ mod tests {
                     }
                 }
             }
-            assert!(
-                echoed >= TOTAL,
-                "echo incomplete: {echoed}/{TOTAL}"
-            );
+            assert!(echoed >= TOTAL, "echo incomplete: {echoed}/{TOTAL}");
             assert!(std::time::Instant::now() < deadline, "flood too slow");
         });
 
         datapath
-            .run(&(move || stop.load(Ordering::Relaxed)), &metrics, 0, &mut None, false)
+            .run(
+                &(move || stop.load(Ordering::Relaxed)),
+                &metrics,
+                0,
+                &mut None,
+                false,
+            )
             .expect("datapath run failed");
         client.join().unwrap();
     }

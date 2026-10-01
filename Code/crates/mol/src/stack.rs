@@ -23,8 +23,7 @@ impl<T, const CAP: usize> Stack<T, CAP> {
     /// An empty stack.
     pub const fn new() -> Self {
         Stack {
-            // SAFETY: MaybeUninit array, no reads before writes.
-            buf: unsafe { MaybeUninit::uninit().assume_init() },
+            buf: [const { MaybeUninit::uninit() }; CAP],
             len: 0,
         }
     }

@@ -9,10 +9,8 @@ rust-version = "1.97.1"
 license = "Apache-2.0"
 authors = ["XENOT Corporation"]
 
-# Release profile: silicon-level settings per the FDS build standard:
-# opt-level 3, fat LTO, single codegen unit, abort on panic, overflow and
-# debug assertions off. This is the final-build profile only. Iteration
-# happens in dev, where the settings below keep the loop fast.
+# Release favors throughput over compile time. Tests still unwind even
+# though production binaries abort on panic.
 [profile.release]
 opt-level = 3
 lto = "fat"
@@ -20,17 +18,11 @@ codegen-units = 1
 panic = "abort"
 overflow-checks = false
 debug-assertions = false
-# Stripped symbols shrink the binary cache footprint (I-cache and d-cache
-# share the same physical cache on Broadwell). Backtraces are already
-# useless with panic=abort.
+# Strip symbols to reduce the on-disk binary size.
 strip = true
 
-# Dev profile: own code at opt-level 1 (still debuggable, still checks
-# overflow and assertions) with dependencies at opt-level 3 (compiled once,
-# cached): fast builds, fast test execution. A developer's
-# ~/.cargo/config.toml can override these profiles (cargo 1.97: home
-# config wins). This manifest stays the portable baseline for machines
-# without that config.
+# Keep checks and debugging information during development; optimize
+# dependencies separately to speed up repeated tests.
 [profile.dev]
 opt-level = 1
 overflow-checks = true
@@ -38,7 +30,3 @@ debug-assertions = true
 
 [profile.dev.package."*"]
 opt-level = 3
-
-# Note: the test profile always unwinds (cargo forces it; a `panic` setting
-# here is ignored with a warning), so `cargo test --release` works even
-# though the release profile sets panic=abort.

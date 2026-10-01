@@ -11,7 +11,8 @@
 //! visibility, report contents, one-shot serving, and socket-path
 //! cleanup on drop.
 
-use std::io::{Read, Write};
+use std::io::Write;
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 /// A fixed set of named counters (per-core, lock-free).
@@ -27,7 +28,9 @@ impl CounterSet {
     pub fn new(names: &[&'static str]) -> Self {
         let mut counters = Vec::with_capacity(names.len());
         for _ in names {
-            counters.push(mol::PaddedCounter::new(std::sync::atomic::AtomicU64::new(0)));
+            counters.push(mol::PaddedCounter::new(std::sync::atomic::AtomicU64::new(
+                0,
+            )));
         }
         CounterSet {
             counters: counters.into_boxed_slice(),
@@ -158,7 +161,8 @@ impl Metrics {
         (p, b, d)
     }
 
-    /// Format the full metrics text into `out` (no allocation).
+    /// Append the metrics text. No allocation occurs if `out` already
+    /// has enough spare capacity; the caller owns buffer reuse.
     pub fn write_into(&self, out: &mut String) {
         use std::sync::atomic::Ordering::Relaxed;
         out.push_str("# fds metrics (pull endpoint)\n");
@@ -205,6 +209,8 @@ pub struct MetricsServer {
     listener: std::os::unix::net::UnixListener,
     /// The socket path, unlinked on drop.
     path: std::path::PathBuf,
+    identity: (u64, u64),
+    report: String,
 }
 
 impl rustix::fd::AsFd for MetricsServer {
@@ -214,18 +220,12 @@ impl rustix::fd::AsFd for MetricsServer {
 }
 
 impl MetricsServer {
-    /// Bind the Unix socket at `path`, best-effort-unlinking a stale
-    /// socket file first. Unlink failures are ignored: a stale file
-    /// owned by another user must not fail the engine with a misleading
-    /// `PermissionDenied`; the bind below then reports the accurate
-    /// condition (`AddrInUse` when a socket is actually bound there).
+    /// Bind without deleting existing files or stealing an active
+    /// endpoint. Remove stale sockets explicitly before startup. Use a
+    /// directory owned by the service to avoid path-replacement races.
     pub fn bind(path: &Path) -> std::io::Result<Self> {
-        match std::fs::remove_file(path) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => {}
-        }
         let listener = std::os::unix::net::UnixListener::bind(path)?;
+        let metadata = std::fs::symlink_metadata(path)?;
         // Kernel-level nonblocking (FIONBIO) so accept() returns
         // WouldBlock instead of parking the caller. rustix::io::Errno
         // converts into std::io::Error, so `?` works here.
@@ -233,6 +233,8 @@ impl MetricsServer {
         Ok(MetricsServer {
             listener,
             path: path.to_path_buf(),
+            identity: (metadata.dev(), metadata.ino()),
+            report: String::new(),
         })
     }
 
@@ -254,20 +256,13 @@ impl MetricsServer {
         // is blocking; make it nonblocking so the drain cannot stall on
         // a client that never sends.
         rustix::io::ioctl_fionbio(&stream, true)?;
-        // Drain whatever the client sent (ignored: pull-only endpoint).
-        let mut buf = [0u8; 4096];
-        loop {
-            match stream.read(&mut buf) {
-                Ok(0) => break, // client closed its write side
-                Ok(_) => continue,
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err(e),
-            }
-        }
-        let mut report = String::new();
-        metrics.write_into(&mut report);
-        stream.write_all(report.as_bytes())?;
+        // Pull-only: no request needs parsing or unbounded input draining.
+        // Reuse formatting storage after the first request instead of
+        // allocating a new String for every metrics pull.
+        self.report.clear();
+        self.report.reserve(256 + metrics.cores.len() * 165);
+        metrics.write_into(&mut self.report);
+        stream.write_all(self.report.as_bytes())?;
         drop(stream); // close: the client sees EOF after the report
         Ok(true)
     }
@@ -275,15 +270,20 @@ impl MetricsServer {
 
 impl Drop for MetricsServer {
     fn drop(&mut self) {
-        // Unlink the socket path; the listener fd is closed by its own
-        // Drop. A missing file (already unlinked) is not an error.
-        let _ = std::fs::remove_file(&self.path);
+        // Do not remove a replacement endpoint created after this one
+        // was unlinked. The service must still use a trusted directory.
+        if let Ok(metadata) = std::fs::symlink_metadata(&self.path) {
+            if (metadata.dev(), metadata.ino()) == self.identity {
+                let _ = std::fs::remove_file(&self.path);
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
 
     #[test]
     fn core_counters_occupy_distinct_lines() {
@@ -349,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_socket_file_is_rebound() {
+    fn existing_regular_file_is_preserved() {
         static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
@@ -358,12 +358,10 @@ mod tests {
             seq
         ));
 
-        // A stale file at the socket path (no live listener) must be
-        // unlinked and rebound.
-        std::fs::write(&path, b"").expect("stale file");
-        let server = MetricsServer::bind(&path).expect("stale file must be rebound");
-        drop(server);
-        assert!(!path.exists(), "socket path must be unlinked on drop");
+        std::fs::write(&path, b"important").unwrap();
+        assert!(MetricsServer::bind(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"important");
+        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]
@@ -373,8 +371,10 @@ mod tests {
         // as a regression (this test just exercises the path).
         let metrics = Metrics::new(4);
         for _ in 0..1000 {
-            let mut out = String::new();
+            let mut out = String::with_capacity(256 + 4 * 165);
+            let capacity = out.capacity();
             metrics.write_into(&mut out);
+            assert_eq!(out.capacity(), capacity);
         }
     }
 }

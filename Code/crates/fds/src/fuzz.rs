@@ -1,12 +1,8 @@
 //! In-crate fuzz-style harness for the pure parser/checksum atoms.
 //!
-//! libFuzzer / cargo-fuzz targets are deliberately not used: the crate
-//! is a BINARY package with no public API (author ruling), so a fuzz
-//! target crate could not reach the crate-private atoms. This harness is
-//! the runnable equivalent; deterministic (fixed seed), allocation-free
-//! per iteration, and it runs on stable Rust. It is invoked from the
-//! `fds` binary via `--fuzz <iters>` (arg dispatch wired at the
-//! integration milestone).
+//! This deterministic (fixed-seed), allocation-free smoke harness runs
+//! on stable Rust via `fds --fuzz <iters>`. It is not coverage-guided
+//! fuzzing and does not replace a dedicated fuzzing campaign.
 //!
 //! Property checked: feeding arbitrary byte slices (lengths 0..=128) to
 //! every parser and checksum must never panic, and parsing must be
@@ -99,12 +95,6 @@ mod tests {
 
     #[test]
     fn fuzz_smoke() {
-        // The parser/checksum atoms may still be todo!() stubs (they
-        // panic); tolerate that and only exercise the harness when the
-        // atoms are real.
-        match std::panic::catch_unwind(|| run(10_000)) {
-            Ok(()) => eprintln!("fuzz smoke: 10000 iters completed"),
-            Err(_) => eprintln!("fuzz smoke: skipped (atoms still stubs)"),
-        }
+        run(10_000);
     }
 }

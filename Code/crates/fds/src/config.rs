@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 /// Full engine configuration. Every field has a default; `config.json`
 /// fields are optional and override the defaults.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub core: CoreConfig,
     pub reactor: ReactorConfig,
@@ -33,7 +33,7 @@ pub struct Config {
 /// The engine is the minimal runnable dataplane; real applications wire
 /// their own handlers around the same reactor/transport primitives.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct EngineConfig {
     /// UDP echo bind address ("ip:port").
     pub udp_bind: String,
@@ -55,11 +55,11 @@ impl Default for EngineConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct CoreConfig {
     /// Pin each worker. When the worker count fits on the physical
-    /// cores, pin to the first SMT sibling of a distinct core; otherwise
-    /// pin worker `i` to logical CPU `i`.
+    /// cores, pin to an allowed SMT sibling of each distinct core;
+    /// otherwise round-robin across allowed logical CPU IDs.
     pub pin_cores: bool,
     /// Worker thread count; 0 = one per logical CPU.
     pub threads: usize,
@@ -81,7 +81,8 @@ impl Default for CoreConfig {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ReactorStrategy {
-    /// epoll edge-triggered, busy-poll (timeout 0); default.
+    /// epoll edge-triggered readiness; the separate busy_poll flag
+    /// controls whether the engine spins. Default strategy.
     #[default]
     EpollBusyPoll,
     /// io_uring SQPOLL (experimental, feature `io-uring`).
@@ -89,7 +90,7 @@ pub enum ReactorStrategy {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ReactorConfig {
     pub strategy: ReactorStrategy,
     /// Preallocated event array capacity per reactor.
@@ -97,12 +98,14 @@ pub struct ReactorConfig {
     /// Busy-poll the ready queue to empty before yielding (explicit
     /// spin with a zero epoll timeout; for dedicated cores only).
     pub busy_poll: bool,
-    /// Poll timeout in milliseconds when not busy-polling.
+    /// Poll timeout in milliseconds when not busy-polling. The engine
+    /// caps idle waits at 100 ms to observe cooperative shutdown.
     pub timeout_ms: i32,
     /// io_uring ring entries (strategy `io-uring`).
     pub io_uring_entries: u32,
-    /// io_uring SQPOLL thread CPU; 0 = no SQPOLL thread (needs
-    /// CAP_SYS_ADMIN; falls back to a plain ring when rejected).
+    /// SQPOLL idle timeout in milliseconds; 0 disables the thread.
+    /// This historical field name does not select a CPU. Permission
+    /// rejection falls back to a plain ring; requirements vary by kernel.
     pub io_uring_sq_thread: u32,
 }
 
@@ -120,7 +123,7 @@ impl Default for ReactorConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct UdpConfig {
     pub rcvbuf: usize,
     pub sndbuf: usize,
@@ -160,7 +163,7 @@ impl Default for UdpConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct TcpConfig {
     pub nodelay: bool,
     pub quickack: bool,
@@ -192,7 +195,7 @@ impl Default for TcpConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct SctpConfig {
     pub nodelay: bool,
     /// SCTP_INITMSG max streams (in/out).
@@ -217,7 +220,7 @@ impl Default for SctpConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct MetricsConfig {
     /// Unix socket path for the pull endpoint; empty = disabled.
     pub socket_path: String,
@@ -232,7 +235,7 @@ impl Default for MetricsConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ZeroCopyConfig {
     /// sendfile/splice for file-backed TCP responses.
     pub splice: bool,
@@ -260,7 +263,7 @@ impl Default for ZeroCopyConfig {
 /// Absent a device (or without CAP_NET_RAW) the engine logs and
 /// continues on the kernel datapath.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct AfXdpConfig {
     /// Device name (e.g. "eth0"); empty = disabled.
     pub device: String,
@@ -311,7 +314,49 @@ impl Config {
     /// Load from a file path.
     pub fn from_file(path: &std::path::Path) -> Result<Self, ConfigError> {
         let s = std::fs::read_to_string(path).map_err(ConfigError::Io)?;
-        Self::from_json(&s).map_err(ConfigError::Json)
+        let cfg = Self::from_json(&s).map_err(ConfigError::Json)?;
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    /// Validate limits and cross-field invariants before starting workers.
+    /// Programmatically constructed configs should call this as well.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        let invalid = |message: &str| ConfigError::Invalid(message.to_owned());
+        if self.core.stack_bytes < 128 * 1024 {
+            return Err(invalid("core.stack_bytes must be at least 128 KiB"));
+        }
+        if self.reactor.max_events == 0 || self.reactor.max_events > i32::MAX as usize {
+            return Err(invalid("reactor.max_events must be in 1..=i32::MAX"));
+        }
+        if self.reactor.timeout_ms < -1 || self.reactor.io_uring_entries == 0 {
+            return Err(invalid(
+                "reactor.timeout_ms must be >= -1 and io_uring_entries must be nonzero",
+            ));
+        }
+        if self.udp.gso_segment_size > u16::MAX as usize || self.tcp.fastopen > i32::MAX as u32 {
+            return Err(invalid(
+                "UDP GSO or TCP fastopen exceeds its kernel field size",
+            ));
+        }
+        for address in [&self.engine.udp_bind, &self.engine.tcp_bind] {
+            if address.parse::<std::net::SocketAddr>().is_err() {
+                return Err(invalid(
+                    "engine bind addresses must be numeric IP:port addresses",
+                ));
+            }
+        }
+        if !self.af_xdp.ring_size.is_power_of_two()
+            || self.af_xdp.num_frames < self.af_xdp.ring_size
+        {
+            return Err(invalid(
+                "AF_XDP needs a power-of-two ring and at least that many frames",
+            ));
+        }
+        if self.engine.userspace_tcp && self.af_xdp.device.is_empty() {
+            return Err(invalid("userspace TCP requires an AF_XDP device"));
+        }
+        Ok(())
     }
 
     /// Override fields from `FDS_<SECTION>_<KEY>` environment variables.
@@ -333,9 +378,13 @@ impl Config {
         }
         if let Ok(v) = std::env::var("FDS_REACTOR_STRATEGY") {
             match v.trim().to_ascii_lowercase().as_str() {
-                "epoll" | "epoll-busy-poll" => self.reactor.strategy = ReactorStrategy::EpollBusyPoll,
+                "epoll" | "epoll-busy-poll" => {
+                    self.reactor.strategy = ReactorStrategy::EpollBusyPoll
+                }
                 "io-uring" | "iouring" => self.reactor.strategy = ReactorStrategy::IoUring,
-                other => eprintln!("fds: unknown FDS_REACTOR_STRATEGY {other:?} (epoll | io-uring)"),
+                other => {
+                    eprintln!("fds: unknown FDS_REACTOR_STRATEGY {other:?} (epoll | io-uring)")
+                }
             }
         }
         if let Some(v) = env_u32("FDS_REACTOR_IO_URING_ENTRIES") {
@@ -351,10 +400,7 @@ impl Config {
             self.af_xdp.queue = v;
         }
         if let Ok(v) = std::env::var("FDS_AF_XDP_QUEUES") {
-            self.af_xdp.queues = v
-                .split(',')
-                .filter_map(|s| s.trim().parse().ok())
-                .collect();
+            self.af_xdp.queues = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
         }
         if let Some(v) = env_flag("FDS_AF_XDP_ZERO_COPY") {
             self.af_xdp.zero_copy = v;
@@ -370,6 +416,12 @@ impl Config {
         }
         if let Ok(v) = std::env::var("FDS_AF_XDP_XSKMAP") {
             self.af_xdp.xskmap = v;
+        }
+        if let Some(v) = env_flag("FDS_UDP_REUSEPORT") {
+            self.udp.reuseport = v;
+        }
+        if let Some(v) = env_flag("FDS_TCP_REUSEPORT") {
+            self.tcp.reuseport = v;
         }
         if let Some(v) = env_flag("FDS_UDP_GRO") {
             self.udp.gro = v;
@@ -409,6 +461,7 @@ impl Config {
 pub enum ConfigError {
     Io(std::io::Error),
     Json(serde_json::Error),
+    Invalid(String),
 }
 
 impl std::fmt::Display for ConfigError {
@@ -416,11 +469,20 @@ impl std::fmt::Display for ConfigError {
         match self {
             ConfigError::Io(e) => write!(f, "config io: {e}"),
             ConfigError::Json(e) => write!(f, "config json: {e}"),
+            ConfigError::Invalid(e) => write!(f, "config validation: {e}"),
         }
     }
 }
 
-impl std::error::Error for ConfigError {}
+impl std::error::Error for ConfigError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(e) => Some(e),
+            Self::Json(e) => Some(e),
+            Self::Invalid(_) => None,
+        }
+    }
+}
 
 fn env_flag(key: &str) -> Option<bool> {
     std::env::var(key).ok().map(|v| {

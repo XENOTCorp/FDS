@@ -11,9 +11,7 @@ description = "Mol: the category of stateful transformations. Atom and molecule 
 name = "mol"
 
 [dependencies]
-heapless = "0.8"
-arrayvec = "0.7"
-static_assertions = "1.1"
 rustix = { version = "1", features = ["mm"] }
 
 [dev-dependencies]
+static_assertions = "1.1"

@@ -7,11 +7,17 @@ Thank you for contributing to FDS.
 All commands run from `Code/`.
 
 ```sh
-cargo test --release
-cargo clippy --all-targets -- -D warnings
+cargo fmt --all --check
+cargo test --workspace --locked --no-default-features
+cargo test --workspace --release --locked --no-default-features
+cargo clippy --workspace --all-targets --locked --no-default-features -- -D warnings
+cargo test -p mol --locked -- --ignored --test-threads=1
+bash build/test-build.sh
 ```
 
-Both commands must exit 0 before you submit a change.
+All checks must exit 0. With libsctp installed, also repeat the tests
+and Clippy with `--all-features`. CI covers minimal and full builds.
+Optional kernel/device tests may explicitly skip unavailable capabilities.
 
 For a host-tuned release build:
 
@@ -28,7 +34,11 @@ See [Docs/wiki/build.md](Docs/wiki/build.md) for the build reference.
   [Docs/standard/standard.md](Docs/standard/standard.md).
 - Keep the hot path allocation-free. Preallocate buffers and tables at
   startup.
-- Document unsafe code. State the safety contract in the comment.
+- Document unsafe code. Public unsafe functions need a `# Safety`
+  contract; callers need a comment explaining how they meet it.
+- Test ownership, cleanup, and failure behavior, not just happy paths.
+- Report performance with hardware, kernel, build flags, workload, and
+  repeatable commands. Do not use unsupported SOTA or production claims.
 - Do not add a hash map to the hot path.
 
 ## Commit messages
@@ -46,7 +56,7 @@ Examples:
 1. Fork the repository.
 2. Create a branch. Use a name that describes the change.
 3. Make the change. Add tests where the change adds behavior.
-4. Run `cargo test --release` and `cargo clippy --all-targets -- -D warnings`.
+4. Run the checks above.
 5. Open a pull request. Describe the change and the test results.
 
 ## License

@@ -26,8 +26,9 @@ pub trait Molecule: Sized {
     fn step(&self, state: &mut Self::State, input: Self::Input) -> Self::Output;
 }
 
-/// PureMol: molecules whose state space is the unit type.
-/// These are exactly total functions `A → B`.
+/// Marker for molecules whose explicit state space is the unit type.
+/// Purity and totality are semantic obligations: Rust cannot prevent
+/// implementations from using hidden state, allocating, or panicking.
 pub trait PureMolecule: Molecule<State = ()> {}
 
 impl<T: Molecule<State = ()>> PureMolecule for T {}
@@ -57,8 +58,10 @@ pub trait HybridMolecule<Spure, Ctx>: Molecule<State = (Spure, Ctx)> {}
 
 impl<Spure, Ctx, T: Molecule<State = (Spure, Ctx)>> HybridMolecule<Spure, Ctx> for T {}
 
-/// A pure-function carrier that IS a molecule (state = `()`): wrap any
-/// closure. Zero-sized when the closure captures nothing.
+/// A closure carrier with a direct [`PureFn::call`] method. Zero-sized
+/// when the closure captures nothing. This helper does not itself
+/// implement `Molecule`; use a typed wrapper with explicit input/output
+/// associated types when incorporating a closure into a pipeline.
 pub struct PureFn<F>(pub F);
 
 impl<F> PureFn<F> {

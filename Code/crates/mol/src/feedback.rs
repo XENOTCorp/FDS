@@ -33,16 +33,14 @@ pub const fn delay<U>() -> Delay<U> {
     Delay::new()
 }
 
-impl<U: Copy + 'static> Molecule for Delay<U> {
+impl<U: 'static> Molecule for Delay<U> {
     type State = U;
     type Input = U;
     type Output = U;
 
     #[inline(always)]
     fn step(&self, state: &mut U, input: U) -> U {
-        let prev = *state;
-        *state = input;
-        prev
+        core::mem::replace(state, input)
     }
 }
 

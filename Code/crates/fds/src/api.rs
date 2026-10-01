@@ -1,4 +1,4 @@
-//! Stable application-facing API (standard \[IO\]).
+//! Application-facing readiness API (pre-1.0; standard \[IO\]).
 //!
 //! Two shapes over one core:
 //!
@@ -6,14 +6,16 @@
 //!    descriptors with the kernel poller, poll for readiness, and read
 //!    the delivered per-token [`Event`]s. This is the shape of the
 //!    io_uring and epoll reactors. Implementations: [`EpollDriver`]
-//!    (default) and [`IoUringDriver`] (feature `io-uring`).
+//!    (default) and `IoUringDriver` (feature `io-uring`).
 //! 2. **Async shape** ([`AsyncRead`], [`AsyncWrite`], [`AsyncAccept`],
 //!    [`AsyncDatagram`]): `poll_*` methods in the `std::task::Poll`
 //!    shape. A driver provides readiness; the `poll_*` methods do the
 //!    nonblocking work and return `Pending` when the kernel would
 //!    block. This is the shape of the standard async traits; you can
 //!    drive it with a no-op waker ([`noop_context`]) or with any async
-//!    runtime that calls the `poll_*` methods.
+//!    runtime with an adapter that supplies readiness and wakeups.
+//!    These traits do not register the supplied waker themselves and are
+//!    not drop-in implementations of Tokio's asynchronous I/O traits.
 //!
 //! The concrete types ([`TcpStream`], [`TcpListener`], [`UdpSocket`])
 //! wrap the fds transports and implement both shapes.
@@ -114,159 +116,37 @@ impl Driver for EpollDriver {
         self.reactor.unregister(fd)
     }
     fn poll(&mut self, timeout: Option<std::time::Duration>) -> io::Result<usize> {
-        let t = timeout.map(|d| crate::reactor::PollTimeout {
-            tv_sec: d.as_secs() as _,
-            tv_nsec: d.subsec_nanos() as _,
-        });
+        let t = timeout
+            .map(|d| {
+                Ok::<_, io::Error>(crate::reactor::PollTimeout {
+                    tv_sec: i64::try_from(d.as_secs()).map_err(|_| io::ErrorKind::InvalidInput)?,
+                    tv_nsec: d.subsec_nanos() as _,
+                })
+            })
+            .transpose()?;
+        self.events.clear();
         let n = self.reactor.poll_timeout(t.as_ref())?;
-        self.events.clear();
-        let mut evbuf = vec![crate::reactor::EpollEvent::default(); n.max(1)];
-        let m = self.reactor.copy_events(n, &mut evbuf);
-        self.events.extend(
-            evbuf
-                .iter()
-                .take(m)
-                .map(|e| Event {
-                    token: e.token,
-                    readable: e.readable,
-                    writable: e.writable,
-                    hang_up: e.hang_up,
-                    error: e.error,
-                }),
-        );
-        Ok(m)
-    }
-    fn events(&self) -> &[Event] {
-        &self.events
-    }
-    fn clear_events(&mut self) {
-        self.events.clear();
-    }
-}
-
-/// io_uring-backed [`Driver`] (feature `io-uring`): readiness via
-/// single-shot `IORING_OP_POLL_ADD` ops. Each registered fd has one
-/// poll op in flight; a completion wakes the poller and the op is
-/// re-armed immediately. `modify` cancels the in-flight op and
-/// submits a new one; the per-token in-flight count keeps the two
-/// completions (cancel + readiness) from double-arming.
-#[cfg(feature = "io-uring")]
-pub struct IoUringDriver {
-    reactor: crate::io_uring_reactor::IoUringReactor,
-    events: Vec<Event>,
-    /// token -> (fd, interest, polls in flight).
-    registrations: std::collections::HashMap<u64, (i32, Interest, u32)>,
-}
-
-#[cfg(feature = "io-uring")]
-impl IoUringDriver {
-    /// Create a driver over a ring with `entries` SQEs.
-    pub fn new(entries: u32) -> io::Result<Self> {
-        Ok(IoUringDriver {
-            reactor: crate::io_uring_reactor::IoUringReactor::new(entries, 0)?,
-            events: Vec::new(),
-            registrations: std::collections::HashMap::new(),
-        })
-    }
-
-    fn poll_flags(i: Interest) -> u32 {
-        let mut f = libc::POLLERR as u32 | libc::POLLHUP as u32;
-        match i {
-            Interest::Readable => f |= libc::POLLIN as u32,
-            Interest::Writable => f |= libc::POLLOUT as u32,
-            Interest::ReadableWritable => f |= libc::POLLIN as u32 | libc::POLLOUT as u32,
-        }
-        f
-    }
-}
-
-#[cfg(feature = "io-uring")]
-impl Driver for IoUringDriver {
-    fn register(&mut self, fd: i32, token: u64, interest: Interest) -> io::Result<()> {
-        if self.registrations.contains_key(&token) {
-            return Err(io::Error::new(io::ErrorKind::AlreadyExists, "token registered"));
-        }
-        self.reactor.submit_poll(fd, Self::poll_flags(interest), token)?;
-        self.registrations.insert(token, (fd, interest, 1));
-        Ok(())
-    }
-
-    fn modify(&mut self, fd: i32, token: u64, interest: Interest) -> io::Result<()> {
-        let Some(&(_, _, in_flight)) = self.registrations.get(&token) else {
-            return self.register(fd, token, interest);
-        };
-        // Cancel the old poll and arm a new one with the new interest.
-        // The cancel completion (skipped below) balances the count.
-        let _ = self.reactor.ring_cancel(token);
-        self.reactor.submit_poll(fd, Self::poll_flags(interest), token)?;
-        self.registrations.insert(token, (fd, interest, in_flight + 1));
-        Ok(())
-    }
-
-    fn unregister(&mut self, fd: i32) -> io::Result<()> {
-        let token = match self
-            .registrations
-            .iter()
-            .find(|(_, (f, _, _))| *f == fd)
-            .map(|(t, _)| *t)
-        {
-            Some(t) => t,
-            None => return Ok(()),
-        };
-        let _ = self.reactor.ring_cancel(token);
-        self.registrations.remove(&token);
-        Ok(())
-    }
-
-    fn poll(&mut self, timeout: Option<std::time::Duration>) -> io::Result<usize> {
-        if timeout.is_none() {
-            self.reactor.submit_and_wait(1)?;
-        } else {
-            self.reactor.submit_all()?;
-        }
-        self.events.clear();
-        let mut completions: Vec<(u64, io::Result<u32>)> = Vec::with_capacity(64);
-        self.reactor
-            .drain(|ud, res| completions.push((ud, res)));
-        for (token, res) in completions {
-            let Some(&(fd, interest, in_flight)) = self.registrations.get(&token) else {
-                continue; // unregistered while in flight
-            };
-            let cancelled = res
-                .as_ref()
-                .err()
-                .and_then(|e| e.raw_os_error())
-                == Some(libc::ECANCELED);
-            let in_flight = in_flight.saturating_sub(1);
-            if !cancelled {
-                let ok = res.is_ok();
-                self.events.push(Event {
-                    token,
-                    readable: ok && matches!(interest, Interest::Readable | Interest::ReadableWritable),
-                    writable: ok && matches!(interest, Interest::Writable | Interest::ReadableWritable),
-                    hang_up: !ok,
-                    error: !ok,
-                });
-            }
-            if in_flight == 0 {
-                // The last completion for this token: re-arm the poll.
-                self.reactor.submit_poll(fd, Self::poll_flags(interest), token)?;
-                self.registrations.insert(token, (fd, interest, 1));
-            } else {
-                self.registrations.insert(token, (fd, interest, in_flight));
-            }
-        }
+        self.events.extend(self.reactor.delivered(n).map(|e| Event {
+            token: e.token,
+            readable: e.readable,
+            writable: e.writable,
+            hang_up: e.hang_up,
+            error: e.error,
+        }));
         Ok(self.events.len())
     }
-
     fn events(&self) -> &[Event] {
         &self.events
     }
-
     fn clear_events(&mut self) {
         self.events.clear();
     }
 }
+
+#[cfg(feature = "io-uring")]
+mod io_uring_driver;
+#[cfg(feature = "io-uring")]
+pub use io_uring_driver::IoUringDriver;
 
 // ---------------------------------------------------------------------
 // Async shape
@@ -388,10 +268,7 @@ impl TcpListener {
 
 impl AsyncAccept for TcpListener {
     type Stream = TcpStream;
-    fn poll_accept(
-        &mut self,
-        _cx: &mut Context<'_>,
-    ) -> Poll<io::Result<Option<Self::Stream>>> {
+    fn poll_accept(&mut self, _cx: &mut Context<'_>) -> Poll<io::Result<Option<Self::Stream>>> {
         match self.inner.accept() {
             Ok(Some((stream, _peer))) => Poll::Ready(Ok(Some(TcpStream::new(stream)))),
             Ok(None) => Poll::Ready(Ok(None)),
@@ -475,7 +352,10 @@ mod tests {
 
         let mut ctx = noop_context();
         let mut peer = std::net::TcpStream::connect(laddr).unwrap();
-        peer.set_nonblocking(true).unwrap();
+        // The peer is a synchronous fixture, not reactor-driven. A read
+        // timeout does not make read_exact wait on a nonblocking socket.
+        peer.set_write_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
         peer.write_all(&[0x5A; 65536]).unwrap();
 
         let mut server: Option<TcpStream> = None;
@@ -534,7 +414,9 @@ mod tests {
         let mut driver = EpollDriver::new(64).unwrap();
         let mut server = UdpSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
         let saddr = server.local_addr().unwrap();
-        driver.register(server.as_raw_fd(), 7, Interest::Readable).unwrap();
+        driver
+            .register(server.as_raw_fd(), 7, Interest::Readable)
+            .unwrap();
 
         let mut ctx = noop_context();
         let client = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -557,7 +439,9 @@ mod tests {
         }
         assert_eq!(got, b"api udp echo".len());
         let mut rbuf = [0u8; 64];
-        client.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
         let n = client.recv(&mut rbuf).unwrap();
         assert_eq!(&rbuf[..n], b"api udp echo");
     }
@@ -575,7 +459,10 @@ mod tests {
 
         let mut ctx = noop_context();
         let mut peer = std::net::TcpStream::connect(laddr).unwrap();
-        peer.set_nonblocking(true).unwrap();
+        // Keep the synchronous fixture blocking; the API stream remains
+        // nonblocking. Delivery may lag a successful server-side write.
+        peer.set_write_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
         peer.write_all(&[0x3C; 8192]).unwrap();
 
         let mut server: Option<TcpStream> = None;

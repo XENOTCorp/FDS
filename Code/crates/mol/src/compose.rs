@@ -7,7 +7,8 @@
 //! state-space bijection, so the two machines are equal in Mol.
 //! `kleisli_then` threads one context (`E ∘_K E ⊆ E`) and is not Mol
 //! composition (`E ∘ E ⊆ H`). Tensor runs two molecules in parallel
-//! over a product state. All three are zero-allocation by construction.
+//! over a product state. The combinators themselves do not allocate;
+//! user-defined steps still determine the allocation/effect behavior.
 
 use crate::molecule::Molecule;
 
@@ -116,14 +117,11 @@ where
 }
 
 /// An array of molecules is a molecule: `[M; N]` realizes the n-fold
-/// tensor `M ⊗ ⋯ ⊗ M`. Requires
-/// `Input`/`Output: Copy` so elements can be read out of the arrays
-/// without allocation.
+/// tensor `M ⊗ ⋯ ⊗ M`. Inputs are moved once and outputs are constructed
+/// in place, so neither payload type needs `Copy` or heap allocation.
 impl<M, const N: usize> Molecule for [M; N]
 where
     M: Molecule,
-    M::Input: Copy,
-    M::Output: Copy,
 {
     type State = [M::State; N];
     type Input = [M::Input; N];
@@ -131,7 +129,14 @@ where
 
     #[inline]
     fn step(&self, state: &mut [M::State; N], input: [M::Input; N]) -> [M::Output; N] {
-        std::array::from_fn(|i| self[i].step(&mut state[i], input[i]))
+        let mut inputs = input.into_iter();
+        std::array::from_fn(|i| {
+            // Both the iterator and output array have exactly N entries.
+            self[i].step(
+                &mut state[i],
+                inputs.next().expect("array input length matches N"),
+            )
+        })
     }
 }
 

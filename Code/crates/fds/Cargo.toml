@@ -24,8 +24,8 @@ static_assertions = "1.1"
 [features]
 # Default features match the measured engine. Disable to slim a library
 # consumer that does not need SCTP, io_uring, or AF_XDP.
-# sctp: FFI declared in-crate; links libsctp (pkg-config libsctp).
-# io-uring: experimental reactor path; links liburing via the io-uring crate.
+# sctp: FFI declared in-crate; links libsctp.
+# io-uring: experimental reactor path; pure Rust io-uring crate (no liburing).
 # af-xdp: zero-copy raw-Ethernet path; pure libc UAPI, needs an
 # XDP-attached device at runtime (tests skip when unavailable).
 default = ["sctp", "io-uring", "af-xdp"]

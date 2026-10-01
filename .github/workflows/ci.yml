@@ -1,27 +1,112 @@
-name: ci
+name: CI
 
 on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        features: [minimal, full]
     defaults:
       run:
         working-directory: Code
     steps:
       - uses: actions/checkout@v4
-      - name: Install datapath libraries
+      - name: Install SCTP library
+        if: matrix.features == 'full'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsctp-dev liburing-dev pkg-config
-        working-directory: .
+          sudo apt-get install -y libsctp-dev
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.97.1
-          components: clippy
-      - name: Test
-        run: cargo test --release
-      - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: Code
+          key: ${{ matrix.features }}
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Shell syntax and build wrapper
+        run: |
+          for script in build/*.sh scripts/*.sh; do bash -n "$script"; done
+          bash build/test-build.sh
+      - name: Test and lint
+        env:
+          FEATURES: ${{ matrix.features }}
+        run: |
+          if [ "$FEATURES" = full ]; then
+            feature_args=--all-features
+          else
+            feature_args=--no-default-features
+          fi
+          cargo test --workspace --locked "$feature_args"
+          cargo test --workspace --release --locked "$feature_args"
+          cargo clippy --workspace --all-targets --locked "$feature_args" -- -D warnings
+          RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --locked "$feature_args"
+      - name: AF_XDP copy-mode setup in an isolated network namespace
+        if: matrix.features == 'full'
+        run: |
+          test_binary=$(cargo test -p fds --locked --all-features --test review_regressions --no-run --message-format=json |
+            python3 -c 'import json,sys; print(next(x["executable"] for x in map(json.loads,sys.stdin) if x.get("reason")=="compiler-artifact" and x.get("target",{}).get("name")=="review_regressions" and x.get("executable")))')
+          sudo unshare -n bash -c '
+            set -e
+            ip link set lo up
+            ip link add fds-test0 type veth peer name fds-test1
+            ip link set fds-test0 up
+            ip link set fds-test1 up
+            exec env FDS_TEST_XDP_DEVICE=fds-test0 "$1" --exact af_xdp_virtual_device_lifecycle --nocapture
+          ' _ "$test_binary"
+      - name: Concurrency stress tests
+        run: cargo test -p mol --locked -- --ignored --test-threads=1
+
+  miri:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: Code
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri, rust-src
+      - name: Ownership, laws, frame identities, and concurrency
+        env:
+          RUSTFLAGS: -C target-cpu=x86-64
+          MIRIFLAGS: -Zmiri-strict-provenance
+        run: |
+          cargo +nightly miri test -p mol --locked --test safety --test laws
+          cargo +nightly miri test -p mol --locked --lib ring::tests:: -- --skip threaded_stress
+          cargo +nightly miri test -p mol --locked --lib threaded_stress -- --ignored --test-threads=1
+          cargo +nightly miri test -p fds --locked --no-default-features --features af-xdp --lib af_xdp::frame::tests
+
+  thesis-verifiers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: Docs/paper/verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+      - name: Run six dependency-free verification tools
+        run: |
+          cargo build --offline --release
+          for tool in kb_completion normal_forms contraction bisim batch_amort affine_typer; do
+            timeout 120 ./target/release/"$tool"
+          done

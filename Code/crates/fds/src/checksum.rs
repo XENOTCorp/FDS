@@ -26,13 +26,19 @@ pub(crate) fn tcp_checksum(src: [u8; 4], dst: [u8; 4], tcp_len: u16, data: &[u8]
 }
 
 /// UDP checksum including the IPv4 pseudo-header (RFC 768). A zero
-/// checksum means "no checksum" on IPv4; this function always computes.
+/// checksum means "no checksum" on IPv4; a computed zero is therefore
+/// transmitted as 0xFFFF (RFC 768).
 pub(crate) fn udp_checksum(src: [u8; 4], dst: [u8; 4], udp_len: u16, data: &[u8]) -> u16 {
     let mut sum = sum_u16(&src);
     sum = sum.wrapping_add(sum_u16(&dst));
     sum = sum.wrapping_add(17);
     sum = sum.wrapping_add(udp_len as u32);
-    checksum_finalize(sum.wrapping_add(sum_u16(data)))
+    let checksum = checksum_finalize(sum.wrapping_add(sum_u16(data)));
+    if checksum == 0 {
+        0xffff
+    } else {
+        checksum
+    }
 }
 
 /// IPv6 pseudo-header one's-complement sum (RFC 2460): src, dst, 32-bit
@@ -104,6 +110,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ipv4_udp_computed_zero_is_transmitted_as_all_ones() {
+        let data = [0, 0, 0, 0, 0, 10, 0, 0, 0xff, 0xda];
+        assert_eq!(udp_checksum([0; 4], [0; 4], 10, &data), 0xffff);
+    }
+
+    #[test]
     fn ip_checksum_known_vector() {
         // A minimal IPv4 header (20 bytes) with checksum zeroed:
         // 45 00 00 3c 00 00 00 00 40 11 00 00 c0 a8 00 01 c0 a8 00 02
@@ -114,7 +126,11 @@ mod tests {
         let c = ip_checksum(&hdr);
         // One's-complement sum including the checksum field folds to 0.
         let sum = sum_u16(&hdr).wrapping_add(c as u32);
-        assert_eq!(checksum_finalize(sum), 0, "checksum of header+csum folds to 0");
+        assert_eq!(
+            checksum_finalize(sum),
+            0,
+            "checksum of header+csum folds to 0"
+        );
         assert_eq!(c, 0xf95d); // hand-computed RFC-style value
     }
 
@@ -129,7 +145,7 @@ mod tests {
         udp[0..2].copy_from_slice(&1234u16.to_be_bytes()); // sport
         udp[2..4].copy_from_slice(&5678u16.to_be_bytes()); // dport
         udp[4..6].copy_from_slice(&13u16.to_be_bytes()); // length
-        // udp[6..8] stays zeroed: checksum field.
+                                                         // udp[6..8] stays zeroed: checksum field.
         udp[8..].copy_from_slice(b"hello");
         let c = udp_checksum(src, dst, 13, &udp);
         // Fold: pseudo-header parts + whole datagram incl. checksum == 0.

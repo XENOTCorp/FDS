@@ -4,7 +4,7 @@ All commands in this page run from `Code/` unless noted.
 
 ## Adaptive build
 
-`build/build.sh` detects the host, derives rustflags, and invokes cargo. The workspace `Cargo.toml` stays the portable baseline. Host flags in `~/.cargo/config.toml` are the developer baseline. `build.sh` injects `cargo --config build.rustflags=[...]`, which has the highest precedence.
+`build/build.sh` detects the host, derives rustflags, and invokes Cargo. The workspace `Cargo.toml` stays the portable baseline. The wrapper supplies encoded flags so target-specific user configuration cannot override a pinned CPU baseline. Explicit caller `RUSTFLAGS` and `CARGO_ENCODED_RUSTFLAGS` are preserved with a warning; unset both for wrapper-controlled builds.
 
 ```sh
 bash build/build.sh --release
@@ -29,7 +29,7 @@ Overrides:
 | `panic` | unwind | abort | no | Abort shrinks the binary. The test profile always unwinds. |
 | `overflow-checks` | on | off | no | Off at release. The dataplane validates lengths explicitly. |
 | `debug-assertions` | on | off | no | Ring index checks in debug. |
-| `strip` | off | on | no | Shrinks I-cache footprint. |
+| `strip` | off | on | no | Reduces on-disk binary size. |
 
 Full matrix: [Code/build/PROFILES.md](../../Code/build/PROFILES.md).
 
@@ -48,13 +48,13 @@ Socket buffer defaults follow `clamp(pow2(L3/2), 4 MiB, 16 MiB)` so one L3-sized
 
 ## Features
 
-Default features on `fds` and `fds-engine`: `sctp`, `io-uring`, `af-xdp`. Disable them for a slimmer library consumer.
+Default features on `fds` and `fds-engine`: `sctp`, `io-uring`, `af-xdp`. Disable them for a slimmer library or engine with no libsctp dependency.
 
 ```sh
-cargo build --release -p fds --no-default-features
+cargo build --release --locked -p fds-engine --no-default-features
 ```
 
-SCTP needs libsctp and the kernel `sctp` module. io_uring needs kernel 5.19 or later. AF_XDP needs an XDP-capable device at runtime. Tests skip those paths when the host cannot provide them.
+SCTP needs libsctp and the kernel `sctp` module. io_uring uses a pure Rust dependency, not liburing, and needs kernel 5.19 or later. AF_XDP needs an XDP-capable device at runtime. Tests skip those paths when the host cannot provide them.
 
 ## Tests and clippy
 

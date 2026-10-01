@@ -1,19 +1,20 @@
 //! FDS transport library.
 //!
-//! A nonblocking, edge-triggered, batched, zero-allocation TCP/UDP/SCTP
-//! dataplane on the Mol framework (reactor as a trace, batching, rings;
-//! standard policies [IO], [SIMD], [CONC], [SEC], [OBS], [ALLOC]).
+//! Nonblocking TCP/UDP/SCTP transports with edge-triggered readiness,
+//! batched I/O, and preallocated buffers, plus experimental backends and
+//! an allocating userspace TCP prototype, on the Mol framework (reactor as a trace, batching, rings;
+//! standard policies `IO`, `SIMD`, `CONC`, `SEC`, `OBS`, `ALLOC`).
 //!
 //! # Structure
 //!
-//! - [`api`]: stable Driver/callback and AsyncRead/AsyncWrite surface
+//! - [`api`]: readiness-driven Driver/callback and poll-style surface
 //!   for programs that adopt FDS.
 //! - [`reactor`]: one edge-triggered epoll instance with a
 //!   drain-to-EAGAIN discipline (the readiness source).
 //! - [`tcp`], [`udp`]: nonblocking IPv4/IPv6/dual-stack transports with
 //!   the option set from [`config`] applied before bind (SO_REUSEPORT
 //!   admission), batch I/O, and zero-copy helpers.
-//! - [`sctp`]: SCTP transport (feature `sctp`).
+//! - `sctp`: SCTP transport (feature `sctp`).
 //! - [`conn`]: per-core preallocated connection tables with hot/cold
 //!   cache-line separation and packed [`conn::ConnectionId`] tokens.
 //! - [`config`]: the runtime configuration surface (`config.json` plus
@@ -45,6 +46,7 @@ pub mod util;
 
 mod checksum;
 
+#[cfg(feature = "sctp")]
 pub mod sctp;
 
 #[cfg(feature = "io-uring")]

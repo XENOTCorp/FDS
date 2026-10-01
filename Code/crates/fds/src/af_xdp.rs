@@ -12,7 +12,7 @@
 //! are reclaimed from the completion ring by
 //! [`XskSocket::recycle_tx`] and returned to the fill ring. Bind mode
 //! is `XDP_ZEROCOPY` when the driver supports it (the socket's umem is
-//! the NIC's own memory); it falls back to `XDP_COPY` automatically.
+//! accessed directly by NIC DMA); it falls back to `XDP_COPY` automatically.
 //! [`XskSocket::kick`] implements the `XDP_USE_NEED_WAKEUP` contract:
 //! the poller is woken only when the kernel asks.
 //!
@@ -30,6 +30,10 @@
 
 use std::io;
 use std::sync::atomic::{AtomicU32, Ordering};
+
+mod frame;
+pub use frame::Frame;
+use frame::FrameRegistry;
 
 // ---- AF_XDP UAPI (verified against /usr/include/linux/if_xdp.h) ----
 
@@ -177,33 +181,6 @@ pub enum XdpMode {
     Copy,
 }
 
-/// One received frame: an offset into the umem and its length. The
-/// frame is checked out of the socket; call [`XskSocket::frame_mut`] to
-/// process it, then [`XskSocket::tx_frame`] or
-/// [`XskSocket::drop_frame`] to release it.
-#[derive(Clone, Copy, Debug)]
-pub struct Frame {
-    addr: u64,
-    len: u32,
-}
-
-impl Frame {
-    /// The frame's byte length.
-    pub fn len(&self) -> usize {
-        self.len as usize
-    }
-
-    /// True when the frame is empty (zero length).
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    /// The frame's umem offset.
-    pub fn addr(&self) -> u64 {
-        self.addr
-    }
-}
-
 /// An AF_XDP socket (umem + rx/tx/fill/completion rings + bind).
 pub struct XskSocket {
     fd: i32,
@@ -233,8 +210,10 @@ pub struct XskSocket {
     fill_head: u32,
     /// Userspace completion-ring consumer index.
     cr_tail: u32,
-    /// TX frame addrs awaiting completion (in submission order).
-    tx_inflight: std::collections::VecDeque<u64>,
+    /// Number of TX frames awaiting completion; addresses arrive in CQEs.
+    tx_inflight: usize,
+    /// Socket-scoped frame generations validate every checkout.
+    frames: FrameRegistry,
     /// Umem offsets reserved for generated TX (not in the fill ring).
     tx_free: std::collections::VecDeque<u64>,
     /// First umem offset that belongs to the TX pool (RX fill uses `[0, tx_pool_base)`).
@@ -315,8 +294,8 @@ fn mbind_umem(umem: *mut u8, len: usize, node: i32) {
             len,
             2, // MPOL_BIND
             mask.as_ptr(),
-            (mask.len() * 8) as libc::c_ulong, // maxnode in bits
-            0,                                 // MPOL_MF_STRICT unset: best-effort
+            (mask.len() * u64::BITS as usize) as libc::c_ulong, // maxnode in bits
+            0,                                                  // MPOL_MF_STRICT unset: best-effort
         )
     };
     if rc != 0 {
@@ -406,9 +385,24 @@ impl XskSocket {
     /// Open an AF_XDP socket for `ifindex` on queue `queue_id`.
     pub fn open_with(ifindex: i32, queue_id: u32, opts: XskOpenOpts) -> io::Result<Self> {
         let frame_size = DEFAULT_FRAME_SIZE;
-        let num_frames = opts.num_frames.max(1);
-        let umem_len = (num_frames as usize) * (frame_size as usize);
-        let ring_size = opts.ring_size.max(1).next_power_of_two();
+        let num_frames = opts.num_frames;
+        let ring_size = opts.ring_size;
+        if !ring_size.is_power_of_two() || num_frames < ring_size {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "AF_XDP ring size must be a power of two with at least that many UMEM frames",
+            ));
+        }
+        if opts.node.is_some_and(|node| !(0..1024).contains(&node)) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "NUMA node must be in 0..1024",
+            ));
+        }
+        let umem_len = (num_frames as usize)
+            .checked_mul(frame_size as usize)
+            .filter(|&len| len <= isize::MAX as usize)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "UMEM size overflow"))?;
 
         // socket(AF_XDP, SOCK_RAW | SOCK_CLOEXEC, 0): EPERM without
         // CAP_NET_RAW, EAFNOSUPPORT when the kernel lacks AF_XDP.
@@ -637,7 +631,8 @@ impl XskSocket {
             // The fill ring is pre-filled with `ring_size` entries below.
             fill_head: ring_size,
             cr_tail: 0,
-            tx_inflight: std::collections::VecDeque::new(),
+            tx_inflight: 0,
+            frames: FrameRegistry::new(num_frames, frame_size),
             tx_free: {
                 let mut q = std::collections::VecDeque::new();
                 for i in ring_size..num_frames {
@@ -685,29 +680,23 @@ impl XskSocket {
         // SAFETY: rx_consumer() is the RX-ring consumer word; the release
         // store pairs with the kernel's acquire read.
         unsafe { ring_store(self.rx_consumer(), self.rx_tail) };
-        Some(Frame {
-            addr: desc.addr,
-            len: desc.len,
-        })
+        Some(self.frames.checkout(desc.addr, desc.len))
     }
 
     /// Mutable access to a checked-out frame's bytes (in place, in the
     /// umem; no copy).
     ///
     /// # Panics
-    /// Panics if `frame` lies outside the umem.
+    /// Panics if the frame belongs to another socket, was already
+    /// returned/transmitted, or lies outside its UMEM chunk.
     pub fn frame_mut(&mut self, frame: &Frame) -> &mut [u8] {
-        assert!(
-            frame
-                .addr
-                .checked_add(frame.len as u64)
-                .is_some_and(|end| end <= self.umem_len as u64),
-            "af_xdp: frame outside umem"
-        );
+        self.frames.validate(frame);
         // SAFETY: the frame is checked out (not in the fill ring or the
         // kernel's rings), so user space owns it exclusively; the bounds
         // were checked above.
-        unsafe { std::slice::from_raw_parts_mut(self.umem.add(frame.addr as usize), frame.len as usize) }
+        unsafe {
+            std::slice::from_raw_parts_mut(self.umem.add(frame.addr as usize), frame.len as usize)
+        }
     }
 
     /// Transmit a checked-out frame from its umem slot (zero-copy echo:
@@ -715,6 +704,7 @@ impl XskSocket {
     /// when the TX ring is full; the caller retries after
     /// [`Self::recycle_tx`].
     pub fn tx_frame(&mut self, frame: Frame) -> bool {
+        self.frames.validate(&frame);
         let mask = self.ring_size - 1;
         // The TX ring needs room for one descriptor.
         // SAFETY: tx_consumer() is the TX-ring consumer word (written by
@@ -724,6 +714,7 @@ impl XskSocket {
             return false;
         }
         let idx = (self.tx_head & mask) as usize;
+        self.frames.release(&frame);
         // SAFETY: idx < ring_size, so the descriptor slot lies inside the
         // mapped TX ring region.
         unsafe {
@@ -738,12 +729,13 @@ impl XskSocket {
         // store pairs with the kernel's acquire read (the descriptor
         // write above happens-before it).
         unsafe { ring_store(self.tx_producer(), self.tx_head) };
-        self.tx_inflight.push_back(frame.addr);
+        self.tx_inflight += 1;
         true
     }
 
     /// Drop a checked-out frame back to the fill ring (not transmitted).
     pub fn drop_frame(&mut self, frame: Frame) {
+        self.frames.release(&frame);
         if frame.addr >= self.tx_pool_base {
             self.tx_free.push_back(frame.addr);
         } else {
@@ -760,7 +752,7 @@ impl XskSocket {
             self.tx_free.push_front(addr);
             return None;
         }
-        Some(Frame { addr, len })
+        Some(self.frames.checkout(addr, len))
     }
 
     /// Reclaim transmitted frames from the completion ring and return
@@ -776,7 +768,7 @@ impl XskSocket {
             // mapped completion region.
             let addr = unsafe { self.cr_desc().add(idx).read() };
             self.cr_tail = self.cr_tail.wrapping_add(1);
-            self.tx_inflight.pop_front();
+            self.tx_inflight -= 1;
             if addr >= self.tx_pool_base {
                 self.tx_free.push_back(addr);
             } else {
@@ -790,7 +782,7 @@ impl XskSocket {
 
     /// How many TX frames await completion.
     pub fn tx_pending(&self) -> usize {
-        self.tx_inflight.len()
+        self.tx_inflight
     }
 
     /// The `XDP_USE_NEED_WAKEUP` contract: `(rx, tx)` booleans are true
@@ -963,19 +955,35 @@ impl Drop for XskSocket {
             libc::munmap(self.umem.cast(), self.umem_len);
             libc::munmap(
                 self.rx_base.cast(),
-                ring_map_len(self.offsets.rx.desc, self.ring_size, std::mem::size_of::<XdpDesc>()),
+                ring_map_len(
+                    self.offsets.rx.desc,
+                    self.ring_size,
+                    std::mem::size_of::<XdpDesc>(),
+                ),
             );
             libc::munmap(
                 self.tx_base.cast(),
-                ring_map_len(self.offsets.tx.desc, self.ring_size, std::mem::size_of::<XdpDesc>()),
+                ring_map_len(
+                    self.offsets.tx.desc,
+                    self.ring_size,
+                    std::mem::size_of::<XdpDesc>(),
+                ),
             );
             libc::munmap(
                 self.fill_base.cast(),
-                ring_map_len(self.offsets.fr.desc, self.ring_size, std::mem::size_of::<u64>()),
+                ring_map_len(
+                    self.offsets.fr.desc,
+                    self.ring_size,
+                    std::mem::size_of::<u64>(),
+                ),
             );
             libc::munmap(
                 self.cr_base.cast(),
-                ring_map_len(self.offsets.cr.desc, self.ring_size, std::mem::size_of::<u64>()),
+                ring_map_len(
+                    self.offsets.cr.desc,
+                    self.ring_size,
+                    std::mem::size_of::<u64>(),
+                ),
             );
             libc::close(self.fd);
         }
@@ -1050,15 +1058,12 @@ pub fn process_frame(frame: &mut [u8]) -> FrameAction {
         Ok(h) => h,
         Err(_) => return FrameAction::Drop,
     };
-    if ip.protocol != 17 {
-        return FrameAction::Drop; // not UDP
+    if ip.protocol != 17 || ip.flags_fragment & 0x3fff != 0 {
+        return FrameAction::Drop; // not UDP, or fragmentation needs reassembly
     }
     let ihl = usize::from(frame[14] & 0x0F) * 4;
     let ip_total = ip.total_len as usize;
-    if ihl < 20
-        || ip_total < 20 + 8
-        || 14 + ip_total > frame.len()
-        || 14 + ihl + 8 > 14 + ip_total
+    if ihl < 20 || ip_total < 20 + 8 || 14 + ip_total > frame.len() || 14 + ihl + 8 > 14 + ip_total
     {
         return FrameAction::Drop;
     }
@@ -1132,12 +1137,16 @@ fn process_frame_v6(frame: &mut [u8]) -> FrameAction {
         Err(_) => return FrameAction::Drop,
     };
     let udp_len = udp.len as usize;
-    if udp_len < 8 || udp_off + udp_len > frame.len() {
+    let ip_end = udp_off + ip.payload_len as usize;
+    if ip.payload_len < 8 || ip_end > frame.len() || udp_off + udp_len > ip_end {
         return FrameAction::Drop;
     }
     let csum_off = udp_off + 6;
     let stored = u16::from_be_bytes([frame[csum_off], frame[csum_off + 1]]);
-    if stored != 0 {
+    if stored == 0 {
+        return FrameAction::Drop; // IPv6 UDP checksums are mandatory.
+    }
+    {
         frame[csum_off] = 0;
         frame[csum_off + 1] = 0;
         let calc = crate::checksum::udp_checksum_v6(
@@ -1255,14 +1264,13 @@ mod tests {
             Ok(s) => s,
             Err(_) => return, // no device: nothing to test against
         };
-        // A synthetic frame inside the umem is addressable.
-        let fake = Frame {
-            addr: 0,
-            len: 64,
-        };
-        let buf = sock.frame_mut(&fake);
+        // Only a checked-out TX frame is userspace-owned; fabricating
+        // an RX descriptor could write into kernel-owned fill memory.
+        let frame = sock.alloc_tx(64).expect("free TX frame");
+        let buf = sock.frame_mut(&frame);
         buf.fill(0xAB);
         assert!(buf.iter().all(|&b| b == 0xAB));
+        sock.drop_frame(frame);
     }
 
     // ---- the frame-processing pipeline (hardware-independent) ----
@@ -1347,6 +1355,26 @@ mod tests {
         f[60] = (c >> 8) as u8;
         f[61] = c as u8;
         f
+    }
+
+    #[test]
+    fn pipeline_rejects_ipv6_zero_checksum_and_payload_overrun() {
+        let mut frame = build_udp6_frame();
+        frame[60..62].fill(0);
+        assert_eq!(process_frame(&mut frame), FrameAction::Drop);
+        let mut frame = build_udp6_frame();
+        frame[18..20].copy_from_slice(&8u16.to_be_bytes());
+        assert_eq!(process_frame(&mut frame), FrameAction::Drop);
+    }
+
+    #[test]
+    fn pipeline_rejects_ipv4_fragments_without_reassembly() {
+        let mut frame = build_udp_frame(64, false, false);
+        frame[20..22].copy_from_slice(&0x2000u16.to_be_bytes());
+        frame[24..26].fill(0);
+        let checksum = crate::checksum::ip_checksum(&frame[14..34]);
+        frame[24..26].copy_from_slice(&checksum.to_be_bytes());
+        assert_eq!(process_frame(&mut frame), FrameAction::Drop);
     }
 
     #[test]

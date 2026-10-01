@@ -4,15 +4,10 @@
 //! datagrams. The batch ring between recvmmsg and processing is the
 //! framework's ring.
 //!
-//! CONTRACT (implementer): implement [`UdpSocket`] on top of libc/rustix
-//! with the exact signatures below (the crate compiles with these stubs;
-//! replace `todo!()` bodies). Batches reuse preallocated arrays of
-//! [`mol::Buffer`]; the hot path must not allocate. Wire the offloads
-//! from [`crate::config::Config`]. Tests: loopback send/recv roundtrip, batch of
-//! N datagrams preserves order and content, GSO send when enabled,
-//! MSG_TRUNC oversized-datagram detection, truncated/short buffer
-//! handling. Mark tests that need offload support with graceful skips
-//! when the kernel returns EOPNOTSUPP.
+//! Batches reuse preallocated arrays of [`mol::Buffer`]. Socket options
+//! come from [`crate::config::Config`]. Tests cover loopback delivery,
+//! batch ordering, dual-stack peers, truncation, and optional offloads;
+//! unsupported offloads are explicitly reported as skipped.
 
 use crate::config::UdpConfig;
 use std::cell::UnsafeCell;
@@ -168,7 +163,8 @@ fn addr_from_storage(ss: &libc::sockaddr_storage) -> SocketAddr {
     match ss.ss_family as libc::c_int {
         libc::AF_INET => {
             // SAFETY: AF_INET guarantees the kernel wrote a `sockaddr_in`.
-            let sin = unsafe { &*(ss as *const libc::sockaddr_storage).cast::<libc::sockaddr_in>() };
+            let sin =
+                unsafe { &*(ss as *const libc::sockaddr_storage).cast::<libc::sockaddr_in>() };
             SocketAddr::V4(SocketAddrV4::new(
                 Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)),
                 u16::from_be(sin.sin_port),
@@ -219,7 +215,8 @@ impl UdpSocket {
         // SO_REUSEPORT group only when the option is set prior to bind
         // (man 7 socket), so every worker can bind the same address and
         // the kernel can distribute flows across them.
-        set_int(owned.as_raw_fd(), libc::SOL_SOCKET, libc::SO_REUSEADDR, 1)?;
+        // UDP has no TIME_WAIT. SO_REUSEADDR would let an unrelated
+        // socket bind the same endpoint even when reuseport is disabled.
         if cfg.reuseport {
             set_int(owned.as_raw_fd(), libc::SOL_SOCKET, libc::SO_REUSEPORT, 1)?;
         }
@@ -335,7 +332,10 @@ impl UdpSocket {
             hdrs[i].msg_hdr.msg_controllen = 0;
             hdrs[i].msg_hdr.msg_flags = 0;
             hdrs[i].msg_len = 0;
-            iovs[i].iov_base = bufs[i].as_mut_full_slice().as_mut_ptr().cast::<libc::c_void>();
+            iovs[i].iov_base = bufs[i]
+                .as_mut_full_slice()
+                .as_mut_ptr()
+                .cast::<libc::c_void>();
             iovs[i].iov_len = bufs[i].capacity();
         }
         // SAFETY: `hdrs` points at `n` initialized `mmsghdr` entries with
@@ -448,7 +448,15 @@ impl UdpSocket {
     /// privilege (verified empirically; the old "requires CAP_NET_RAW"
     /// claim was wrong). Returns `Err(Unsupported)` when the kernel/NIC
     /// cannot do zerocopy.
-    pub fn send_to_zerocopy(&self, data: &[u8], dst: SocketAddr) -> std::io::Result<usize> {
+    ///
+    /// # Safety
+    /// After a successful send, `data` must remain allocated at a stable
+    /// address and immutable until the error queue reports completion for
+    /// that send ID. Completion ranges are inclusive send IDs, not byte
+    /// ranges; notifications may coalesce many sends. A timeout is not
+    /// proof of completion. Prefer [`Self::send_to`] without owned-buffer
+    /// completion tracking.
+    pub unsafe fn send_to_zerocopy(&self, data: &[u8], dst: SocketAddr) -> std::io::Result<usize> {
         const MSG_ZEROCOPY: libc::c_int = 0x4000000;
         let mut ss: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
         let slen = fill_sockaddr(&mut ss, dst, self.family)?;
@@ -468,9 +476,7 @@ impl UdpSocket {
         // before `sendmsg` returns for non-zerocopy; for zerocopy the
         // caller must keep `data` alive until the completion queue
         // reports; documented at the call site).
-        let ret = unsafe {
-            libc::sendmsg(self.fd.as_raw_fd(), &hdr, MSG_ZEROCOPY)
-        };
+        let ret = unsafe { libc::sendmsg(self.fd.as_raw_fd(), &hdr, MSG_ZEROCOPY) };
         if ret < 0 {
             let err = io::Error::last_os_error();
             return if err.raw_os_error() == Some(libc::EAGAIN) {
@@ -487,15 +493,11 @@ impl UdpSocket {
 
     /// Drain MSG_ZEROCOPY completion notifications from the socket's
     /// error queue. Returns the number of notifications consumed. Each
-    /// zero-copy send leaves the send buffer referenced by the kernel
-    /// until the peer consumes the datagram; the caller must not reuse
-    /// the buffer until the corresponding notification is drained.
-    ///
-    /// NOTE: this kernel queues the notification with an EMPTY byte
-    /// range (ee_info == ee_data == 0) for UDP, verified empirically,
-    /// so the engine recycles buffers by notification count, not by
-    /// byte range (the error queue is FIFO and sends are ordered, so
-    /// counts are exact even when ranges are not).
+    /// zero-copy send may leave its payload referenced after sendmsg
+    /// returns. This diagnostic count is NOT an ownership/recycling API:
+    /// one notification can cover many sends, and this function also
+    /// consumes unrelated error-queue messages. `[0,0]` is the inclusive
+    /// range for send ID zero, not an empty range.
     pub fn drain_zerocopy_notifications(&self) -> std::io::Result<u64> {
         const MSG_ERRQUEUE: libc::c_int = 0x2000;
         const MSG_DONTWAIT: libc::c_int = 0x40;
@@ -566,9 +568,8 @@ impl UdpSocket {
         }
         // SAFETY: `hdrs` points at `n` initialized `mmsghdr` entries with
         // matching iovecs and sockaddrs, all valid for the call duration.
-        let ret = unsafe {
-            libc::sendmmsg(self.fd.as_raw_fd(), hdrs.as_mut_ptr(), n as libc::c_uint, 0)
-        };
+        let ret =
+            unsafe { libc::sendmmsg(self.fd.as_raw_fd(), hdrs.as_mut_ptr(), n as libc::c_uint, 0) };
         if ret < 0 {
             let err = io::Error::last_os_error();
             return if err.raw_os_error() == Some(libc::EAGAIN) {
@@ -678,6 +679,32 @@ mod tests {
         }
     }
 
+    /// Nonblocking loopback delivery may lag the send syscall. Collect
+    /// the expected batch with a deadline rather than assuming immediate
+    /// delivery (or hanging forever on a regression).
+    fn recv_expected<const N: usize>(
+        socket: &UdpSocket,
+        bufs: &mut [mol::Buffer<N>],
+        out: &mut [RecvResult],
+        expected: usize,
+    ) -> usize {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut received = 0;
+        while received < expected {
+            received += socket
+                .recv_batch(&mut bufs[received..expected], &mut out[received..expected])
+                .unwrap();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "UDP receive timed out: {received}/{expected}"
+            );
+            if received < expected {
+                std::thread::yield_now();
+            }
+        }
+        received
+    }
+
     #[test]
     fn udp_loopback_roundtrip() {
         let a = bind();
@@ -688,7 +715,7 @@ mod tests {
 
         let mut bufs: [mol::Buffer<2048>; 1] = std::array::from_fn(|_| mol::Buffer::new());
         let mut out: [RecvResult; 1] = std::array::from_fn(|_| recv_slot());
-        let n = b.recv_batch(&mut bufs, &mut out).unwrap();
+        let n = recv_expected(&b, &mut bufs, &mut out, 1);
         assert_eq!(n, 1);
         assert_eq!(bufs[0].as_slice(), payload);
         assert_eq!(out[0].len, payload.len());
@@ -698,13 +725,9 @@ mod tests {
 
     #[test]
     fn zerocopy_udp_kernel_behavior() {
-        // Documents how THIS kernel handles UDP MSG_ZEROCOPY (assertions
-        // are kernel-agnostic; send integrity only; the behavior is
-        // logged). On this box: the kernel silently COPIES the data at
-        // send time (the mutation probe sees the OLD bytes), queues a
-        // single coalesced notification with an empty [0,0) byte range,
-        // and the engine's ZcState auto-disables zerocopy after a 5 ms
-        // grace so the worker never wedges.
+        // Static immutable storage remains valid even if completion is
+        // delayed or a test panics. Never mutate in-flight zero-copy pages.
+        static PAYLOAD: [u8; 60 * 1024] = [0xab; 60 * 1024];
         let zc_cfg = UdpConfig {
             reuseport: false,
             zerocopy: true,
@@ -712,10 +735,12 @@ mod tests {
         };
         let sock = UdpSocket::new("127.0.0.1:0".parse().unwrap(), &zc_cfg).expect("zc bind");
         let peer = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        let payload = vec![0xabu8; 60 * 1024];
+        peer.set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let payload = &PAYLOAD;
         for _ in 0..3 {
-            let n = sock
-                .send_to_zerocopy(&payload, peer.local_addr().unwrap())
+            // SAFETY: payload is immutable static memory and never freed.
+            let n = unsafe { sock.send_to_zerocopy(payload, peer.local_addr().unwrap()) }
                 .expect("zc send");
             assert_eq!(n, payload.len());
             let mut buf = vec![0u8; 70_000];
@@ -723,71 +748,8 @@ mod tests {
             assert_eq!(got, payload.len());
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
-        let notifs = sock
-            .drain_zerocopy_notifications()
-            .expect("udp drain");
+        let notifs = sock.drain_zerocopy_notifications().expect("udp drain");
         eprintln!("udp: notifications after 3 zc sends = {notifs}");
-
-        // Mutation probe: send with ZC, mutate the buffer before the
-        // peer reads. Referenced pages would deliver the NEW bytes (real
-        // zero-copy); a send-time copy delivers the OLD ones.
-        let mut probe_payload = vec![0xdu8; 60 * 1024];
-        let n = sock
-            .send_to_zerocopy(&probe_payload, peer.local_addr().unwrap())
-            .expect("zc mutation send");
-        assert_eq!(n, probe_payload.len());
-        for b in probe_payload.iter_mut() {
-            *b = 0x5a;
-        }
-        let mut mbuf = vec![0u8; 70_000];
-        let (mgot, _) = peer.recv_from(&mut mbuf).expect("peer recv mutated");
-        assert_eq!(mgot, probe_payload.len());
-        let saw_old = mbuf[..mgot].iter().all(|&b| b == 0xdu8);
-        let saw_new = mbuf[..mgot].iter().all(|&b| b == 0x5au8);
-        eprintln!(
-            "udp: mutation test; peer saw OLD bytes (copied at send) = {saw_old}, NEW bytes (pages referenced) = {saw_new}"
-        );
-
-        // Corked probe: the same, with UDP_CORK set (the corked path is
-        // the documented route for UDP zerocopy).
-        let cork: libc::c_int = 1;
-        // SAFETY: setsockopt on an owned fd with valid args.
-        unsafe {
-            libc::setsockopt(
-                sock.fd.as_raw_fd(),
-                libc::SOL_UDP,
-                2, /* UDP_CORK */
-                (&cork as *const libc::c_int).cast(),
-                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
-            );
-        }
-        let mut cork_payload = vec![0xeu8; 60 * 1024];
-        let n = sock
-            .send_to_zerocopy(&cork_payload, peer.local_addr().unwrap())
-            .expect("corked zc send");
-        assert_eq!(n, cork_payload.len());
-        for b in cork_payload.iter_mut() {
-            *b = 0x3c;
-        }
-        let uncork: libc::c_int = 0;
-        // SAFETY: setsockopt on an owned fd with valid args.
-        unsafe {
-            libc::setsockopt(
-                sock.fd.as_raw_fd(),
-                libc::SOL_UDP,
-                2, /* UDP_CORK */
-                (&uncork as *const libc::c_int).cast(),
-                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
-            );
-        }
-        let mut cbuf = vec![0u8; 70_000];
-        let (cgot, _) = peer.recv_from(&mut cbuf).expect("peer recv corked");
-        assert_eq!(cgot, cork_payload.len());
-        let cork_saw_old = cbuf[..cgot].iter().all(|&b| b == 0xeu8);
-        let cork_saw_new = cbuf[..cgot].iter().all(|&b| b == 0x3cu8);
-        eprintln!(
-            "udp: corked mutation test; OLD (copied) = {cork_saw_old}, NEW (pages referenced) = {cork_saw_new}"
-        );
     }
 
     #[test]
@@ -796,12 +758,13 @@ mod tests {
         let b = bind();
         let baddr = b.local_addr().unwrap();
         let payloads: Vec<Vec<u8>> = (0..8).map(|i| format!("all-{i}").into_bytes()).collect();
-        let msgs: Vec<(&[u8], SocketAddr)> = payloads.iter().map(|p| (p.as_slice(), baddr)).collect();
+        let msgs: Vec<(&[u8], SocketAddr)> =
+            payloads.iter().map(|p| (p.as_slice(), baddr)).collect();
         assert_eq!(a.send_batch_all(&msgs).unwrap(), payloads.len());
 
         let mut bufs: [mol::Buffer<2048>; 16] = std::array::from_fn(|_| mol::Buffer::new());
         let mut out: [RecvResult; 16] = std::array::from_fn(|_| recv_slot());
-        let n = b.recv_batch(&mut bufs, &mut out).unwrap();
+        let n = recv_expected(&b, &mut bufs, &mut out, payloads.len());
         assert_eq!(n, payloads.len());
         for (i, p) in payloads.iter().enumerate() {
             assert_eq!(bufs[i].as_slice(), p.as_slice());
@@ -813,14 +776,16 @@ mod tests {
         let a = bind();
         let b = bind();
         let baddr = b.local_addr().unwrap();
-        let payloads: Vec<Vec<u8>> = (0..10).map(|i| format!("datagram-{i}").into_bytes()).collect();
+        let payloads: Vec<Vec<u8>> = (0..10)
+            .map(|i| format!("datagram-{i}").into_bytes())
+            .collect();
         for p in &payloads {
             a.send_to(p, baddr).unwrap();
         }
 
         let mut bufs: [mol::Buffer<2048>; 16] = std::array::from_fn(|_| mol::Buffer::new());
         let mut out: [RecvResult; 16] = std::array::from_fn(|_| recv_slot());
-        let n = b.recv_batch(&mut bufs, &mut out).unwrap();
+        let n = recv_expected(&b, &mut bufs, &mut out, payloads.len());
         assert_eq!(n, payloads.len());
         for (i, p) in payloads.iter().enumerate() {
             assert_eq!(bufs[i].as_slice(), p.as_slice());
@@ -850,7 +815,7 @@ mod tests {
 
         let mut bufs: [mol::Buffer<2048>; 1] = std::array::from_fn(|_| mol::Buffer::new());
         let mut out: [RecvResult; 1] = std::array::from_fn(|_| recv_slot());
-        let n = b.recv_batch(&mut bufs, &mut out).unwrap();
+        let n = recv_expected(&b, &mut bufs, &mut out, 1);
         assert_eq!(n, 1);
         assert!(out[0].truncated);
         assert_eq!(out[0].len, 2048);
@@ -879,7 +844,12 @@ mod tests {
         let dst = s.local_addr().unwrap();
         match s.send_to(&payload, dst) {
             Ok(sent) => assert_eq!(sent, payload.len()),
-            Err(e) if matches!(e.raw_os_error(), Some(libc::EOPNOTSUPP) | Some(libc::ENOPROTOOPT)) => {
+            Err(e)
+                if matches!(
+                    e.raw_os_error(),
+                    Some(libc::EOPNOTSUPP) | Some(libc::ENOPROTOOPT)
+                ) =>
+            {
                 eprintln!("skipping udp_gso_gro_flags: send unsupported: {e}");
             }
             Err(e) => panic!("GSO send failed: {e}"),
@@ -903,7 +873,7 @@ mod tests {
         assert_eq!(a.send_to(payload, baddr).unwrap(), payload.len());
         let mut bufs: [mol::Buffer<2048>; 1] = std::array::from_fn(|_| mol::Buffer::new());
         let mut out: [RecvResult; 1] = std::array::from_fn(|_| recv_slot());
-        let n = b.recv_batch(&mut bufs, &mut out).unwrap();
+        let n = recv_expected(&b, &mut bufs, &mut out, 1);
         assert_eq!(n, 1);
         assert_eq!(bufs[0].as_slice(), payload);
         assert!(out[0].src.is_ipv6());
@@ -924,11 +894,14 @@ mod tests {
         };
         let port = server.local_addr().unwrap().port();
         let client = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
         let dst: SocketAddr = (std::net::Ipv4Addr::LOCALHOST, port).into();
         client.send_to(b"dual", dst).unwrap();
         let mut bufs: [mol::Buffer<2048>; 1] = std::array::from_fn(|_| mol::Buffer::new());
         let mut out: [RecvResult; 1] = std::array::from_fn(|_| recv_slot());
-        let n = server.recv_batch(&mut bufs, &mut out).unwrap();
+        let n = recv_expected(&server, &mut bufs, &mut out, 1);
         assert_eq!(n, 1);
         assert_eq!(bufs[0].as_slice(), b"dual");
         assert!(out[0].src.is_ipv4(), "mapped peer must present as IPv4");

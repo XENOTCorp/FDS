@@ -5,18 +5,9 @@
 //! SCTP_PEELOFF for per-association dedicated sockets, and `sctp_bindx`
 //! multi-homing.
 //!
-//! CONTRACT (implementer): declare the FFI exactly against
-//! `<netinet/sctp.h>` (Linux, libsctp): `sctp_bindx`, `sctp_connectx`,
-//! `sctp_peeloff`, `sctp_recvmsg`, `sctp_sendmsg`; the structs
-//! `sctp_assoc_t`, `sctp_sndrcvinfo`, `sctp_initmsg`, `sctp_event_subscribe`,
-//! `sctp_setprim`, and the constants (SCTP_NODELAY, SCTP_EVENTS,
-//! SCTP_INITMSG, SCTP_PARTIAL_DELIVERY_POINT, SCTP_MAX_BURST, SCTP_PEELOFF,
-//! SCTP_BINDX_ADD_ADDR, ...) from that header. The #[link(name = "sctp")]
-//! attribute goes on the extern block. Public API below is binding; the
-//! crate compiles with these stubs. Tests: bind/connect over loopback
-//! (skipped gracefully with an eprintln when `socket(AF_SCTP, ...)` fails
-//! because the kernel SCTP module is absent), send/recv roundtrip with stream ids,
-//! SCTP_NODELAY option set, peeloff exercised if the kernel supports it.
+//! FFI signatures match lksctp-tools `<netinet/sctp.h>`. Tests exercise
+//! loopback stream ids and socket options, explicitly skipping when
+//! kernel SCTP support is unavailable.
 
 use crate::config::SctpConfig;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
@@ -94,8 +85,9 @@ struct SctpEventSubscribe {
 // without matching `<netinet/sctp.h>` and the installed libsctp ABI.
 #[link(name = "sctp")]
 extern "C" {
-    /// `ssize_t sctp_sendmsg(...)`; verified `ssize_t` against the
-    /// installed libsctp 1.0.21 (errors come back as a 64-bit -1).
+    /// `int sctp_sendmsg(...)`, from lksctp-tools <netinet/sctp.h>.
+    /// Unlike sendmsg(2), the library wrapper returns a C int; a wider
+    /// return type can misread -1 as a large positive value.
     fn sctp_sendmsg(
         sd: libc::c_int,
         msg: *const libc::c_void,
@@ -107,7 +99,7 @@ extern "C" {
         stream_no: u16,
         timetolive: u32,
         context: u32,
-    ) -> libc::ssize_t;
+    ) -> libc::c_int;
     /// `int sctp_recvmsg(...)`; the system header and the installed
     /// libsctp return `int` (verified: -1 comes back as a 32-bit value),
     /// so declaring `ssize_t` would misread the error return.
@@ -352,12 +344,7 @@ impl SctpSocket {
     }
 
     /// Send `data` on stream `stream_id` to `dst`.
-    pub fn send_msg(
-        &self,
-        data: &[u8],
-        stream_id: u16,
-        dst: SocketAddr,
-    ) -> std::io::Result<usize> {
+    pub fn send_msg(&self, data: &[u8], stream_id: u16, dst: SocketAddr) -> std::io::Result<usize> {
         let (ss, len) = sockaddr_of(&dst);
         // SAFETY: sctp_sendmsg wraps sendmsg(2), reads `msg`/`to`
         // synchronously, and does not retain pointers. The header declares
@@ -453,6 +440,32 @@ pub fn is_notification(e: &std::io::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sendmsg_invalid_fd_preserves_negative_c_int_error() {
+        // No kernel SCTP support is needed for this ABI error-path probe.
+        // SAFETY: zero-length payload and null destination are valid;
+        // fd -1 is deliberately invalid and must produce EBADF.
+        let result = unsafe {
+            sctp_sendmsg(
+                -1,
+                std::ptr::null(),
+                0,
+                std::ptr::null_mut(),
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
+        };
+        assert_eq!(result, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::EBADF)
+        );
+    }
 
     fn loopback() -> SocketAddr {
         "127.0.0.1:0".parse().unwrap()

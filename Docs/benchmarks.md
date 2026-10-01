@@ -1,5 +1,11 @@
 # FDS benchmarks
 
+> Historical evidence, not current-version performance claims. The review
+> changed TCP backpressure, io_uring send ordering, and allocation behavior,
+> and disabled unsafe UDP zero-copy echo. Old drop-path and zero-copy
+> descriptions below describe those snapshots only. Re-run comparable
+> workloads before drawing conclusions about the current code.
+
 Measured comparisons of the FDS engine against existing network stacks.
 Raw files: `Docs/benchmarks/2026-08-28/` (stack ranking) and
 `Docs/benchmarks/2026-08-29/` (datapath comparison). Transport

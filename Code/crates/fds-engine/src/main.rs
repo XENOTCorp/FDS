@@ -1,126 +1,153 @@
-//! The `fds` binary: a thin CLI over the `fds` library and this
-//! package's echo engine.
-//!
-//! Usage: `fds [config.json]` runs the built-in echo engine; `fds
-//! --bench <secs>` runs the UDP loopback benchmark; `fds --bench-large
-//! <datagram> <secs>` runs the one-way large-datagram byte-ceiling
-//! benchmark; `fds --latency <secs>` measures engine loopback latency;
-//! `fds --latency-against <addr> <secs>` measures engine latency from a
-//! second process; `fds --fuzz <iters>` runs the parser fuzz harness.
-
+//! Thin CLI: parse explicitly, preserve errors, and keep defaults predictable.
+#[cfg(test)]
+mod alloc_count;
 mod benchmarks;
 mod engine;
 mod signals;
 
-#[cfg(test)]
-mod alloc_count;
+use fds::config::{Config, ConfigError};
+use std::{io, path::Path, str::FromStr};
 
-use fds::config::Config;
-use fds::fuzz;
+const HELP: &str = "FDS networking examples and benchmarks
+Usage: fds [config.json]
+       fds --bench [seconds]
+       fds --bench-large [datagram-bytes] [seconds]
+       fds --bench-sctp [seconds]
+       fds --bench-ustack [seconds]
+       fds --latency [seconds]
+       fds --latency-tcp [seconds]
+       fds --bench-tcp-against [IP:port] [seconds]
+       fds --bench-udp-against [IP:port] [seconds]
+       fds --latency-against [IP:port] [seconds]
+       fds --metrics-pull [socket-path]
+       fds --fuzz [iterations]
+       fds --help | --version
+";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let code = match args.first().map(String::as_str) {
-        Some("--bench") => {
-            let secs = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(2);
-            benchmarks::run(secs)
-        }
-        Some("--bench-large") => {
-            let datagram = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(60_000);
-            let secs = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(3);
-            benchmarks::run_large(datagram, secs)
-        }
-        Some("--latency-tcp") => {
-            let secs = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(2);
-            benchmarks::run_latency_tcp(secs)
-        }
-        Some("--metrics-pull") => {
-            let path = args.get(1).map(String::as_str).unwrap_or("/tmp/fds-metrics.sock");
-            benchmarks::run_metrics_pull(path)
-        }
-        Some("--bench-sctp") => {
-            let secs = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(3);
-            benchmarks::run_sctp(secs)
-        }
-        Some("--bench-tcp-against") => {
-            let addr: std::net::SocketAddr = args
-                .get(1)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or_else(|| {
-                    eprintln!("fds: --bench-tcp-against <addr> [secs]: using 127.0.0.1:7778");
-                    "127.0.0.1:7778".parse().unwrap()
-                });
-            let secs = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(3);
-            benchmarks::run_tcp_against(addr, secs)
-        }
-        Some("--bench-udp-against") => {
-            let addr: std::net::SocketAddr = args
-                .get(1)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or_else(|| {
-                    eprintln!("fds: --bench-udp-against <addr> [secs]: using 127.0.0.1:7777");
-                    "127.0.0.1:7777".parse().unwrap()
-                });
-            let secs = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(3);
-            benchmarks::run_udp_against(addr, secs)
-        }
-        Some("--latency") => {
-            let secs = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(2);
-            benchmarks::run_latency(secs)
-        }
-        Some("--latency-against") => {
-            let addr: std::net::SocketAddr = args
-                .get(1)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or_else(|| {
-                    eprintln!("fds: --latency-against <addr> [secs]: using 127.0.0.1:7777");
-                    "127.0.0.1:7777".parse().unwrap()
-                });
-            let secs = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(2);
-            benchmarks::run_engine_latency(addr, secs)
-        }
-        Some("--fuzz") => {
-            let iters = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(1_000_000);
-            fuzz::run(iters);
-            Ok(())
-        }
-        Some("--bench-ustack") => {
-            let secs = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(1);
-            benchmarks::run_ustack(secs)
-        }
-        _ => {
-            let path = args
-                .first()
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| std::path::PathBuf::from("config.json"));
-            let cfg = load_config(&path);
-            engine::run(&cfg)
-        }
-    };
-    if let Err(e) = code {
-        eprintln!("fds: {e}");
+    if let Err(error) = run_cli(&args) {
+        eprintln!("fds: {error}");
         std::process::exit(1);
     }
 }
 
-/// Load `config.json`, falling back to defaults with a note.
-fn load_config(path: &std::path::Path) -> Config {
-    match std::fs::metadata(path) {
-        Ok(_) => match Config::from_file(path) {
-            Ok(cfg) => cfg,
-            Err(e) => {
-                eprintln!("fds: bad config {}: {e}", path.display());
-                std::process::exit(1);
-            }
-        },
-        Err(_) => {
+fn invalid(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, message.into())
+}
+
+fn argument<T: FromStr>(args: &[String], index: usize, default: T) -> io::Result<T> {
+    args.get(index).map_or(Ok(default), |text| {
+        text.parse()
+            .map_err(|_| invalid(format!("invalid argument {index}: {text:?}")))
+    })
+}
+
+fn run_cli(args: &[String]) -> io::Result<()> {
+    let command = args.first().map(String::as_str);
+    let max_args = match command {
+        Some(
+            "--bench-large" | "--bench-tcp-against" | "--bench-udp-against" | "--latency-against",
+        ) => 3,
+        Some("--help" | "-h" | "--version") => 1,
+        Some(flag) if flag.starts_with('-') => 2,
+        _ => 1,
+    };
+    if args.len() > max_args {
+        return Err(invalid("too many arguments; see --help"));
+    }
+    match command {
+        Some("--help" | "-h") => {
+            print!("{HELP}");
+            Ok(())
+        }
+        Some("--version") => {
+            println!("fds {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        Some("--bench") => benchmarks::run(argument(args, 1, 2)?),
+        Some("--bench-large") => {
+            benchmarks::run_large(argument(args, 1, 60_000)?, argument(args, 2, 3)?)
+        }
+        Some("--bench-sctp") => benchmarks::run_sctp(argument(args, 1, 3)?),
+        Some("--bench-ustack") => benchmarks::run_ustack(argument(args, 1, 1)?),
+        Some("--latency") => benchmarks::run_latency(argument(args, 1, 2)?),
+        Some("--latency-tcp") => benchmarks::run_latency_tcp(argument(args, 1, 2)?),
+        Some("--bench-tcp-against") => benchmarks::run_tcp_against(
+            argument(args, 1, ([127, 0, 0, 1], 7778).into())?,
+            argument(args, 2, 3)?,
+        ),
+        Some("--bench-udp-against") => benchmarks::run_udp_against(
+            argument(args, 1, ([127, 0, 0, 1], 7777).into())?,
+            argument(args, 2, 3)?,
+        ),
+        Some("--latency-against") => benchmarks::run_engine_latency(
+            argument(args, 1, ([127, 0, 0, 1], 7777).into())?,
+            argument(args, 2, 2)?,
+        ),
+        Some("--metrics-pull") => benchmarks::run_metrics_pull(
+            args.get(1)
+                .map(String::as_str)
+                .unwrap_or("/tmp/fds-metrics.sock"),
+        ),
+        Some("--fuzz") => {
+            fds::fuzz::run(argument(args, 1, 1_000_000)?);
+            Ok(())
+        }
+        Some(flag) if flag.starts_with('-') => {
+            Err(invalid(format!("unknown option {flag:?}; see --help")))
+        }
+        path => {
+            let cfg = load_config(Path::new(path.unwrap_or("config.json")), path.is_none())?;
+            engine::run(&cfg)
+        }
+    }
+}
+
+/// Only an absent *implicit* config may fall back. Explicit paths,
+/// permissions errors, malformed JSON, and invalid settings must fail.
+fn load_config(path: &Path, allow_missing: bool) -> io::Result<Config> {
+    match Config::from_file(path) {
+        Ok(cfg) => Ok(cfg),
+        Err(ConfigError::Io(error)) if allow_missing && error.kind() == io::ErrorKind::NotFound => {
             let mut cfg = Config::default();
             cfg.apply_env();
-            eprintln!(
-                "fds: no config at {}: using defaults (epoll event-driven, udp 127.0.0.1:7777)",
-                path.display()
-            );
-            cfg
+            cfg.validate()
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+            eprintln!("fds: no config at {}; using defaults", path.display());
+            Ok(cfg)
         }
+        Err(ConfigError::Io(error)) => Err(error),
+        Err(error) => Err(io::Error::new(io::ErrorKind::InvalidData, error)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn malformed_and_unknown_arguments_fail_without_starting_engine() {
+        for args in [
+            vec!["--unknown"],
+            vec!["--bench", "oops"],
+            vec!["--latency-against", "localhost"],
+            vec!["--version", "extra"],
+        ] {
+            let args = args.into_iter().map(str::to_owned).collect::<Vec<_>>();
+            assert_eq!(
+                run_cli(&args).unwrap_err().kind(),
+                io::ErrorKind::InvalidInput
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_missing_configuration_is_an_error() {
+        let path = std::env::temp_dir().join(format!("fds-missing-config-{}", std::process::id()));
+        assert_eq!(
+            load_config(&path, false).unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
     }
 }

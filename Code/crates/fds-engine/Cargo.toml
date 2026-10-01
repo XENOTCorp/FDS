@@ -10,9 +10,10 @@ description = "FDS echo engine binary: workers, CLI, and loopback benches on the
 [[bin]]
 name = "fds"
 path = "src/main.rs"
+doc = false # avoid a rustdoc output collision with the fds library
 
 [dependencies]
-fds = { path = "../fds" }
+fds = { path = "../fds", default-features = false }
 mol = { path = "../mol" }
 libc = "0.2"
 rustix = { version = "1", features = ["net", "event"] }

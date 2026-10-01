@@ -14,13 +14,15 @@ rustc --version
 uname -s
 ```
 
-Install the development packages for libsctp and liburing. These are
-required for the default features. Use the package manager of your
-distribution. On Debian or Ubuntu:
+For the default features, install libsctp. io_uring uses a pure Rust
+crate and does not need liburing. On Debian or Ubuntu:
 
 ```sh
-sudo apt-get install -y libsctp-dev liburing-dev
+sudo apt-get install -y libsctp-dev
 ```
+
+Alternatively, add `--no-default-features` to Cargo build/test commands
+for the minimal TCP/UDP engine without the libsctp dependency.
 
 ## 2. Open the code tree
 
@@ -33,11 +35,12 @@ All `cargo` commands in this guide run from `Code/`.
 ## 3. Test the workspace
 
 ```sh
-cargo test --release
-cargo clippy --all-targets -- -D warnings
+cargo fmt --all --check
+cargo test --workspace --release --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
-Both commands must exit 0.
+All checks must exit 0.
 
 ## 4. Build the adaptive release
 
@@ -58,7 +61,9 @@ workspace. The engine binary is `target/release/fds`. Use
 The process starts one worker per logical CPU. UDP echo binds to
 127.0.0.1:7777. TCP echo binds to 127.0.0.1:7778.
 
-Stop the process with Ctrl-C.
+Stop the process with Ctrl-C. The epoll TCP echo handler retains unsent
+bytes and pauses reads under backpressure. This remains a benchmark/example
+engine, not a production server; see [review notes](code-review.md).
 
 ## 6. Optional configuration
 
@@ -90,7 +95,8 @@ Other programs use `fds::api`. Two shapes sit on one core:
   Register fds, poll, read events.
 - Async: `poll_read`, `poll_write`, `poll_accept`, `poll_recv_from` in
   the `std::task::Poll` shape. Drive them with `fds::api::noop_context()`
-  or with any runtime that calls `poll_*`.
+  with an external readiness driver. These traits do not register
+  runtime wakers and are not drop-in Tokio integrations.
 
 ```rust
 use fds::api::{Driver, EpollDriver, Interest, TcpListener, noop_context};

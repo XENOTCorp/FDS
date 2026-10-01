@@ -53,7 +53,18 @@ pub fn checksum_finalize(acc: u32) -> u16 {
 /// IP/TCP/UDP checksum body (without the pseudo-header).
 #[inline]
 pub fn u16_checksum(data: &[u8]) -> u16 {
-    checksum_finalize(sum_u16(data))
+    // Ordinary packets fit without a 32-bit carry. For arbitrary large
+    // public inputs, fold between even-sized chunks so neither overflow
+    // nor odd-byte padding at an intermediate boundary loses information.
+    if data.len() <= 65534 {
+        return checksum_finalize(sum_u16(data));
+    }
+    let mut folded = 0u32;
+    for chunk in data.chunks(65534) {
+        let sum = folded + sum_u16(chunk);
+        folded = (sum & 0xffff) + (sum >> 16);
+    }
+    checksum_finalize(folded)
 }
 
 /// AVX2 fast path: sum 16-bit big-endian words via two `PSADBW` passes

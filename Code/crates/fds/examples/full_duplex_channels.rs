@@ -117,13 +117,10 @@ fn server(addr: SocketAddr) {
             if ev.token == 0 {
                 // Listener ready: accept until EAGAIN.
                 while let Ok(Some((stream, _))) = listener.accept() {
-                    let slot = chans
-                        .iter()
-                        .position(Option::is_none)
-                        .unwrap_or_else(|| {
-                            chans.push(None);
-                            chans.len() - 1
-                        });
+                    let slot = chans.iter().position(Option::is_none).unwrap_or_else(|| {
+                        chans.push(None);
+                        chans.len() - 1
+                    });
                     let token = slot as u64 + 1;
                     reactor
                         .register(stream.as_raw_fd(), token, Interest::Readable)
@@ -140,7 +137,8 @@ fn server(addr: SocketAddr) {
                     let open = drain(&mut chan, &reactor, token);
                     chans[slot] = Some(chan);
                     if !open {
-                        let _ = reactor.unregister(chans[slot].as_ref().unwrap().stream.as_raw_fd());
+                        let _ =
+                            reactor.unregister(chans[slot].as_ref().unwrap().stream.as_raw_fd());
                         chans[slot] = None;
                     }
                 }
@@ -150,7 +148,12 @@ fn server(addr: SocketAddr) {
                 } else {
                     true
                 };
-                let open = open && if ev.writable { flush(chan, &reactor, ev.token) } else { open };
+                let open = open
+                    && if ev.writable {
+                        flush(chan, &reactor, ev.token)
+                    } else {
+                        open
+                    };
                 if !open {
                     let _ = reactor.unregister(chan.stream.as_raw_fd());
                     chans[ev.token as usize - 1] = None;

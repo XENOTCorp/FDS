@@ -4,8 +4,8 @@
 //! A [`Reactor`] owns one epoll instance and a preallocated event array.
 //! Every registered fd is edge-triggered: after an event fires, the
 //! handler MUST drain the fd until EAGAIN before returning, otherwise no
-//! further edge is generated and events are lost. [`Reactor::poll_busy`]
-//! busy-polls (timeout 0) until the ready list is empty.
+//! further edge is generated and events are lost. Nonblocking polls
+//! return one batch; only application handlers can safely drain readiness.
 
 use rustix::event::epoll;
 use rustix::event::Timespec;
@@ -33,7 +33,7 @@ impl Interest {
         };
         // Edge-triggered, always: the drain-to-EAGAIN discipline is the
         // engine's hard policy.
-        f | epoll::EventFlags::ET
+        f | epoll::EventFlags::ET | epoll::EventFlags::RDHUP
     }
 }
 
@@ -56,7 +56,7 @@ impl EpollEvent {
             token: e.data.u64(),
             readable: f.contains(epoll::EventFlags::IN),
             writable: f.contains(epoll::EventFlags::OUT),
-            hang_up: f.contains(epoll::EventFlags::HUP),
+            hang_up: f.intersects(epoll::EventFlags::HUP | epoll::EventFlags::RDHUP),
             error: f.contains(epoll::EventFlags::ERR),
         }
     }
@@ -67,6 +67,7 @@ impl EpollEvent {
 pub struct Reactor {
     ep: OwnedFd,
     events: Vec<epoll::Event>,
+    delivered_len: usize,
 }
 
 impl Reactor {
@@ -82,78 +83,90 @@ impl Reactor {
             };
             max_events.max(1)
         ];
-        Ok(Reactor { ep, events })
+        Ok(Reactor {
+            ep,
+            events,
+            delivered_len: 0,
+        })
     }
 
     /// Register `fd` for `interest` with token `token` (EPOLL_CTL_ADD).
     pub fn register(&self, fd: i32, token: u64, interest: Interest) -> std::io::Result<()> {
-        let data = epoll::EventData::new_u64(token);
-        // SAFETY: `fd` is a live descriptor owned by the caller for the
-        // duration of the call; epoll_ctl installs the interest into the
-        // kernel without retaining the BorrowedFd.
-        let borrowed = unsafe { rustix::fd::BorrowedFd::borrow_raw(fd) };
-        epoll::add(&self.ep, borrowed, data, interest.flags()).map_err(std::io::Error::from)
+        self.control(libc::EPOLL_CTL_ADD, fd, token, interest)
     }
 
     /// Change the interest for an already-registered fd (EPOLL_CTL_MOD).
     pub fn modify(&self, fd: i32, token: u64, interest: Interest) -> std::io::Result<()> {
-        let data = epoll::EventData::new_u64(token);
-        // SAFETY: as in [`Reactor::register`].
-        let borrowed = unsafe { rustix::fd::BorrowedFd::borrow_raw(fd) };
-        epoll::modify(&self.ep, borrowed, data, interest.flags()).map_err(std::io::Error::from)
+        self.control(libc::EPOLL_CTL_MOD, fd, token, interest)
     }
 
     /// Remove a registration (EPOLL_CTL_DEL).
     pub fn unregister(&self, fd: i32) -> std::io::Result<()> {
-        // SAFETY: as in [`Reactor::register`].
-        let borrowed = unsafe { rustix::fd::BorrowedFd::borrow_raw(fd) };
-        epoll::delete(&self.ep, borrowed).map_err(std::io::Error::from)
+        self.control(libc::EPOLL_CTL_DEL, fd, 0, Interest::Readable)
+    }
+
+    fn control(
+        &self,
+        operation: libc::c_int,
+        fd: i32,
+        token: u64,
+        interest: Interest,
+    ) -> std::io::Result<()> {
+        let mut event = libc::epoll_event {
+            events: interest.flags().bits(),
+            u64: token,
+        };
+        // SAFETY: the event is initialized and valid for this synchronous
+        // call. Raw descriptors, including invalid ones, are checked by
+        // the kernel; do not manufacture a BorrowedFd from untrusted input.
+        let result = unsafe { libc::epoll_ctl(self.ep.as_raw_fd(), operation, fd, &mut event) };
+        if result < 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
     }
 
     /// Poll once with the given timeout: `None` blocks, `Some(0)` is a
     /// non-blocking busy poll. Returns the number of events delivered.
     pub fn poll_timeout(&mut self, timeout: Option<&Timespec>) -> std::io::Result<usize> {
+        self.delivered_len = 0;
         let n = epoll::wait(&self.ep, &mut self.events, timeout)?;
+        self.delivered_len = n;
         Ok(n)
     }
 
     /// One zero-timeout poll: returns the events of a single epoll batch.
-    /// Pairs with [`Reactor::delivered`]; unlike [`Reactor::poll_busy`],
-    /// it never drains multiple batches, so the delivered set is complete.
+    /// Pairs with [`Reactor::delivered`]; it never discards events from
+    /// earlier batches.
     pub fn poll_once(&mut self) -> std::io::Result<usize> {
-        let zero = Timespec { tv_sec: 0, tv_nsec: 0 };
-        let n = epoll::wait(&self.ep, &mut self.events, Some(&zero))?;
-        Ok(n)
+        let zero = Timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        self.poll_timeout(Some(&zero))
     }
 
-    /// Busy-poll: drain the ready list with timeout 0 until empty, then
-    /// return the total number of events delivered.
+    /// Nonblocking poll of one batch, equivalent to [`Self::poll_once`].
+    /// Repeatedly polling without dispatching handlers would consume and
+    /// lose edges, so draining multiple batches is the caller's job.
     pub fn poll_busy(&mut self) -> std::io::Result<usize> {
-        let zero = Timespec { tv_sec: 0, tv_nsec: 0 };
-        let mut total = 0;
-        loop {
-            let n = epoll::wait(&self.ep, &mut self.events, Some(&zero))?;
-            if n == 0 {
-                break;
-            }
-            total += n;
-            for i in 0..n {
-                handler_dispatch(&self.events[i]);
-            }
-        }
-        Ok(total)
+        self.poll_once()
     }
 
     /// The events from the most recent poll, converted.
     pub fn delivered(&self, n: usize) -> impl Iterator<Item = EpollEvent> + '_ {
-        self.events.iter().take(n).map(EpollEvent::from_raw)
+        self.events
+            .iter()
+            .take(n.min(self.delivered_len))
+            .map(EpollEvent::from_raw)
     }
 
     /// Copy the first `n` delivered events into `out` (converted), so the
     /// caller can process them without holding a borrow on the reactor.
     /// Returns the number copied.
     pub fn copy_events(&self, n: usize, out: &mut [EpollEvent]) -> usize {
-        let m = n.min(self.events.len()).min(out.len());
+        let m = n.min(self.delivered_len).min(out.len());
         for (dst, src) in out.iter_mut().zip(self.events.iter()).take(m) {
             *dst = EpollEvent::from_raw(src);
         }
@@ -164,12 +177,6 @@ impl Reactor {
     pub fn as_raw_fd(&self) -> i32 {
         self.ep.as_raw_fd()
     }
-}
-
-#[inline]
-fn handler_dispatch(_e: &epoll::Event) {
-    // Transport handlers are wired by the application (see
-    // examples/bench_udp.rs); the reactor core only delivers events.
 }
 
 impl std::fmt::Debug for Reactor {
@@ -214,14 +221,24 @@ mod tests {
         write(&b, b"x").unwrap();
 
         // Edge fires once.
-        let n = r.poll_timeout(Some(&Timespec { tv_sec: 0, tv_nsec: 0 })).unwrap();
+        let n = r
+            .poll_timeout(Some(&Timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            }))
+            .unwrap();
         assert_eq!(n, 1);
         let ev = r.delivered(n).next().unwrap();
         assert!(ev.readable);
         assert_eq!(ev.token, 7);
 
         // Without draining, the edge does NOT re-fire (ET semantics).
-        let n2 = r.poll_timeout(Some(&Timespec { tv_sec: 0, tv_nsec: 0 })).unwrap();
+        let n2 = r
+            .poll_timeout(Some(&Timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            }))
+            .unwrap();
         assert_eq!(n2, 0, "edge-triggered: no new edge until drained");
 
         // Draining to EAGAIN re-arms the edge: a second write fires again.
@@ -230,7 +247,12 @@ mod tests {
         assert_eq!(got, 1);
         assert_eq!(buf[0], b'x');
         write(&b, b"y").unwrap();
-        let n3 = r.poll_timeout(Some(&Timespec { tv_sec: 0, tv_nsec: 0 })).unwrap();
+        let n3 = r
+            .poll_timeout(Some(&Timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            }))
+            .unwrap();
         assert_eq!(n3, 1);
         let mut buf2 = [0u8; 8];
         read(&a, &mut buf2).unwrap();
@@ -247,7 +269,12 @@ mod tests {
         // Drain the fd; subsequent busy polls find nothing.
         let mut buf = [0u8; 8];
         read(&a, &mut buf).unwrap();
-        let n = r.poll_timeout(Some(&Timespec { tv_sec: 0, tv_nsec: 0 })).unwrap();
+        let n = r
+            .poll_timeout(Some(&Timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            }))
+            .unwrap();
         assert_eq!(n, 0);
     }
 
@@ -258,7 +285,12 @@ mod tests {
         r.register(a.as_raw_fd(), 5, Interest::Readable).unwrap();
         r.unregister(a.as_raw_fd()).unwrap();
         write(&b, b"z").unwrap();
-        let n = r.poll_timeout(Some(&Timespec { tv_sec: 0, tv_nsec: 0 })).unwrap();
+        let n = r
+            .poll_timeout(Some(&Timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            }))
+            .unwrap();
         assert_eq!(n, 0);
     }
 }

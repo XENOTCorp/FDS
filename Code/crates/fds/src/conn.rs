@@ -94,8 +94,8 @@ impl Connection {
 
 /// A per-core, preallocated connection table: `CAP` slots, free indices
 /// in a lock-free MPMC ring, so acquire/release are non-blocking and
-/// allocation-free in the hot path. `Sync` when `T: Send` (slot access is
-/// mediated by the free ring; each slot is owned by exactly one guard).
+/// allocation-free in the hot path. Safe access is mediated by guards;
+/// completion-driven callers use explicit unsafe index ownership.
 pub struct ConnTable<const CAP: usize> {
     pool: Pool<Connection, CAP>,
     /// Per-slot flags used by transports (e.g. closed/ready bits).
@@ -103,20 +103,17 @@ pub struct ConnTable<const CAP: usize> {
     flags: [std::sync::atomic::AtomicU8; CAP],
 }
 
-unsafe impl<const CAP: usize> Sync for ConnTable<CAP> {}
-
 impl<const CAP: usize> ConnTable<CAP> {
-    /// A new table; the caller initializes every slot (see
-    /// [`ConnTable::initialize`]) before sharing it.
+    /// A new table with fully initialized, inactive connections.
     pub fn new() -> Self {
         ConnTable {
-            pool: Pool::new(),
+            pool: Pool::new_with(|_| Connection::new(SocketAddr::from(([0, 0, 0, 0], 0)), 0)),
             flags: std::array::from_fn(|_| std::sync::atomic::AtomicU8::new(0)),
         }
     }
 
-    /// Initialize slot `i` (call once per slot before sharing).
-    pub fn initialize(&self, i: usize, conn: Connection) {
+    /// Replace a slot while the table is exclusively borrowed.
+    pub fn initialize(&mut self, i: usize, conn: Connection) {
         self.pool.initialize(i, conn);
     }
 
@@ -142,14 +139,25 @@ impl<const CAP: usize> ConnTable<CAP> {
     /// Release a slot back to the free list (the caller must own it,
     /// e.g. after closing a connection). The slot's data stays in place
     /// for the next owner.
-    pub fn release_slot(&self, slot: usize) {
-        self.pool.release_index(slot);
+    ///
+    /// # Safety
+    /// The slot must have been acquired from this table, not yet released,
+    /// and have no live references or guards.
+    pub unsafe fn release_slot(&self, slot: usize) {
+        // SAFETY: forwarded ownership contract.
+        unsafe { self.pool.release_index(slot) };
     }
 
     /// Mutable access to an owned slot's connection (the caller must own
     /// the slot; e.g. the reactor holds it for a live connection).
-    pub fn conn_mut(&self, slot: usize) -> &mut Connection {
-        self.pool.get_mut(slot)
+    ///
+    /// # Safety
+    /// The caller must exclusively own an acquired index from this table.
+    /// No other references to the slot may exist for the returned lifetime.
+    #[allow(clippy::mut_from_ref)] // exclusive slot ownership is the unsafe contract
+    pub unsafe fn conn_mut(&self, slot: usize) -> &mut Connection {
+        // SAFETY: forwarded exclusivity contract.
+        unsafe { self.pool.get_mut(slot) }
     }
 
     /// Capacity.
@@ -226,7 +234,7 @@ mod tests {
 
     #[test]
     fn table_acquire_release_cycle() {
-        let table: ConnTable<4> = ConnTable::new();
+        let mut table: ConnTable<4> = ConnTable::new();
         for i in 0..4 {
             table.initialize(i, Connection::new("127.0.0.1:0".parse().unwrap(), 1));
         }

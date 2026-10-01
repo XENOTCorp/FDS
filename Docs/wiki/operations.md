@@ -57,7 +57,7 @@ With a single-queue NIC, steer traffic across the engine cores with `rps_cpus` a
 - Checksum offload: keep NIC checksums on for bulk traffic. The engine always computes its own checksums. The NIC setting does not change the security path.
 - TSO/GSO: on for TCP by default. For UDP, the engine drives segmentation with `UDP_SEGMENT` (`udp.gso_segment_size`).
 - GRO: enable `udp.gro` with the kernel `UDP_GRO` socket option on NIC-heavy workloads. LRO is a single-flow merge. Keep LRO off.
-- MSG_ZEROCOPY: enable only for large datagrams. The send buffer is borrowed until the NIC completes. The engine batch ring handles this. On kernels where the copy path is silent, the engine disables the feature after a 5 ms grace.
+- UDP MSG_ZEROCOPY: the echo engine rejects this mode until owned-buffer lifetimes and inclusive send-ID completion ranges are tracked. Notification counts and elapsed time do not prove that pages are reusable. The library's raw send method is unsafe.
 
 ## SCTP
 

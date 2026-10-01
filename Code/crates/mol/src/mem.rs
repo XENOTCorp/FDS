@@ -19,15 +19,17 @@ pub struct HugePageGuard {
 /// Map `len` bytes with huge pages when available; otherwise a normal
 /// mapping advised with `MADV_HUGEPAGE`. Returns `None` on failure.
 ///
-/// The mapping is private and anonymous; nothing is written until the
-/// caller initializes it. Use [`HugePageGuard::as_mut_slice`] with
-/// `MaybeUninit` + explicit zeroing where the content must start zeroed.
+/// The mapping is private, anonymous, and zero-initialized by the kernel.
+/// Zero length, arithmetic overflow, and lengths above `isize::MAX` fail.
 pub fn huge_page(len: usize) -> Option<HugePageGuard> {
     use rustix::mm::{madvise, mmap_anonymous, Advice, MapFlags, ProtFlags};
 
-    // Round to a 4 KiB page so MAP_HUGETLB (2 MiB) can succeed when the
-    // kernel provides huge pages; the fallback accepts any length.
-    let len = len.next_multiple_of(4096);
+    // This Linux/x86-64 mapping uses 4 KiB pages. Checked rounding also
+    // preserves the maximum byte-slice length required by Rust.
+    let len = len.checked_add(4095)? & !4095;
+    if len == 0 || len > isize::MAX as usize {
+        return None;
+    }
 
     // Attempt a private anonymous mapping, advised with MADV_HUGEPAGE so
     // THP can back it with 2 MiB pages when available (never required).
@@ -47,8 +49,7 @@ pub fn huge_page(len: usize) -> Option<HugePageGuard> {
 }
 
 impl HugePageGuard {
-    /// The mapped region as a byte slice (uninitialized contents; zero
-    /// explicitly before reading, per the no-uninitialized-reads policy).
+    /// The mapped bytes, initially zeroed by the anonymous mapping.
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         // SAFETY: the region is valid for `len` bytes for the guard's
         // lifetime; the caller is the sole owner.
@@ -90,21 +91,22 @@ impl Drop for HugePageGuard {
 // threads is safe as long as no other thread holds a reference.
 unsafe impl Send for HugePageGuard {}
 
-/// Initialize a `MaybeUninit` slot with zeroed bytes and assume init.
-/// Use only after every byte of the value is initialized (zeroed values
-/// are valid only for types where the all-zero bit pattern is valid,
-/// e.g. integers, fixed arrays of integers).
+/// Initialize a slot with an all-zero value.
+///
+/// # Safety
+/// The all-zero bit pattern must be valid for `T`. `Copy` alone does
+/// not imply this: references and nonzero integers are counterexamples.
 #[inline]
-pub fn zeroed<T: Copy>(out: &mut core::mem::MaybeUninit<T>) {
+pub unsafe fn zeroed<T: Copy>(out: &mut core::mem::MaybeUninit<T>) {
     // SAFETY: caller guarantees the zeroed pattern is valid for T.
     unsafe {
         out.write(core::mem::zeroed());
     }
 }
 
-/// A lazily initialized global, `Box::leak`-style: returns a `'static`
-/// reference, initializing exactly once. Prefer `std::sync::OnceLock` for
-/// shared globals; this helper exists for preallocated runtime contexts.
+/// Allocate and deliberately leak a value, returning a `'static` mutable
+/// reference. Each call leaks another allocation; this is not lazy or
+/// once-only initialization. Prefer `OnceLock` for shared globals.
 pub fn leak_box<T>(value: T) -> &'static mut T {
     Box::leak(Box::new(value))
 }

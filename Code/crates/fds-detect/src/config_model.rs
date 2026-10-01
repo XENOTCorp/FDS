@@ -112,7 +112,7 @@ static REACTOR_FIELDS: &[FieldDef] = &[
         json_type: JsonType::U32,
         default_json: "0",
         derived_from: "engine default",
-        description: "io_uring SQPOLL thread CPU; 0 = no SQPOLL (plain ring).",
+        description: "SQPOLL idle timeout in milliseconds; 0 disables SQPOLL. This does not select a CPU.",
         trade_off: "SQPOLL removes submission syscalls but needs CAP_SYS_ADMIN; the ring falls back to a plain ring when creation is rejected.",
     },
 ];
@@ -302,16 +302,15 @@ static SCTP_FIELDS: &[FieldDef] = &[
     },
 ];
 
-static METRICS_FIELDS: &[FieldDef] = &[
-    FieldDef {
-        key: "socket_path",
-        json_type: JsonType::Str,
-        default_json: "/tmp/fds-metrics.sock",
-        derived_from: "engine default ([OBS] pull, not hot-path write)",
-        description: "Unix socket path for the metrics pull endpoint; empty = disabled.",
-        trade_off: "Pull-based metrics avoid hot-path writes; a filesystem path is a local trust boundary.",
-    },
-];
+static METRICS_FIELDS: &[FieldDef] = &[FieldDef {
+    key: "socket_path",
+    json_type: JsonType::Str,
+    default_json: "/tmp/fds-metrics.sock",
+    derived_from: "engine default ([OBS] pull, not hot-path write)",
+    description: "Unix socket path for the metrics pull endpoint; empty = disabled.",
+    trade_off:
+        "Pull-based metrics avoid hot-path writes; a filesystem path is a local trust boundary.",
+}];
 
 static ZERO_COPY_FIELDS: &[FieldDef] = &[
     FieldDef {
@@ -435,15 +434,42 @@ static ENGINE_FIELDS: &[FieldDef] = &[
 ];
 
 pub(crate) static SECTIONS: &[SectionDef] = &[
-    SectionDef { name: "core", fields: CORE_FIELDS },
-    SectionDef { name: "reactor", fields: REACTOR_FIELDS },
-    SectionDef { name: "udp", fields: UDP_FIELDS },
-    SectionDef { name: "tcp", fields: TCP_FIELDS },
-    SectionDef { name: "sctp", fields: SCTP_FIELDS },
-    SectionDef { name: "metrics", fields: METRICS_FIELDS },
-    SectionDef { name: "zero_copy", fields: ZERO_COPY_FIELDS },
-    SectionDef { name: "af_xdp", fields: AF_XDP_FIELDS },
-    SectionDef { name: "engine", fields: ENGINE_FIELDS },
+    SectionDef {
+        name: "core",
+        fields: CORE_FIELDS,
+    },
+    SectionDef {
+        name: "reactor",
+        fields: REACTOR_FIELDS,
+    },
+    SectionDef {
+        name: "udp",
+        fields: UDP_FIELDS,
+    },
+    SectionDef {
+        name: "tcp",
+        fields: TCP_FIELDS,
+    },
+    SectionDef {
+        name: "sctp",
+        fields: SCTP_FIELDS,
+    },
+    SectionDef {
+        name: "metrics",
+        fields: METRICS_FIELDS,
+    },
+    SectionDef {
+        name: "zero_copy",
+        fields: ZERO_COPY_FIELDS,
+    },
+    SectionDef {
+        name: "af_xdp",
+        fields: AF_XDP_FIELDS,
+    },
+    SectionDef {
+        name: "engine",
+        fields: ENGINE_FIELDS,
+    },
 ];
 
 /// D-1 socket-buffer sizing: each socket buffer absorbs one L3-sized burst
@@ -451,7 +477,8 @@ pub(crate) static SECTIONS: &[SectionDef] = &[
 /// `clamp(pow2(L3/2), 4 MiB, 16 MiB)`; a power of two so the kernel's
 /// reported (doubled) value and the ring layout stay aligned.
 pub(crate) fn d1_socket_buffer_bytes(l3: u64) -> u64 {
-    (l3 / 2).next_power_of_two().clamp(4 << 20, 16 << 20)
+    // Clamp before rounding so malformed hardware input cannot overflow.
+    (l3 / 2).clamp(4 << 20, 16 << 20).next_power_of_two()
 }
 
 fn field_value(f: &FieldDef) -> Value {
@@ -459,9 +486,7 @@ fn field_value(f: &FieldDef) -> Value {
         JsonType::Bool | JsonType::Int | JsonType::U32 | JsonType::I32 => {
             serde_json::from_str(f.default_json).unwrap_or_else(|_| json!(f.default_json))
         }
-        JsonType::U32Array => {
-            serde_json::from_str(f.default_json).unwrap_or_else(|_| json!([]))
-        }
+        JsonType::U32Array => serde_json::from_str(f.default_json).unwrap_or_else(|_| json!([])),
         JsonType::Str | JsonType::Strategy => json!(f.default_json),
     }
 }
@@ -509,8 +534,25 @@ pub(crate) fn generate_schema() -> String {
             if f.json_type == JsonType::Strategy {
                 fd.insert("enum".to_string(), json!(["epoll-busy-poll", "io-uring"]));
             }
-            if f.json_type == JsonType::U32Array {
-                fd.insert("items".to_string(), json!({ "type": "integer", "minimum": 0 }));
+            match f.json_type {
+                JsonType::Int => {
+                    fd.insert("minimum".into(), json!(0));
+                }
+                JsonType::U32 => {
+                    fd.insert("minimum".into(), json!(0));
+                    fd.insert("maximum".into(), json!(u32::MAX));
+                }
+                JsonType::I32 => {
+                    fd.insert("minimum".into(), json!(i32::MIN));
+                    fd.insert("maximum".into(), json!(i32::MAX));
+                }
+                JsonType::U32Array => {
+                    fd.insert(
+                        "items".into(),
+                        json!({ "type": "integer", "minimum": 0, "maximum": u32::MAX }),
+                    );
+                }
+                _ => {}
             }
             fd.insert("default".to_string(), field_value(f));
             fd.insert("description".to_string(), json!(f.description));
@@ -566,26 +608,31 @@ pub(crate) fn validate_config(text: &str) -> Vec<String> {
             };
             let ok = match field.json_type {
                 JsonType::Bool => fv.is_boolean(),
-                JsonType::Int | JsonType::U32 => fv.as_u64().is_some(),
-                JsonType::I32 => fv.as_i64().is_some(),
+                JsonType::Int => fv.as_u64().is_some(),
+                JsonType::U32 => fv.as_u64().is_some_and(|v| u32::try_from(v).is_ok()),
+                JsonType::I32 => fv.as_i64().is_some_and(|v| i32::try_from(v).is_ok()),
                 JsonType::Str => fv.is_string(),
-                JsonType::U32Array => fv
-                    .as_array()
-                    .is_some_and(|a| a.iter().all(|x| x.as_u64().is_some())),
-                JsonType::Strategy => {
-                    fv.as_str().is_some_and(|s| matches!(s, "epoll-busy-poll" | "io-uring"))
-                }
+                JsonType::U32Array => fv.as_array().is_some_and(|a| {
+                    a.iter()
+                        .all(|x| x.as_u64().is_some_and(|v| u32::try_from(v).is_ok()))
+                }),
+                JsonType::Strategy => fv
+                    .as_str()
+                    .is_some_and(|s| matches!(s, "epoll-busy-poll" | "io-uring")),
             };
             if !ok {
-                errors.push(format!("config.json: {sec}.{key}: expected {}, got {fv}", match field.json_type {
-                    JsonType::Bool => "a boolean",
-                    JsonType::Int => "a non-negative integer",
-                    JsonType::U32 => "a non-negative integer",
-                    JsonType::I32 => "an integer",
-                    JsonType::Str => "a string",
-                    JsonType::U32Array => "an array of non-negative integers",
-                    JsonType::Strategy => "\"epoll-busy-poll\" | \"io-uring\"",
-                }));
+                errors.push(format!(
+                    "config.json: {sec}.{key}: expected {}, got {fv}",
+                    match field.json_type {
+                        JsonType::Bool => "a boolean",
+                        JsonType::Int => "a non-negative integer",
+                        JsonType::U32 => "an integer in 0..=u32::MAX",
+                        JsonType::I32 => "an integer in i32::MIN..=i32::MAX",
+                        JsonType::Str => "a string",
+                        JsonType::U32Array => "an array of u32 integers",
+                        JsonType::Strategy => "\"epoll-busy-poll\" | \"io-uring\"",
+                    }
+                ));
             }
         }
     }
@@ -603,6 +650,7 @@ mod tests {
         assert_eq!(d1_socket_buffer_bytes(16 << 20), 8 << 20);
         assert_eq!(d1_socket_buffer_bytes(24 << 20), 16 << 20);
         assert_eq!(d1_socket_buffer_bytes(64 << 20), 16 << 20); // capped
+        assert_eq!(d1_socket_buffer_bytes(u64::MAX), 16 << 20);
     }
 
     #[test]
@@ -633,7 +681,12 @@ mod tests {
             let sprops = &schema["properties"][section.name]["properties"];
             for f in section.fields {
                 let fd = &sprops[f.key];
-                assert!(fd["type"].is_string(), "{}:{} missing type", section.name, f.key);
+                assert!(
+                    fd["type"].is_string(),
+                    "{}:{} missing type",
+                    section.name,
+                    f.key
+                );
                 assert!(fd["description"].is_string());
                 assert!(fd["x-trade-off"].is_string());
                 assert!(fd["x-derived-from"].is_string());

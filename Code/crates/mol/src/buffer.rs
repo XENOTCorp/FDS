@@ -8,7 +8,7 @@
 
 use crate::ring::MpmcRing;
 use core::cell::UnsafeCell;
-use core::mem::MaybeUninit;
+use core::marker::PhantomData;
 
 /// A fixed-capacity byte buffer (e.g. one packet slot). Zero allocation.
 /// Aligned to a cache line so AVX loads on `as_slice` can use aligned
@@ -28,7 +28,10 @@ pub struct SetLenError;
 impl<const N: usize> Buffer<N> {
     /// A zeroed buffer with length 0.
     pub const fn new() -> Self {
-        Buffer { data: [0; N], len: 0 }
+        Buffer {
+            data: [0; N],
+            len: 0,
+        }
     }
 
     /// The buffer contents.
@@ -107,12 +110,12 @@ impl<const N: usize> Default for Buffer<N> {
 /// when `T: Send`); it is not safe to hand out the same slot twice, which
 /// the free-list protocol prevents.
 pub struct Pool<T, const N: usize> {
-    /// The arena, heap-allocated. An inline `[MaybeUninit<T>; N]` would
+    /// The arena, heap-allocated. An inline `[T; N]` would
     /// make `Pool` a `N * size_of::<T>()`-byte by-value type; a 1024-slot
     /// connection table (~200 KiB) would blow a 1 MiB thread stack in
     /// debug builds. The box keeps the struct small; the allocation is
     /// startup-only (the free-list protocol still owns every slot).
-    slots: UnsafeCell<Box<[MaybeUninit<T>; N]>>,
+    slots: Box<[UnsafeCell<T>]>,
     free: MpmcRing<usize, N>,
 }
 
@@ -121,39 +124,42 @@ pub struct Pool<T, const N: usize> {
 unsafe impl<T: Send, const N: usize> Sync for Pool<T, N> {}
 
 impl<T, const N: usize> Pool<T, N> {
-    /// A new pool; the caller fills each slot with
-    /// [`Pool::initialize`] (or `push_initial`).
-    pub fn new() -> Self {
-        // All indices 0..N are free.
+    /// Construct a fully initialized pool. Initialization allocates only
+    /// at startup; a panicking initializer drops values already created.
+    pub fn new_with(mut initialize: impl FnMut(usize) -> T) -> Self {
         let free = MpmcRing::new();
-        let pool = Pool {
-            // SAFETY: `Box::new_uninit` allocates without a stack
-            // temporary and without initializing; every slot is written
-            // via `initialize` before any guard exists.
-            slots: UnsafeCell::new(unsafe { Box::new_uninit().assume_init() }),
-            free,
-        };
+        let slots = (0..N)
+            .map(|i| UnsafeCell::new(initialize(i)))
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        let pool = Pool { slots, free };
         for i in 0..N {
-            // The ring is fresh and single-threaded here; unwrap is sound.
-            let _ = pool.free.try_push(i).map_err(|_| ());
+            assert!(pool.free.try_push(i).is_ok());
         }
         pool
     }
 
-    /// Initialize slot `i` with a value (call once per slot before the
-    /// pool is shared).
-    pub fn initialize(&self, i: usize, value: T) {
-        assert!(i < N, "Pool::initialize: index out of range");
-        // SAFETY: slot `i` is uninitialized and not yet handed out.
-        unsafe {
-            (*self.slots.get())[i].write(value);
-        }
+    /// Construct a pool of default values.
+    pub fn new() -> Self
+    where
+        T: Default,
+    {
+        Self::new_with(|_| T::default())
+    }
+
+    /// Replace a slot while the pool is exclusively borrowed.
+    pub fn initialize(&mut self, i: usize, value: T) {
+        *self.slots[i].get_mut() = value;
     }
 
     /// Allocate a slot, or `None` if the pool is exhausted.
     pub fn try_alloc(&self) -> Option<PoolGuard<'_, T, N>> {
         let idx = self.free.try_pop()?;
-        Some(PoolGuard { pool: self, idx })
+        Some(PoolGuard {
+            pool: self,
+            idx,
+            marker: PhantomData,
+        })
     }
 
     /// Allocate a slot INDEX without a guard. The caller owns the slot
@@ -168,30 +174,37 @@ impl<T, const N: usize> Pool<T, N> {
     /// Return slot `idx` to the free list. The caller must own the slot
     /// (i.e. hold no live guard for it); used by tables that release
     /// slots out-of-order (e.g. connection close).
-    pub fn release_index(&self, idx: usize) {
+    ///
+    /// # Safety
+    /// `idx` must have been acquired from this pool and not yet released.
+    /// No references or guards to the slot may remain.
+    pub unsafe fn release_index(&self, idx: usize) {
         assert!(idx < N, "Pool::release_index: index out of range");
         self.release(idx);
     }
 
-    /// Mutable access to slot `idx`. The caller must own the slot (hold
-    /// its guard, or the table must have handed it out); used by
-    /// connection tables to update hot/cold state per packet.
+    /// Mutable access to a raw-index-owned slot; used by completion-driven
+    /// connection tables. Guard-owned slots should use `DerefMut` instead.
     ///
     /// `&self -> &mut T` is sound here because the pool is interior-mutable
     /// (`UnsafeCell` slots) and exclusive ownership is enforced by the
     /// free-list protocol, not by the borrow checker; the same contract
     /// as `PoolGuard`'s deref.
+    ///
+    /// # Safety
+    /// The caller must exclusively own an index acquired from this pool.
+    /// No other references to the slot may exist for the returned lifetime.
     #[allow(clippy::mut_from_ref)]
-    pub fn get_mut(&self, idx: usize) -> &mut T {
+    pub unsafe fn get_mut(&self, idx: usize) -> &mut T {
         assert!(idx < N, "Pool::get_mut: index out of range");
         // SAFETY: the caller owns the slot, so it is initialized and not
         // aliased by any guard.
-        unsafe { (*self.slots.get())[idx].assume_init_mut() }
+        unsafe { &mut *self.slots[idx].get() }
     }
 
     fn release(&self, idx: usize) {
-        // Push the index back; the ring never fills (N slots, at most
-        // N − 1 in flight by the ring invariant).
+        // At least one free-list position exists: this index is owned
+        // by the caller and has not yet been returned.
         let mut i = idx;
         loop {
             match self.free.try_push(i) {
@@ -201,13 +214,13 @@ impl<T, const N: usize> Pool<T, N> {
         }
     }
 
-    /// Number of slots currently in use.
+    /// Number of slots currently in use (approximate under concurrency).
     pub fn in_use(&self) -> usize {
         N - self.free.len()
     }
 }
 
-impl<T, const N: usize> Default for Pool<T, N> {
+impl<T: Default, const N: usize> Default for Pool<T, N> {
     fn default() -> Self {
         Self::new()
     }
@@ -217,6 +230,9 @@ impl<T, const N: usize> Default for Pool<T, N> {
 pub struct PoolGuard<'a, T, const N: usize> {
     pool: &'a Pool<T, N>,
     idx: usize,
+    // A guard may be shared only when T: Sync, even though Pool is Sync
+    // for T: Send. This also models exclusive ownership of the slot.
+    marker: PhantomData<&'a mut T>,
 }
 
 impl<'a, T, const N: usize> PoolGuard<'a, T, N> {
@@ -230,14 +246,14 @@ impl<'a, T, const N: usize> core::ops::Deref for PoolGuard<'a, T, N> {
     type Target = T;
     fn deref(&self) -> &T {
         // SAFETY: the slot is exclusively owned by this guard.
-        unsafe { (*self.pool.slots.get())[self.idx].assume_init_ref() }
+        unsafe { &*self.pool.slots[self.idx].get() }
     }
 }
 
 impl<'a, T, const N: usize> core::ops::DerefMut for PoolGuard<'a, T, N> {
     fn deref_mut(&mut self) -> &mut T {
         // SAFETY: the slot is exclusively owned by this guard.
-        unsafe { (*self.pool.slots.get())[self.idx].assume_init_mut() }
+        unsafe { &mut *self.pool.slots[self.idx].get() }
     }
 }
 
@@ -264,10 +280,7 @@ mod tests {
 
     #[test]
     fn pool_alloc_return_cycle() {
-        let pool: Pool<u64, 4> = Pool::new();
-        for i in 0..4 {
-            pool.initialize(i, i as u64);
-        }
+        let pool: Pool<u64, 4> = Pool::new_with(|i| i as u64);
         // First allocation returns some slot whose value matches its index.
         let a = pool.try_alloc().expect("a free slot");
         assert_eq!(*a, a.index() as u64);

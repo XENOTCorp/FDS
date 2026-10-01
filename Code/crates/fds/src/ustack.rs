@@ -5,7 +5,8 @@
 //!
 //! The stack is one connection per instance (a listener accepts the first
 //! SYN; a client has one active open). That matches a per-queue AF_XDP
-//! worker and keeps the hot path allocation-free after construction.
+//! worker. This is a protocol prototype, not a production TCP stack:
+//! packet construction, buffering, and retransmission currently allocate.
 
 use crate::checksum::{ip_checksum, tcp_checksum, tcp_checksum_v6};
 use crate::parse::{parse_ipv4, parse_ipv6, parse_tcp};
@@ -38,6 +39,7 @@ const RTO_MIN_US: u64 = 200_000;
 const SND_CAP: usize = 65535;
 const RCV_CAP: usize = 65535;
 const MAX_SACK_BLOCKS: usize = 3;
+const MAX_TX_FRAMES: usize = 128;
 
 /// IPv4 or IPv6 host address (no port).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -161,10 +163,12 @@ impl TcpStack {
     pub fn listen(&mut self) {
         self.listen = true;
         self.pcb = None;
+        self.txq.clear();
     }
 
     /// Active open: queue a SYN to `remote`.
     pub fn connect(&mut self, remote_mac: [u8; 6], remote: HostAddr, remote_port: u16) {
+        self.txq.clear();
         let iss = 1_000;
         let mss = if remote.is_v4() { MSS_V4 } else { MSS_V6 };
         let pcb = Pcb {
@@ -227,8 +231,12 @@ impl TcpStack {
         if pcb.state != TcpState::Established {
             return 0;
         }
-        let room = SND_CAP.saturating_sub(pcb.tx_app.len());
-        let n = data.len().min(room);
+        // Flushing tx_app does not free send credit: unacknowledged
+        // scoreboard payloads still occupy the bounded send buffer.
+        let buffered = pcb.tx_app.len() + pcb.inflight.iter().map(|s| s.data.len()).sum::<usize>();
+        let room = SND_CAP.saturating_sub(buffered);
+        let queue_room = MAX_TX_FRAMES.saturating_sub(self.txq.len()) * pcb.mss;
+        let n = data.len().min(room).min(queue_room);
         pcb.tx_app.extend_from_slice(&data[..n]);
         self.flush_tx();
         n
@@ -257,14 +265,16 @@ impl TcpStack {
             Ok(h) => h,
             Err(_) => return,
         };
-        if ip.protocol != 6 {
+        let ihl = usize::from(frame[ETH_LEN] & 0x0f) * 4;
+        if ip.protocol != 6
+            || ip.flags_fragment & 0x3fff != 0
+            || ip_checksum(&frame[ETH_LEN..ETH_LEN + ihl]) != 0
+        {
             return;
         }
-        if self.listen && self.pcb.is_none() {
-            self.mac.copy_from_slice(&frame[0..6]);
-            self.local = HostAddr::V4(ip.dst);
+        if self.local != HostAddr::V4(ip.dst) && self.local != HostAddr::V4([0; 4]) {
+            return;
         }
-        let ihl = 20;
         let tcp_off = ETH_LEN + ihl;
         if frame.len() < tcp_off + TCP_LEN {
             return;
@@ -273,11 +283,19 @@ impl TcpStack {
         if ip_end > frame.len() || ip_end < tcp_off {
             return;
         }
-        self.ingest_tcp(
-            HostAddr::V4(ip.src),
-            &frame[6..12],
-            &frame[tcp_off..ip_end],
-        );
+        let seg = &frame[tcp_off..ip_end];
+        if tcp_checksum(ip.src, ip.dst, seg.len() as u16, seg) != 0 {
+            return;
+        }
+        if self.listen && self.pcb.is_none() {
+            let Ok(tcp) = parse_tcp(seg) else { return };
+            if tcp.dst_port != self.local_port || tcp.flags & (TH_SYN | TH_ACK) != TH_SYN {
+                return;
+            }
+            self.mac.copy_from_slice(&frame[0..6]);
+            self.local = HostAddr::V4(ip.dst);
+        }
+        self.ingest_tcp(HostAddr::V4(ip.src), &frame[6..12], seg);
     }
 
     fn ingest_v6(&mut self, frame: &[u8]) {
@@ -288,20 +306,27 @@ impl TcpStack {
         if ip.next_header != 6 {
             return;
         }
-        if self.listen && self.pcb.is_none() {
-            self.mac.copy_from_slice(&frame[0..6]);
-            self.local = HostAddr::V6(ip.dst);
+        if self.local != HostAddr::V6(ip.dst) && self.local != HostAddr::V6([0; 16]) {
+            return;
         }
         let tcp_off = ETH_LEN + IPV6_LEN;
         let ip_end = tcp_off + ip.payload_len as usize;
         if ip_end > frame.len() || ip_end < tcp_off + TCP_LEN {
             return;
         }
-        self.ingest_tcp(
-            HostAddr::V6(ip.src),
-            &frame[6..12],
-            &frame[tcp_off..ip_end],
-        );
+        let seg = &frame[tcp_off..ip_end];
+        if tcp_checksum_v6(ip.src, ip.dst, seg.len() as u32, seg) != 0 {
+            return;
+        }
+        if self.listen && self.pcb.is_none() {
+            let Ok(tcp) = parse_tcp(seg) else { return };
+            if tcp.dst_port != self.local_port || tcp.flags & (TH_SYN | TH_ACK) != TH_SYN {
+                return;
+            }
+            self.mac.copy_from_slice(&frame[0..6]);
+            self.local = HostAddr::V6(ip.dst);
+        }
+        self.ingest_tcp(HostAddr::V6(ip.src), &frame[6..12], seg);
     }
 
     fn ingest_tcp(&mut self, src: HostAddr, src_mac: &[u8], seg: &[u8]) {
@@ -355,19 +380,17 @@ impl TcpStack {
                 return;
             }
             match pcb.state {
-                TcpState::SynSent if syn_ack => {
+                TcpState::SynSent if syn_ack && hdr.ack == pcb.snd_nxt => {
                     pcb.irs = hdr.seq;
                     pcb.rcv_nxt = hdr.seq.wrapping_add(1);
-                    if seq_geq(hdr.ack, pcb.iss.wrapping_add(1)) {
-                        pcb.snd_una = hdr.ack;
-                        pcb.state = TcpState::Established;
-                    }
+                    pcb.snd_una = hdr.ack;
+                    pcb.state = TcpState::Established;
                 }
-                TcpState::SynReceived if ack => {
-                    if seq_geq(hdr.ack, pcb.iss.wrapping_add(1)) {
-                        pcb.snd_una = hdr.ack;
-                        pcb.state = TcpState::Established;
-                    }
+                TcpState::SynReceived
+                    if ack && hdr.ack == pcb.snd_nxt && hdr.seq == pcb.rcv_nxt =>
+                {
+                    pcb.snd_una = hdr.ack;
+                    pcb.state = TcpState::Established;
                 }
                 TcpState::Established => {}
                 _ => return,
@@ -379,12 +402,11 @@ impl TcpStack {
         if self.pcb.as_ref().unwrap().state != TcpState::Established {
             return;
         }
-        self.on_ack(hdr.ack, &sacks);
-        let in_order = !payload.is_empty()
-            && self
-                .pcb
-                .as_ref()
-                .is_some_and(|p| hdr.seq == p.rcv_nxt);
+        if ack {
+            self.on_ack(hdr.ack, &sacks);
+        }
+        let in_order =
+            !payload.is_empty() && self.pcb.as_ref().is_some_and(|p| hdr.seq == p.rcv_nxt);
         if in_order {
             {
                 let pcb = self.pcb.as_mut().unwrap();
@@ -474,6 +496,9 @@ impl TcpStack {
             )
         };
         for (seq, data) in lost {
+            if self.txq.len() == MAX_TX_FRAMES {
+                break;
+            }
             let frame = self.build_data(remote_mac, remote, remote_port, seq, rcv_nxt, &data);
             self.txq.push_back(frame);
         }
@@ -537,7 +562,9 @@ impl TcpStack {
             )
         };
         let frame = self.build_ctrl(remote_mac, remote, remote_port, seq, ack, flags, with_mss);
-        self.txq.push_back(frame);
+        if self.txq.len() < MAX_TX_FRAMES {
+            self.txq.push_back(frame);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -572,7 +599,16 @@ impl TcpStack {
         ack: u32,
         payload: &[u8],
     ) -> Vec<u8> {
-        self.build_segment(dst_mac, dst, dst_port, seq, ack, TH_ACK | TH_PSH, &[], payload)
+        self.build_segment(
+            dst_mac,
+            dst,
+            dst_port,
+            seq,
+            ack,
+            TH_ACK | TH_PSH,
+            &[],
+            payload,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -782,6 +818,50 @@ mod tests {
     }
 
     #[test]
+    fn unacknowledged_writes_and_retransmissions_stay_bounded() {
+        let (_server, mut client) = handshake_v4();
+        let payload = vec![7; SND_CAP];
+        assert_eq!(client.write(&payload), SND_CAP);
+        for _ in 0..100 {
+            assert_eq!(client.write(&payload), 0);
+        }
+        for round in 1..100 {
+            client.on_timer(round * RTO_MIN_US);
+            assert!(client.txq.len() <= MAX_TX_FRAMES);
+        }
+    }
+
+    #[test]
+    fn syn_with_ip_options_is_parsed_at_the_correct_tcp_offset() {
+        let mut server = TcpStack::new_v4(mac(1), [10, 0, 0, 1], 80);
+        server.listen();
+        let mut client = TcpStack::new_v4(mac(2), [10, 0, 0, 2], 12345);
+        client.connect(mac(1), HostAddr::V4([10, 0, 0, 1]), 80);
+        let mut frame = client.pop_tx().unwrap();
+        frame.splice(ETH_LEN + IPV4_LEN..ETH_LEN + IPV4_LEN, [1, 1, 1, 0]);
+        frame[ETH_LEN] = 0x46;
+        let len = (frame.len() - ETH_LEN) as u16;
+        frame[ETH_LEN + 2..ETH_LEN + 4].copy_from_slice(&len.to_be_bytes());
+        frame[ETH_LEN + 10..ETH_LEN + 12].fill(0);
+        let checksum = ip_checksum(&frame[ETH_LEN..ETH_LEN + 24]);
+        frame[ETH_LEN + 10..ETH_LEN + 12].copy_from_slice(&checksum.to_be_bytes());
+        server.ingest(&frame);
+        assert_eq!(server.state(), Some(TcpState::SynReceived));
+    }
+
+    #[test]
+    fn corrupted_syn_does_not_create_connection_state() {
+        let mut server = TcpStack::new_v4(mac(1), [10, 0, 0, 1], 80);
+        server.listen();
+        let mut client = TcpStack::new_v4(mac(2), [10, 0, 0, 2], 12345);
+        client.connect(mac(1), HostAddr::V4([10, 0, 0, 1]), 80);
+        let mut frame = client.pop_tx().unwrap();
+        frame[ETH_LEN + IPV4_LEN] ^= 1;
+        server.ingest(&frame);
+        assert_eq!(server.state(), None);
+    }
+
+    #[test]
     fn tso_chops_at_mss() {
         let data = vec![0xABu8; 4000];
         let segs = tso_chop(1460, 100, &data);
@@ -851,7 +931,10 @@ mod tests {
             nframes += 1;
             srv.ingest(&f);
         }
-        assert!(nframes >= 3, "TSO must emit several MSS segments, got {nframes}");
+        assert!(
+            nframes >= 3,
+            "TSO must emit several MSS segments, got {nframes}"
+        );
         pump(&mut srv, &mut cli, |_| false);
         let mut buf = vec![0u8; 4096];
         let n = srv.read(&mut buf);
